@@ -10,7 +10,7 @@ So arbeitest du:
    status ist "offen", "in_arbeit" oder "erledigt".
 3. Lies vor dem Erstellen einer Word-, Excel-, PowerPoint- oder PDF-Datei die passende Anleitung: .ask/skills/word/SKILL.md, .ask/skills/excel/SKILL.md, .ask/skills/powerpoint/SKILL.md oder .ask/skills/pdf/SKILL.md. Vorlagen liegen in .ask/skills/vorlagen/.
 4. Speichere Ergebnisse als fertige Datei im Ordner ausgabe/. Schreibe keine langen Texte in den Chat.
-5. Prüfe jede Datei, bevor du sie abgibst: Programme ausführen und die Ausgabe lesen. Dokumente mit python .ask/skills/pruefen.py <datei> kontrollieren. Behebe Fehler selbst und prüfe erneut.
+5. Prüfe jede Datei, bevor du sie abgibst: Programme ausführen und die Ausgabe lesen. Dokumente mit python .ask/skills/pruefen.py <datei> kontrollieren, Word- und PowerPoint-Dateien mit --pdf (dann wird auch die Seitenzahl geprüft). Behebe jeden FEHLER und jede WARNUNG und prüfe erneut.
 6. Schreibe nur im Arbeitsordner. Lösche nichts, ohne vorher zu fragen. Überschreibe keine vorhandenen Dateien: arbeite mit einer Kopie und speichere das Ergebnis unter einem neuen Namen in ausgabe/.
 7. Sage am Schluss in zwei, drei Sätzen, welche Datei entstanden ist und wo sie liegt. Erzähle die Arbeitsschritte nicht nach.
 

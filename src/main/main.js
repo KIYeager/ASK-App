@@ -10,6 +10,7 @@ const { Terminal } = require('./terminal');
 const { Connection, PLACEHOLDER_KEY } = require('./connect');
 const { Workspace } = require('./workspace');
 const { AppWindow } = require('./window');
+const { convertToPdf } = require('./office');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -87,7 +88,41 @@ function startTerminal() {
   });
 }
 
+// Auftrag des Modells aus .ask/auftraege/<id>.json: Datei mit Office in PDF umwandeln.
+const ordersInProgress = new Set();
+async function handleOrder(file) {
+  const root = workspace.root;
+  if (!root || ordersInProgress.has(file)) return;
+  ordersInProgress.add(file);
+  const base = file.slice(0, -'.json'.length);
+  let res;
+  try {
+    const order = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const source = order.typ === 'pdf' ? workspace.resolve(String(order.quelle || '')) : null;
+    if (!source) res = { fehler: 'Datei nicht gefunden oder ausserhalb des Arbeitsordners.' };
+    else if (fs.statSync(source).size > 50 * 1024 * 1024) res = { fehler: 'Die Datei ist grösser als 50 MB.' };
+    else res = await convertToPdf(root, source);
+  } catch (err) {
+    res = { fehler: `Auftrag nicht lesbar: ${err.message}` };
+  }
+  try {
+    if (workspace.root === root) {
+      if (res.ok) fs.writeFileSync(`${base}.ok`, path.relative(root, res.target));
+      else fs.writeFileSync(`${base}.fehler`, res.fehler);
+      fs.rmSync(file, { force: true });
+    }
+  } finally {
+    ordersInProgress.delete(file);
+  }
+}
+
 function setupIpc() {
+  ipcMain.handle('file:pdf', async (_e, rel) => {
+    const source = workspace.resolve(rel);
+    if (!source) return { fehler: 'Datei nicht gefunden.' };
+    const res = await convertToPdf(workspace.root, source);
+    return res.ok ? { ok: true, path: path.relative(workspace.root, res.target) } : res;
+  });
   ipcMain.handle('state:get', () => state());
   ipcMain.handle('folder:choose', async () => {
     const suggested = path.join(process.env.USERPROFILE || app.getPath('home'), 'ASK-Projekte');
@@ -215,6 +250,7 @@ function wireEvents() {
     pushState();
   });
   connection.on('status', () => pushState());
+  workspace.on('auftrag', (file) => handleOrder(file));
   workspace.on('files', (files) => appWindow?.send('files', files));
   workspace.on('tasks', (tasks) => appWindow?.send('tasks', tasks));
 }

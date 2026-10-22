@@ -257,11 +257,22 @@ async function fillPreview(container, entry) {
   } else if (p.kind === 'missing') {
     container.append(el('div', { class: 'office' }, 'Die Datei ist nicht mehr vorhanden.'));
   } else {
-    container.append(el('div', { class: 'office' },
-      el('p', {}, p.kind === 'office' ? 'Office-Dateien zeigt die App nicht an. Öffne sie in Word, Excel oder PowerPoint.'
+    const status = el('p', { class: 'muted small' });
+    const box = el('div', { class: 'office' },
+      el('p', {}, p.kind === 'office' ? 'Office-Dateien öffnest du in Word, Excel oder PowerPoint.'
         : 'Für diese Datei gibt es keine Vorschau.'),
       el('button', { class: 'btn primary', onclick: () => api.openFile(entry.path) }, 'Öffnen'),
-      el('button', { class: 'btn', onclick: () => api.showFile(entry.path) }, 'Im Explorer zeigen')));
+      el('button', { class: 'btn', onclick: () => api.showFile(entry.path) }, 'Im Explorer zeigen'));
+    if (p.kind === 'office' && /\.(docx|xlsx|pptx)$/i.test(entry.path)) {
+      box.append(el('button', { class: 'btn', onclick: async () => {
+        status.textContent = 'Wird mit Office in PDF umgewandelt …';
+        const res = await api.toPdf(entry.path);
+        if (!res.ok) { status.textContent = res.fehler; return; }
+        const pdf = await api.preview(res.path);
+        container.replaceChildren(el('iframe', { src: `${pdf.url}?t=${Date.now()}`, title: entry.name }));
+      } }, 'Als PDF anzeigen'), status);
+    }
+    container.append(box);
   }
 }
 

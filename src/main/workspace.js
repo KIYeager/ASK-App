@@ -79,6 +79,7 @@ class Workspace extends EventEmitter {
     this.root = folder;
     fs.mkdirSync(path.join(folder, ASK_DIR), { recursive: true });
     fs.mkdirSync(path.join(folder, OUTPUT_DIR), { recursive: true });
+    fs.rmSync(path.join(folder, ASK_DIR, 'auftraege'), { recursive: true, force: true });
     this.syncSkills();
     try {
       this.watcher = fs.watch(folder, { recursive: true }, (event, name) => this.onChange(name || ''));
@@ -116,6 +117,12 @@ class Workspace extends EventEmitter {
 
   onChange(name) {
     if (name.startsWith(path.join(ASK_DIR, 'skills'))) return;
+    if (/^\.ask[\\/]auftraege[\\/][0-9a-f]{6,32}\.json$/i.test(name)) {
+      const file = path.join(this.root, name);
+      if (fs.existsSync(file)) this.emit('auftrag', file);
+      return;
+    }
+    if (name.startsWith(path.join(ASK_DIR, 'auftraege')) || name.startsWith(path.join(ASK_DIR, 'pdf'))) return;
     this.pending.add(name.toLowerCase() === path.join(ASK_DIR, 'tasks.json').toLowerCase() ? 'tasks' : 'files');
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {

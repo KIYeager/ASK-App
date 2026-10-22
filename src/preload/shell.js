@@ -37,5 +37,6 @@ contextBridge.exposeInMainWorld('ask', {
   tasks: () => ipcRenderer.invoke('workspace:tasks'),
   preview: (rel) => ipcRenderer.invoke('file:preview', rel),
   openFile: (rel) => ipcRenderer.invoke('file:open', rel),
+  toPdf: (rel) => ipcRenderer.invoke('file:pdf', rel),
   showFile: (rel) => ipcRenderer.invoke('file:show', rel),
 });

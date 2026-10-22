@@ -27,6 +27,68 @@ function getJson(url) {
   });
 }
 
+// Spielt den Ablauf eines Modells über die Terminal-API nach (so wie ASK die Werkzeuge aufruft).
+async function coworker(ctx, check, shell, shoot, folder) {
+  const { appWindow, terminal } = ctx;
+  const repo = path.join(__dirname, '..', '..');
+  const skeleton = (skill) => fs.readFileSync(path.join(repo, 'resources', 'skills', skill, 'SKILL.md'), 'utf8')
+    .split('## Gerüst')[1].match(/```python\n([\s\S]*?)```/)[1];
+  const api = (method, url, body) => appWindow.view.webContents.executeJavaScript(`(async () => {
+    const res = await fetch(${JSON.stringify(terminal.url() + url)}, { method: ${JSON.stringify(method)},
+      headers: { Authorization: 'Bearer ask-desktop', 'Content-Type': 'application/json' },
+      body: ${body ? JSON.stringify(JSON.stringify(body)) : 'undefined'} });
+    const text = await res.text();
+    return { status: res.status, body: text };
+  })()`);
+  const run = async (command) => {
+    const r = await api('POST', '/execute?wait=120', { command });
+    const data = JSON.parse(r.body);
+    return { status: data.status, exit: data.exit_code, out: (data.output || []).map((o) => o.data).join('') };
+  };
+
+  fs.writeFileSync(path.join(folder, 'daten.csv'),
+    Buffer.from('Datum;Kategorie;Betrag\n01.09.2026;Bücher;12.50\n02.09.2026;Material;4.75\n', 'latin1'));
+  for (const [skill, file] of [['word', 'Anleitung.docx'], ['excel', 'Auswertung.xlsx'], ['powerpoint', 'Praesentation.pptx']]) {
+    const w = await api('POST', '/files/write', { path: `${skill}.py`, content: skeleton(skill) });
+    check(`Skript ${skill}.py über /files/write`, w.status === 200, w.body);
+    const r = await run(`python ${skill}.py`);
+    check(`${file} erstellt`, r.exit === 0 && fs.existsSync(path.join(folder, 'ausgabe', file)), r.out);
+    const p = await run(`python .ask/skills/pruefen.py ausgabe/${file} --pdf`);
+    check(`pruefen.py --pdf ${file}`, p.exit === 0 && /PDF erstellt/.test(p.out) && /Seiten: \d/.test(p.out), p.out);
+  }
+  const pdfDir = path.join(folder, '.ask', 'pdf');
+  check('PDFs in .ask/pdf', fs.existsSync(pdfDir) && fs.readdirSync(pdfDir).length === 3, fs.existsSync(pdfDir) ? fs.readdirSync(pdfDir).join(', ') : '-');
+
+  // Modell versucht, ausserhalb zu schreiben
+  const outside = path.join(path.dirname(folder), 'ausserhalb-coworker.txt');
+  const o = await run(`echo x > "${outside}"`);
+  check('Schreiben ausserhalb per Shell verweigert', !fs.existsSync(outside), o.out);
+  const f = await api('POST', '/files/write', { path: outside, content: 'x' });
+  check('Schreiben ausserhalb per Datei-API verweigert', f.status >= 400 && !fs.existsSync(outside), f.body);
+
+  // Bild und PDF in der Vorschau
+  const img = await run('python -c "import matplotlib.pyplot as p; p.bar([1,2],[3,4]); p.savefig(\'ausgabe/diagramm.png\')"');
+  check('Diagramm mit matplotlib', img.exit === 0, img.out);
+  fs.copyFileSync(path.join(pdfDir, fs.readdirSync(pdfDir).find((n) => n.endsWith('.pdf') && !n.includes('-'))),
+    path.join(folder, 'ausgabe', 'Anleitung.pdf'));
+  await until('Bild in Ausgabe', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("diagramm.png"))'), 10000);
+  await shell('[...document.querySelectorAll("#output-list li")].find((li) => li.textContent.includes("diagramm.png")).click()');
+  const imgOk = await until('Bildvorschau', () => shell('(() => { const i = document.querySelector("#preview-body img"); return i && i.complete && i.naturalWidth > 0; })()'), 10000).catch(() => false);
+  check('Bildvorschau', imgOk);
+  await shoot('vorschau-bild');
+  await until('PDF in Ausgabe', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("Anleitung.pdf"))'), 10000);
+  await shell('[...document.querySelectorAll("#output-list li")].find((li) => li.textContent.includes("Anleitung.pdf")).click()');
+  check('PDF-Vorschau eingebettet', await until('PDF-iframe', () => shell('!!document.querySelector("#preview-body iframe")'), 5000).catch(() => false));
+  await wait(2500);
+  await shoot('vorschau-pdf');
+  await shell('[...document.querySelectorAll("#output-list li")].find((li) => li.textContent.includes("Auswertung.xlsx")).click()');
+  await until('Office-Knöpfe', () => shell('!!document.querySelector("#preview-body .office")'), 5000);
+  await shell('[...document.querySelectorAll("#preview-body .office button")].find((b) => b.textContent === "Als PDF anzeigen").click()');
+  check('«Als PDF anzeigen» für Excel', await until('PDF aus Excel', () => shell('!!document.querySelector("#preview-body iframe")'), 120000).catch(() => false));
+  await wait(2500);
+  await shoot('vorschau-excel-pdf');
+}
+
 module.exports = async function run(ctx) {
   const { app, appWindow, terminal, connection, settings } = ctx;
   const report = { scenario: process.env.ASK_TEST_SCENARIO, checks: [] };
@@ -153,6 +215,7 @@ module.exports = async function run(ctx) {
     await until('Textvorschau', () => shell('(document.querySelector("#preview-body pre")||{}).textContent === "Inhalt des Berichts"'), 5000);
     check('Textvorschau', true);
     await shoot('verbunden');
+    if (scenario === 'coworker') await coworker(ctx, check, shell, shoot, folder);
   } catch (err) {
     check('Ablauf', false, err.stack);
     await shoot('fehler');
