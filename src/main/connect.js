@@ -8,6 +8,12 @@ const { EventEmitter } = require('node:events');
 const PLACEHOLDER_KEY = 'ask-desktop';
 const ENTRY_NAME = 'ASK Desktop';
 const MIN_VERSION = [0, 8, 11]; // ab hier holt Open WebUI den Systemprompt des Terminals
+// Mindestabstand zwischen zwei Prüfungen je Zustand (ms). Ohne Anmeldung kostet eine Prüfung keine
+// Anfrage an ASK; sonst sind es drei, darum selten, wenn alles läuft (viele Laptops, ein Server).
+const RECHECK_MS = {
+  'nicht-angemeldet': 4000, unbekannt: 4000, 'nicht-eingerichtet': 30000, fehler: 60000,
+  eingerichtet: 120000, verbunden: 300000, 'nicht-freigegeben': 300000, 'zu-alt': 600000,
+};
 
 // Wird als Funktionsquelltext in die ASK-Seite gegeben; darf nichts aus diesem Modul verwenden.
 async function pageProbe(terminalUrl, placeholderKey, entryName, apply) {
@@ -84,6 +90,7 @@ class Connection extends EventEmitter {
     this.lastSeen = 0;
     this.timer = null;
     this.busy = false;
+    this.lastCheck = 0;
   }
 
   attach(view, getAskOrigin) {
@@ -93,7 +100,7 @@ class Connection extends EventEmitter {
     wc.on('did-finish-load', () => this.check());
     wc.on('did-navigate-in-page', () => this.check());
     clearInterval(this.timer);
-    this.timer = setInterval(() => this.check(), 8000);
+    this.timer = setInterval(() => this.check(), 4000);
   }
 
   // Neuer Terminal-Start: Verbindung in ASK beim nächsten Check einrichten bzw. prüfen.
@@ -132,6 +139,9 @@ class Connection extends EventEmitter {
     const origin = this.getAskOrigin();
     if (!origin || !wc.getURL().startsWith(origin + '/')) return this.status;
     const apply = force || this.pendingApply;
+    const interval = RECHECK_MS[this.status.state] ?? 30000;
+    if (!apply && Date.now() - this.lastCheck < interval) return this.status;
+    this.lastCheck = Date.now();
     this.busy = true;
     try {
       const source = `(${pageProbe.toString()})(${JSON.stringify(this.terminalUrl)}, ${JSON.stringify(PLACEHOLDER_KEY)}, ${JSON.stringify(ENTRY_NAME)}, ${apply})`;

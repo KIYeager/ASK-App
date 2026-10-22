@@ -7,6 +7,7 @@ let permitted = (process.argv[3] || 'frei') === 'frei';
 const TOKEN = 'test-token';
 const userSettings = { ui: { terminalServers: [{ url: 'http://127.0.0.1:9', key: 'alt', name: 'Eigenes', enabled: true }] } };
 const log = [];
+let pageResults = {};
 
 // Die Seite verhält sich vereinfacht wie Open WebUI: Sie liest die eingerichteten Terminals und
 // ruft beim ausgewählten Terminal openapi.json, /system und /files/cwd mit dem gespeicherten Key ab.
@@ -14,16 +15,30 @@ const page = `<!doctype html><html><head><meta charset="utf-8"><title>Mock ASK</
 <body style="font-family:Segoe UI;padding:20px"><h1>Mock ASK</h1><pre id="out">…</pre><script>
 localStorage.token = localStorage.token || '${TOKEN}';
 window.__results = {};
+// Wie Open WebUI: Werkzeuge des Terminals nur einmal beim Laden der Seite holen.
+let firstLoad = 'kein Terminal eingerichtet';
+const firstLoadDone = (async () => {
+  const s = await (await fetch('/api/v1/users/user/settings', { headers: { Authorization: 'Bearer ' + localStorage.token } })).json();
+  const t = (s.ui.terminalServers || []).find((x) => x.url === localStorage.selectedTerminalId && x.enabled);
+  if (!t) return;
+  try { firstLoad = (await fetch(t.url + '/openapi.json', { headers: { Authorization: 'Bearer ' + t.key } })).status; }
+  catch (e) { firstLoad = 'FEHLER ' + e.message; }
+})();
 async function poll() {
+  await firstLoadDone;
   try {
     const s = await (await fetch('/api/v1/users/user/settings', { headers: { Authorization: 'Bearer ' + localStorage.token } })).json();
     const sel = localStorage.selectedTerminalId;
     const t = (s.ui.terminalServers || []).find((x) => x.url === sel && x.enabled);
-    const r = { selected: sel || null, configured: !!t };
+    const r = { selected: sel || null, configured: !!t, firstLoad };
     if (t) {
       const h = { Authorization: 'Bearer ' + t.key };
       for (const p of ['/openapi.json', '/system', '/files/cwd']) {
-        try { const res = await fetch(t.url + p, { headers: h }); r[p] = res.status; } catch (e) { r[p] = 'FEHLER ' + e.message; }
+        try {
+          const res = await fetch(t.url + p, { headers: h });
+          r[p] = res.status;
+          if (p === '/system' && res.ok) r.systemText = (await res.json()).prompt;
+        } catch (e) { r[p] = 'FEHLER ' + e.message; }
       }
       try {
         const res = await fetch(t.url + '/execute?wait=10', { method: 'POST', headers: { ...h, 'Content-Type': 'application/json' },
@@ -33,6 +48,7 @@ async function poll() {
     }
     window.__results = r;
     document.getElementById('out').textContent = JSON.stringify(r, null, 2);
+    fetch('/__mock/results', { method: 'POST', body: JSON.stringify(r) });
   } catch (e) { document.getElementById('out').textContent = 'Fehler ' + e; }
   setTimeout(poll, 2000);
 }
@@ -55,6 +71,14 @@ http.createServer((req, res) => {
     return json(res, 200, { version: '0.12.3', features: { enable_tool_servers: true, enable_direct_integrations: true } });
   }
   if (req.url === '/__mock/settings') return json(res, 200, userSettings);
+  if (req.url === '/__mock/results' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => { pageResults = JSON.parse(body || '{}'); json(res, 200, {}); });
+    return undefined;
+  }
+  if (req.url === '/__mock/results') return json(res, 200, pageResults);
+  if (req.url === '/__mock/reset') { pageResults = {}; return json(res, 200, {}); }
   if (req.url === '/__mock/log') return json(res, 200, log);
   if (req.url.startsWith('/__mock/permit/')) {
     permitted = req.url.endsWith('/ja');

@@ -183,7 +183,8 @@ function setupIpc() {
     }
     if (parsed.protocol !== 'https:') return { ok: false, reason: 'Die Adresse muss mit https:// beginnen.' };
     settings.set({ askUrl: parsed.origin + parsed.pathname.replace(/\/$/, '') });
-    appWindow.loadAsk(settings.get('askUrl'));
+    if (askLoaded) appWindow.loadAsk(settings.get('askUrl'));
+    else if (!settings.get('folder')) loadAskOnce();
     startTerminal();
     pushState();
     return { ok: true };
@@ -240,13 +241,31 @@ function setupProtocol() {
   });
 }
 
+// ASK holt Werkzeuge und Systemprompt des Terminals nur beim Laden der Seite. Darum wird ASK erst
+// geladen, wenn das Terminal läuft, und nach einem Ordnerwechsel neu geladen (der Pfad steht im Prompt).
+let askLoadedFolder = null;
+let askLoaded = false;
+
+function loadAskOnce() {
+  if (askLoaded || !settings.get('askUrl') || !appWindow) return;
+  askLoaded = true;
+  appWindow.loadAsk(settings.get('askUrl'));
+}
+
 function wireEvents() {
   terminal.on('port', (port) => {
     settings.set({ port });
     appWindow.setTerminal(port, terminal.key);
   });
   terminal.on('state', (snap) => {
-    if (snap.state === 'läuft') connection.setTerminal(terminal.url(), settings.get('autoConnect'));
+    if (snap.state === 'läuft') {
+      connection.setTerminal(terminal.url(), settings.get('autoConnect'));
+      if (!askLoaded) loadAskOnce();
+      else if (askLoadedFolder !== null && askLoadedFolder !== snap.folder) appWindow.view.webContents.reload();
+      askLoadedFolder = snap.folder;
+    } else if (snap.state === 'fehler') {
+      loadAskOnce();
+    }
     pushState();
   });
   connection.on('status', () => pushState());
@@ -269,14 +288,17 @@ app.whenReady().then(() => {
   connection.attach(appWindow.view, () => appWindow.askOrigin);
   wireEvents();
   const s = settings.load();
-  if (s.askUrl) appWindow.loadAsk(s.askUrl);
-  if (s.folder) {
+  if (s.folder && s.askUrl) {
     openFolder(s.folder).then((res) => {
       if (!res.ok) {
         settings.set({ folder: '' });
+        loadAskOnce();
         pushState();
       }
     });
+    setTimeout(loadAskOnce, 20000); // falls das Terminal gar nicht startet
+  } else {
+    loadAskOnce();
   }
   appWindow.win.on('closed', () => { appWindow = null; });
   if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) {

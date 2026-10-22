@@ -45,9 +45,16 @@ function load() {
 
 function save() {
   fs.mkdirSync(path.dirname(file()), { recursive: true });
+  const text = JSON.stringify(data, null, 2);
   const tmp = file() + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-  fs.renameSync(tmp, file());
+  try {
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, file());
+  } catch {
+    // Umbenennen kann scheitern (Virenscanner, umgeleitete Ordner): dann direkt schreiben.
+    fs.rmSync(tmp, { force: true });
+    fs.writeFileSync(file(), text);
+  }
 }
 
 function get(key) {

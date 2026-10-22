@@ -27,6 +27,6 @@ module.exports = {
   rendererDir: () => path.join(repoRoot, 'src', 'renderer'),
   preloadDir: () => path.join(repoRoot, 'src', 'preload'),
   // Laufzeitdaten des Terminals (temporäre Dateien, Logs). Muss lokal sein, nicht im Roaming-Profil.
-  runtimeDir: () => process.env.ASK_RUNTIME_DIR
+  runtimeDir: () => (!app.isPackaged && process.env.ASK_RUNTIME_DIR)
     || path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'ASK-Desktop', 'laufzeit'),
 };

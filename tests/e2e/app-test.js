@@ -197,6 +197,7 @@ module.exports = async function run(ctx) {
       return r && r.execute ? r : null;
     });
     check('openapi.json mit eingesetztem Key', results['/openapi.json'] === 200, JSON.stringify(results));
+    check('Werkzeuge schon beim ersten Laden der Seite', results.firstLoad === 200, JSON.stringify(results));
     check('/files/cwd mit eingesetztem Key', results['/files/cwd'] === 200);
     check('Befehl aus der Seite ausgeführt', String(results.execute).includes('hallo aus ASK'), results.execute);
 
@@ -216,6 +217,22 @@ module.exports = async function run(ctx) {
     check('Textvorschau', true);
     await shoot('verbunden');
     if (scenario === 'coworker') await coworker(ctx, check, shell, shoot, folder);
+
+    // Ordnerwechsel: Terminal startet im neuen Ordner neu, ASK lädt neu und sieht den neuen Pfad.
+    const other = `${folder}-zwei`;
+    fs.mkdirSync(other, { recursive: true });
+    const loads = [];
+    appWindow.view.webContents.on('did-finish-load', () => loads.push(Date.now()));
+    const opened = await ctx.openFolder(other);
+    check('Ordnerwechsel akzeptiert', opened.ok, JSON.stringify(opened));
+    await until('Terminal im neuen Ordner', () => terminal.state === 'läuft' && terminal.folder === opened.path, 60000);
+    await until('ASK neu geladen', () => loads.length > 0, 20000);
+    const after = await until('Systemprompt mit neuem Ordner', async () => {
+      const r = await appWindow.view.webContents.executeJavaScript('window.__results');
+      return r && r.systemText && r.systemText.includes(path.basename(other)) ? r : null;
+    }, 20000).catch(() => null);
+    check('Nach Ordnerwechsel nennt der Systemprompt den neuen Ordner', !!after);
+    check('Nach Ordnerwechsel gleiche Terminal-URL', settings.get('port') === terminal.port);
   } catch (err) {
     check('Ablauf', false, err.stack);
     await shoot('fehler');

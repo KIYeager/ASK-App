@@ -1,0 +1,15 @@
+Thema: Backup mit dem Dateiversionsverlauf von Windows 11
+Zielgruppe: Lernende im ersten Lehrjahr, keine Vorkenntnisse
+
+- warum Backup: Laptop defekt, gestohlen, Datei aus Versehen gelöscht
+- externe Festplatte oder USB-Stick, mind. so gross wie die eigenen Daten
+- Einstellungen > System > Speicher > Erweiterte Speichereinstellungen > Sicherungsoptionen
+- alternativ Systemsteuerung > Dateiversionsverlauf
+- Laufwerk auswählen, einschalten
+- Intervall: stündlich (Standard) reicht
+- Aufbewahrung: «Bis Speicherplatz benötigt wird»
+- Ordner hinzufügen/ausschliessen
+- Wiederherstellen: Ordner im Explorer, Rechtsklick > Vorherige Versionen
+- Test: eine Datei löschen und zurückholen
+- Achtung: Backup-Laufwerk nicht dauernd eingesteckt lassen (Ransomware), OneDrive ist kein Backup
+- Checkliste am Schluss

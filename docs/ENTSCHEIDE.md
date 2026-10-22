@@ -4,7 +4,9 @@ Entscheide, die ohne Rückfrage getroffen wurden, mit Begründung. Neueste unten
 
 ## E1 Build-Ordner ausserhalb von OneDrive
 
-Das Repo liegt in OneDrive. `node_modules`, das gebaute Python und der Installer umfassen Zehntausende Dateien und mehrere hundert MB, die sonst auf SharePoint synchronisiert würden. `scripts/setup.ps1` legt deshalb `node_modules`, `build` und `dist` als Junctions in einen lokalen Build-Ordner (`ASK_BUILD_DIR`, Standard `%LOCALAPPDATA%\ASK-Desktop-Build`). OneDrive folgt Junctions nicht. Im Repo selbst liegen nur Quellen und Dokumentation.
+Das Repo liegt in OneDrive. `node_modules`, das gebaute Python und der Installer umfassen Zehntausende Dateien und mehrere hundert MB, die sonst auf SharePoint synchronisiert würden. Alles Gebaute liegt deshalb in einem lokalen Build-Ordner (`ASK_BUILD_DIR`, Standard `%LOCALAPPDATA%\ASK-Desktop-Build`): Python unter `python`, der Installer unter `dist`. `scripts/setup.ps1` installiert die npm-Pakete mit `npm ci` in `deps` und legt im Projekt nur eine Junction `node_modules` an. OneDrive folgt Junctions nicht.
+
+Korrektur während der Arbeit: Zuerst lag die Junction im Projekt und `npm install` lief im Projektordner. npm hat die Junction dabei durch einen echten Ordner ersetzt, sodass rund 450 MB `node_modules` etwa anderthalb Stunden im OneDrive-Ordner lagen, bis es auffiel. Der Ordner ist entfernt; darum gilt jetzt: `npm install` nie direkt im Projektordner ausführen, sondern `scripts/setup.ps1`. Besser wäre es, das Repo ganz ausserhalb von OneDrive abzulegen (siehe README, offene Punkte).
 
 ## E2 Anweisungen über den Systemprompt von open-terminal
 
@@ -61,3 +63,11 @@ Die Low-Kennzeichnung vererbt sich auf bereits vorhandene Dateien im Arbeitsordn
 ## E15 Office-Umwandlung über die App
 
 Word, Excel und PowerPoint lassen sich aus einem Low-Prozess nicht per COM steuern (getestet, ebenso startet Windows PowerShell 5.1 unter Low nicht). Damit das Modell Dokumente trotzdem «nach PDF wandeln und kontrollieren» kann, legt das Prüfskript einen Auftrag in `.ask/` ab; die App selbst (normale Stufe) wandelt die Datei mit dem installierten Office in PDF um. Sie akzeptiert nur `.docx`, `.xlsx` und `.pptx` aus dem Arbeitsordner, öffnet sie schreibgeschützt mit deaktivierten Makros und schreibt nur nach `.ask/pdf/`.
+
+## E16 ASK erst laden, wenn das Terminal läuft
+
+Open WebUI holt Werkzeuge (`/openapi.json`) und Systemprompt (`/system`) eines persönlichen Terminals nur beim Laden der Seite. Lädt ASK schneller als das Terminal startet, fehlen dem Modell die Werkzeuge bis zum nächsten Neuladen. Die App lädt ASK deshalb erst, wenn das Terminal läuft (höchstens 20 s Wartezeit, bei einem Fehler sofort). Nach einem Ordnerwechsel lädt sie ASK neu, weil der Ordnerpfad im Systemprompt steht. Ein Neustart des Terminals im selben Ordner braucht kein Neuladen: Port und Platzhalter-Key bleiben gleich.
+
+## E17 Installer pro Nutzer mit einem Klick
+
+NSIS mit `oneClick`, `perMachine: false` und `allowElevation: false`: Installation nach `%LOCALAPPDATA%\Programs\ask-desktop` ohne Admin-Abfrage, Verknüpfungen in Startmenü und auf dem Desktop, Deinstallation über «Apps» in den Windows-Einstellungen. Einstellungen in `%APPDATA%\ASK` bleiben bei der Deinstallation erhalten. Mitgeliefert werden nur die Chromium-Sprachdateien Deutsch und Englisch.
