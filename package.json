@@ -1,0 +1,19 @@
+{
+  "name": "ask-desktop",
+  "productName": "ASK",
+  "version": "0.1.0",
+  "description": "ASK Desktop: Open WebUI der TF Bern mit lokalem Arbeitsordner",
+  "main": "src/main/main.js",
+  "private": true,
+  "author": "TF Bern",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/",
+    "dist": "electron-builder --config electron-builder.config.js --win"
+  },
+  "devDependencies": {
+    "electron": "44.6.0",
+    "electron-builder": "26.15.3"
+  }
+}
