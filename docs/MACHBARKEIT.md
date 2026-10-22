@@ -115,3 +115,7 @@ Bitte zurückmelden: ob der Reiter da war, die ASK-Version, ob das Modell die We
 **Verwaltete Schullaptops.** Richtlinien wie AppLocker oder Intune können Programme blockieren, die pro Nutzer unter `AppData` installiert werden. Ein unsignierter Installer löst zudem eine SmartScreen-Warnung aus. Beides muss mit der Informatik der TF Bern geklärt werden; eine Code-Signatur wäre nötig, um die Warnung zu vermeiden.
 
 **Pfadlänge.** Beim Installieren der Python-Pakete in einen tief verschachtelten Ordner scheiterte pip an der 260-Zeichen-Grenze von Windows (Typ-Stubs von `jedi`). Das mitgelieferte Python wird darum mit kurzen Pfaden gebaut und ohne diese Stubs ausgeliefert.
+
+## 8. Nachtrag aus dem Bau der App
+
+Beim Bau kamen drei Befunde dazu. Windows PowerShell 5.1 startet mit Low Integrity nicht (die .NET-Laufzeit bricht mit 0x80131623 ab); das Modell arbeitet deshalb mit `cmd.exe` und Python. Word, Excel und PowerPoint lassen sich aus einem Low-Prozess nicht per COM steuern; die Umwandlung in PDF übernimmt darum die App selbst (ENTSCHEIDE E15). Und Open WebUI holt Werkzeuge und Systemprompt eines persönlichen Terminals nur beim Laden der Seite; die App lädt ASK deshalb erst, wenn das Terminal läuft (ENTSCHEIDE E16). Python wird als offizielles NuGet-Paket 3.14.8 mitgeliefert (ENTSCHEIDE E10).
