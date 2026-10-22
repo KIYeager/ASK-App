@@ -1,0 +1,1 @@
+Windows 11, Befehle laufen in cmd.exe im Arbeitsordner {ordner}. Für Programme: zuerst eine .py-Datei schreiben, dann mit python datei.py ausführen. Das Ergebnis kommt bis 60 Sekunden direkt zurück, sonst mit get_process_status nachfragen.

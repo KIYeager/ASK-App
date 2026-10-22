@@ -33,3 +33,31 @@ Die ConPTY-Ausgabe enthält Steuersequenzen und hat im Test Ausgaben verschluckt
 ## E8 Keine Umgehung fehlender ASK-Freigaben
 
 Das Backend von Open WebUI würde `terminalServers` auch ohne Berechtigung speichern. Die App schreibt die Verbindung nur, wenn ASK die Berechtigung «Direkte Tool-Server» und «Direkte Integrationen» meldet (Admins haben immer Zugriff). Sonst erklärt sie, was fehlt.
+
+## E9 Electron statt Tauri
+
+Tauri nutzt unter Windows WebView2. Damit lassen sich Header von WebSocket-Verbindungen nicht verändern, Berechtigungsabfragen wie Local Network Access nicht pro Origin beantworten und mehrere Webansichten nur umständlich in einem Fenster anordnen. Electron bringt mit `session.webRequest`, `WebContentsView` und eigenen Berechtigungs-Handlern alles mit, was für die Key-Einsetzung und die Seitenleiste nötig ist, und liefert überall dieselbe Chromium-Version. Der Nachteil ist die Grösse (rund 100 MB mehr), was bei einer Schul-App vertretbar ist. Version: Electron 44.6.0 (stabil, zum Zeitpunkt der Wahl gut zwei Wochen alt).
+
+## E10 Python aus dem offiziellen NuGet-Paket
+
+Mitgeliefert wird Python 3.14.8 aus dem NuGet-Paket «python» der Python Software Foundation (SHA512 gegen den NuGet-Katalog geprüft). Gründe: normale Ordnerstruktur ohne `._pth`-Datei, darum findet `python skript.py` Module im selben Ordner wie gewohnt; pip ist dabei; die Programmdateien sind von der PSF signiert, was bei verwalteten Schulgeräten (Defender, AppLocker) eher durchgeht als unsignierte Builds. Verworfen: das «embeddable»-Paket (isolierter Suchpfad, Skriptordner fehlt in `sys.path`, kein pip), python-build-standalone (unsigniert), PyInstaller (liefert keinen Interpreter, mit dem das Modell eigene Skripte ausführen kann). 3.14 statt 3.15, weil 3.15 erst seit Oktober 2026 draussen ist und noch nicht alle Pakete fertige Wheels haben könnten.
+
+## E11 pandas und matplotlib zusätzlich
+
+Zusätzlich zu python-docx, openpyxl, python-pptx, pypdf und reportlab sind pandas und matplotlib dabei. Modelle greifen für CSV-Auswertungen fast immer zu pandas und für Diagramme zu matplotlib; fehlen sie, scheitert der erste Versuch. Entfernt werden dafür Testsuiten von pandas, numpy und matplotlib, die Typ-Stubs von jedi (Ursache des Pfadlängenproblems) und debugpy. Grösse des Python-Ordners: rund 290 MB.
+
+## E12 Notebooks abgeschaltet
+
+Die Notebook-Funktion von open-terminal öffnet Dateien direkt über `os.path.abspath` und umgeht damit die Ordnersperre. Sie ist für den Arbeitsablauf nicht nötig und bleibt aus (`OPEN_TERMINAL_ENABLE_NOTEBOOKS=false`).
+
+## E13 Weitere Sperren: AppData und alle Cloud-Sync-Ordner
+
+Neben den im Auftrag genannten Ordnern sind auch `AppData` (Einstellungen anderer Programme) und Netzwerkpfade gesperrt. OneDrive- und SharePoint-Ordner werden zusätzlich zu den Umgebungsvariablen und dem Namen über die Registry erkannt (`HKCU\Software\SyncEngines\Providers\OneDrive\*\MountPoint` und die `Tenants`-Einträge). So fallen auch synchronisierte SharePoint-Bibliotheken unter `%USERPROFILE%\<Organisation>` darunter, deren Pfad «OneDrive» nicht enthält. Gesperrt ist auch ein Ordner, der einen solchen Ordner enthält.
+
+## E14 Schutz der Originale nur über die Anweisung
+
+Die Low-Kennzeichnung vererbt sich auf bereits vorhandene Dateien im Arbeitsordner (getestet). Das Modell kann sie also ändern. Ein zusätzlicher Schutz einzelner Dateien wäre möglich, würde aber nur für Dateien gelten, die vor dem Öffnen im Ordner lagen, und wirkt dadurch unberechenbar. Darum gilt: Windows schützt alles ausserhalb des Ordners, innerhalb gilt die Anweisung «nicht überschreiben, nichts löschen ohne Nachfrage», und der Ersthinweis verlangt das Arbeiten mit Kopien.
+
+## E15 Office-Umwandlung über die App
+
+Word, Excel und PowerPoint lassen sich aus einem Low-Prozess nicht per COM steuern (getestet, ebenso startet Windows PowerShell 5.1 unter Low nicht). Damit das Modell Dokumente trotzdem «nach PDF wandeln und kontrollieren» kann, legt das Prüfskript einen Auftrag in `.ask/` ab; die App selbst (normale Stufe) wandelt die Datei mit dem installierten Office in PDF um. Sie akzeptiert nur `.docx`, `.xlsx` und `.pptx` aus dem Arbeitsordner, öffnet sie schreibgeschützt mit deaktivierten Makros und schreibt nur nach `.ask/pdf/`.
