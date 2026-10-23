@@ -51,7 +51,7 @@ Echtes ASK (Version, Freigaben, Anmeldung über Microsoft-Konto in der App), das
 ### Tests wiederholen
 
 ```
-$env:ASK_BUILD_DIR = "<Build-Ordner>"
+$env:ASK_BUILD_DIR = Get-Content .ask-build-dir   # von scripts\setup.ps1 geschrieben
 npm test
 & "$env:ASK_BUILD_DIR\python\python.exe" -m unittest tests\test_terminal.py tests\test_skills.py
 npm run test:e2e

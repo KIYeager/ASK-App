@@ -1,13 +1,9 @@
 // Pfade zu mitgelieferten Teilen, getrennt nach Entwicklung (npm start) und installierter App.
 const path = require('node:path');
-const os = require('node:os');
 const { app } = require('electron');
+const { buildDir } = require('./build-dir');
 
 const repoRoot = path.join(__dirname, '..', '..');
-
-function buildDir() {
-  return process.env.ASK_BUILD_DIR || path.join(process.env.LOCALAPPDATA || os.homedir(), 'ASK-Desktop-Build');
-}
 
 function resources(...parts) {
   return app.isPackaged ? path.join(process.resourcesPath, ...parts) : path.join(repoRoot, 'resources', ...parts);

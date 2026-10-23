@@ -40,7 +40,8 @@ Write-Host "node_modules -> $target"
 
 if (-not $OhnePython) { & (Join-Path $PSScriptRoot "build-python.ps1") -BuildDir $BuildDir }
 
+# Build-Ordner merken, damit npm start und npm run dist ihn ohne Umgebungsvariable finden.
+[IO.File]::WriteAllText((Join-Path $repo ".ask-build-dir"), $BuildDir)
+
 Write-Host ""
-Write-Host "Fertig. In derselben PowerShell-Sitzung setzen, damit Start und Build das Python finden:"
-Write-Host "  `$env:ASK_BUILD_DIR = '$BuildDir'"
-Write-Host "Starten: npm start    Tests: npm test    Installer: npm run dist"
+Write-Host "Fertig. Starten: npm start    Tests: npm test    Installer: npm run dist"

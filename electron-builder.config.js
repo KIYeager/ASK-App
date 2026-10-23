@@ -1,9 +1,8 @@
 // Windows-Installer für ASK: NSIS, Installation pro Nutzer (ohne Admin-Rechte).
 // Das mitgelieferte Python baut scripts/build-python.ps1 nach ASK_BUILD_DIR\python.
 const path = require('node:path');
-const os = require('node:os');
 
-const buildDir = process.env.ASK_BUILD_DIR || path.join(process.env.LOCALAPPDATA || os.homedir(), 'ASK-Desktop-Build');
+const buildDir = require('./src/main/build-dir').buildDir();
 
 module.exports = {
   appId: 'ch.tfbern.ask',

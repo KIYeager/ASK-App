@@ -29,7 +29,7 @@ Wichtig, weil das Repo in OneDrive liegt: `npm install` nie direkt im Projektord
 powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
 
-Das Skript legt den Build-Ordner an (`%LOCALAPPDATA%\ASK-Desktop-Build`, änderbar mit `-BuildDir` oder `ASK_BUILD_DIR`), installiert die npm-Pakete mit `npm ci`, lädt Python 3.14.8 als offizielles NuGet-Paket (Prüfsumme wird kontrolliert), installiert die Pakete aus `python/requirements.txt` und entfernt Testsuiten. Dauer beim ersten Mal etwa 5 Minuten.
+Das Skript legt den Build-Ordner an (`%LOCALAPPDATA%\ASK-Desktop-Build`, änderbar mit `-BuildDir` oder `ASK_BUILD_DIR`), installiert die npm-Pakete mit `npm ci`, lädt Python 3.14.8 als offizielles NuGet-Paket (Prüfsumme wird kontrolliert), installiert die Pakete aus `python/requirements.txt` und entfernt Testsuiten. Den Build-Ordner merkt es sich in `.ask-build-dir` (nicht versioniert), damit die folgenden Befehle ihn ohne Umgebungsvariable finden. Dauer beim ersten Mal etwa 5 Minuten.
 
 Vor dem Bauen die Adresse von ASK in `resources/app-config.json` eintragen, sonst fragt die App beim ersten Start danach:
 
@@ -37,10 +37,9 @@ Vor dem Bauen die Adresse von ASK in `resources/app-config.json` eintragen, sons
 { "askUrl": "https://<ASK-URL>" }
 ```
 
-Danach in derselben PowerShell-Sitzung:
+Danach:
 
 ```powershell
-$env:ASK_BUILD_DIR = "$env:LOCALAPPDATA\ASK-Desktop-Build"
 npm start
 ```
 
