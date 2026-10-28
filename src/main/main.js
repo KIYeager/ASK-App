@@ -11,6 +11,7 @@ const { Connection, PLACEHOLDER_KEY } = require('./connect');
 const { Workspace } = require('./workspace');
 const { AppWindow } = require('./window');
 const { convertToPdf } = require('./office');
+const { cleanupOldVersions } = require('./portable');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -19,7 +20,8 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'askfile', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ]);
 
-if (!app.requestSingleInstanceLock()) {
+const singleInstance = app.requestSingleInstanceLock();
+if (!singleInstance) {
   app.quit();
 }
 
@@ -301,6 +303,7 @@ app.whenReady().then(() => {
     loadAskOnce();
   }
   appWindow.win.on('closed', () => { appWindow = null; });
+  if (singleInstance) cleanupOldVersions();
   if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) {
     require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, connection, workspace, settings, openFolder, pushState });
   }

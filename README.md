@@ -47,7 +47,11 @@ npm start
 npm run dist
 ```
 
-`npm start` startet die App aus den Quellen. `npm run dist` baut den Installer `ASK-Setup-<Version>.exe` im Unterordner `dist` des Build-Ordners. Nur das Python neu bauen: `npm run build:python`. Das Icon entsteht mit `scripts/make-icon.py`.
+```powershell
+npm run dist:portable
+```
+
+`npm start` startet die App aus den Quellen. `npm run dist` baut den Installer `ASK-Setup-<Version>.exe` im Unterordner `dist` des Build-Ordners, `npm run dist:portable` die einzelne EXE `ASK-<Version>.exe` ohne Installation. Nur das Python neu bauen: `npm run build:python`. Icon und Startbild entstehen mit `scripts/make-icon.py`.
 
 Tests: siehe [Testprotokoll](docs/TESTPROTOKOLL.md), Abschnitt «Tests wiederholen».
 
@@ -55,7 +59,9 @@ Tests: siehe [Testprotokoll](docs/TESTPROTOKOLL.md), Abschnitt «Tests wiederhol
 
 `ASK-Setup-<Version>.exe` ausführen. Die Installation läuft pro Nutzer nach `%LOCALAPPDATA%\Programs\ask-desktop`, ohne Admin-Rechte und ohne weitere Fragen, und legt Verknüpfungen im Startmenü und auf dem Desktop an. Python, Bibliotheken und Anleitungen sind dabei; die Lernenden müssen nichts installieren. Deinstallieren über Einstellungen, Apps. Einstellungen bleiben in `%APPDATA%\ASK`, Laufzeitdaten in `%LOCALAPPDATA%\ASK-Desktop`.
 
-Der Installer ist nicht signiert. Windows SmartScreen kann deshalb beim ersten Start warnen («Weitere Informationen», «Trotzdem ausführen»).
+Ohne Installation: `ASK-<Version>.exe` irgendwo ablegen und doppelklicken. Beim ersten Start entpackt die EXE die App einmal nach `%LOCALAPPDATA%\ASK-Desktop\app\<Version>-<Build>` (Startbild «ASK wird gestartet …»), danach startet sie die App direkt von dort. Eine neuere EXE entpackt sich beim ersten Start neu, die App löscht dann den älteren Stand. Es gibt keine Verknüpfungen und keinen Eintrag unter «Apps». Einstellungen und Laufzeitdaten liegen am gleichen Ort wie bei der installierten App. Installierte App und EXE laufen nicht gleichzeitig.
+
+Installer und EXE sind nicht signiert. Windows SmartScreen kann deshalb beim ersten Start warnen («Weitere Informationen», «Trotzdem ausführen»).
 
 ## Bedienung
 
@@ -79,7 +85,8 @@ Tastenkürzel: Ctrl+R lädt ASK neu, Ctrl+Plus/Minus/0 zoomt ASK.
 - **Ordner auf FAT/exFAT-USB-Sticks** oder Netzlaufwerken werden abgelehnt, weil sie sich nicht schützen lassen.
 - **Abhängigkeit von ASK.** Persönliche Terminals brauchen in Open WebUI die Freigaben «Direkte Integrationen» und «Direkte Tool-Server». Den Systemprompt des Terminals übernimmt Open WebUI ab 0.8.11, eine `AGENTS.md` im Ordner für persönliche Terminals unter Windows ab 0.12.0.
 - **Office-Umwandlung** braucht ein installiertes Microsoft Office. Ein Office-Fenster, das die Person gerade offen hat, wird nicht geschlossen; eine hängende unsichtbare Office-Instanz wird nach 2 Minuten beendet.
-- **Grösse.** Installer rund 190 MB, installiert rund 650 MB (davon Python mit pandas und matplotlib rund 290 MB).
+- **Grösse.** Installer rund 190 MB, einzelne EXE rund 240 MB, installiert bzw. entpackt rund 650 MB (davon Python mit pandas und matplotlib rund 290 MB).
+- **Einzelne EXE beim ersten Start.** Der erste Start entpackt rund 610 MB, im Test 36 s bis zum laufenden Terminal, spätere Starts 3 s. Der entpackte Stand bleibt liegen wie eine Installation; entfernen lässt er sich nur durch Löschen von `%LOCALAPPDATA%\ASK-Desktop\app`.
 - **Interaktive Notebooks** von open-terminal sind abgeschaltet (umgehen die Ordnersperre).
 
 ## Offene Punkte

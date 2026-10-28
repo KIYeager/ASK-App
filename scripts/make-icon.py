@@ -1,4 +1,5 @@
-"""Erzeugt resources/icon.png und resources/icon.ico (Schriftzug «ASK» auf Petrol)."""
+"""Erzeugt resources/icon.png und resources/icon.ico (Schriftzug «ASK» auf Petrol) sowie
+resources/splash.bmp, das Startbild der einzelnen EXE während des Entpackens."""
 import os
 
 from PIL import Image, ImageDraw, ImageFont
@@ -30,3 +31,13 @@ draw.rounded_rectangle((SIZE / 2 - 150, 760, SIZE / 2 + 150, 800), radius=20, fi
 img.resize((512, 512), Image.LANCZOS).save(os.path.join(ROOT, "resources", "icon.png"))
 img.save(os.path.join(ROOT, "resources", "icon.ico"), sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 print("Icon geschrieben")
+
+# Startbild: 24-Bit-BMP ohne Transparenz, sonst zeigt der NSIS-Starter es nicht an
+splash = Image.new("RGB", (480, 270), BG)
+draw = ImageDraw.Draw(splash)
+for text, size, y in (("ASK", 120, 105), ("wird gestartet …", 26, 200), ("Das dauert einen Moment.", 18, 236)):
+    f = font(size)
+    box = draw.textbbox((0, 0), text, font=f)
+    draw.text(((480 - (box[2] - box[0])) / 2 - box[0], y - (box[3] - box[1]) / 2 - box[1]), text, font=f, fill=FG)
+splash.save(os.path.join(ROOT, "resources", "splash.bmp"))
+print("Startbild geschrieben")

@@ -20,6 +20,10 @@ Die Code-Gerüste aus `word`, `excel`, `powerpoint` und `pdf` laufen unveränder
 
 Abgelehnt werden: Ordner in OneDrive (über Umgebungsvariablen, über «OneDrive» im Pfad, über synchronisierte SharePoint-Bibliotheken aus der Registry, auch über eine Junction dorthin), Ordner, die einen solchen Ordner enthalten, Laufwerkswurzeln, das Benutzerprofil, `C:\Users`, AppData, Windows, Programme, ProgramData, Netzwerkpfade, fehlende Ordner und Dateien. Erlaubt: Projektordner im Profil und auf anderen Laufwerken. Auf dem Testrechner werden alle sechs echten OneDrive- und SharePoint-Synchronisationsordner aus der Registry erkannt.
 
+### Aufräumen der einzelnen EXE (`tests/portable.test.js`, 6 Tests)
+
+Gefunden werden ältere Stände unter `%LOCALAPPDATA%\ASK-Desktop\app` und `.neu`-Ordner, die älter als eine Stunde sind. Stehen bleiben der eigene Stand (auch bei anderer Schreibweise), jüngere `.neu`-Ordner und Dateien.
+
 ### App im Entwicklungsmodus (`tests/e2e/run.js`, 71 Prüfungen in 5 Szenarien)
 
 | Szenario | Prüfungen | Inhalt |
@@ -40,13 +44,19 @@ Von aussen über das DevTools-Protokoll gesteuert, einmal mit `win-unpacked\ASK.
 
 `ASK-Setup-0.1.0.exe` (191 MB) baut mit electron-builder 26.15.3. Stille Installation (`/S`) ohne Admin-Abfrage, Exitcode 0, Ziel `%LOCALAPPDATA%\Programs\ask-desktop`, Verknüpfungen in Startmenü und auf dem Desktop, Deinstallationseintrag unter HKCU. Stille Deinstallation entfernt Programm, Verknüpfungen und Eintrag. Die Signatur der Python Software Foundation an `python.exe` bleibt gültig; `ASK.exe` und der Installer sind nicht signiert. Längster Pfad im Programmordner: 131 Zeichen ab Installationsordner, also rund 195 Zeichen bei einem 20-stelligen Benutzernamen.
 
+### Einzelne EXE (`tests/e2e/portable-test.js`, 18 Prüfungen)
+
+`ASK-0.1.0.exe` (242 MB) baut mit `npm run dist:portable`, makensis braucht dafür gut 8 Minuten. Gemessen auf dem Entwicklungslaptop mit Virenscanner: Der erste Start zeigt das Startbild (bei 125 % Skalierung 600 × 338 Pixel), entpackt 611 MB nach `%LOCALAPPDATA%\ASK-Desktop\app\<Version>-<Build>` und meldet «Terminal läuft» nach 36 s. Der Starter beendet sich, die App läuft aus dem Zwischenspeicher, Python auch. Verbindung mit Mock-ASK und Befehl aus der Seite funktionieren. Nach dem Schliessen laufen keine Python-Prozesse mehr, der Port ist zu, der Zwischenspeicher bleibt. Spätere Starts ohne Startbild und ohne neues Entpacken: «Terminal läuft» nach 2,6 s. Ein zweiter Doppelklick bei laufender App holt nur das Fenster nach vorne. Der nächste Start löscht einen älteren Stand (auch dessen `app.asar`) und einen `.neu`-Ordner, der älter als eine Stunde ist; ein jüngerer `.neu`-Ordner und der eigene Stand bleiben. Ein hart abgebrochenes Entpacken gilt nicht als fertig; der nächste Start entpackt neu (37 s). Dabei bleibt nur der Plugin-Ordner des abgebrochenen Starters im Temp-Ordner liegen (400 KB).
+
+Zum Vergleich das zuerst versuchte Target `portable` von electron-builder: 148 MB, aber jeder Start entpackte neu und brauchte 124 s (ENTSCHEIDE E18).
+
 ### Machbarkeitsversuche aus Phase 0 (von Hand)
 
 HTTPS-Seite in Electron auf http://127.0.0.1 mit CORS und Key-Einsetzung; Low IL ohne Admin (Kennzeichnen, Token absenken, Schreibschutz, Lauschen auf Loopback); Aufräumen über Job-Objekt; Kennzeichnung vererbt sich auf bestehende Dateien; Word per COM aus Low heraus geht nicht; Windows PowerShell 5.1 startet unter Low nicht (0x80131623); Git-Bash-Werkzeuge starten unter Low nicht.
 
 ### Nicht getestet
 
-Echtes ASK (Version, Freigaben, Anmeldung über Microsoft-Konto in der App), das Verhalten von Qwen3.8 Flash Next, ein Schullaptop mit Intune, AppLocker oder SmartScreen-Richtlinien, ein Rechner ohne Office (die Umwandlung sollte dann «Office ist nicht installiert» melden), Benutzernamen mit Umlauten, Bildschirmskalierung über 150 %.
+Echtes ASK (Version, Freigaben, Anmeldung über Microsoft-Konto in der App), das Verhalten von Qwen3.8 Flash Next, ein Schullaptop mit Intune, AppLocker oder SmartScreen-Richtlinien, ein Rechner ohne Office (die Umwandlung sollte dann «Office ist nicht installiert» melden), Benutzernamen mit Umlauten, Bildschirmskalierung über 150 %. Die einzelne EXE auf einem Schullaptop (Startdauer mit dessen Virenscanner, AppLocker für `%LOCALAPPDATA%\ASK-Desktop\app`).
 
 ### Tests wiederholen
 
@@ -56,9 +66,10 @@ npm test
 & "$env:ASK_BUILD_DIR\python\python.exe" -m unittest tests\test_terminal.py tests\test_skills.py
 npm run test:e2e
 node tests\e2e\packaged-test.js "$env:ASK_BUILD_DIR\dist\win-unpacked\ASK.exe" "$env:USERPROFILE\ASK-Test"
+node tests\e2e\portable-test.js "$env:ASK_BUILD_DIR\dist\ASK-0.1.0.exe" "$env:USERPROFILE\ASK-Test"
 ```
 
-Die End-to-End-Tests legen Ordner unter `%USERPROFILE%\ASK-Test-e2e` bzw. dem angegebenen Ordner an. `packaged-test.js` sichert vorhandene Einstellungen in `%APPDATA%\ASK` und stellt sie danach wieder her.
+Die End-to-End-Tests legen Ordner unter `%USERPROFILE%\ASK-Test-e2e` bzw. dem angegebenen Ordner an. `packaged-test.js` und `portable-test.js` sichern vorhandene Einstellungen in `%APPDATA%\ASK` und stellen sie danach wieder her. `portable-test.js` entpackt den Stand der EXE neu und lässt ihn danach liegen.
 
 ## Teil 2: Tests mit ASK (von dir durchzuführen)
 

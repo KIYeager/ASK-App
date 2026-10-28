@@ -13,7 +13,8 @@
     "start": "electron .",
     "test": "node --test tests/*.test.js",
     "test:e2e": "node tests/e2e/run.js verbinden && node tests/e2e/run.js gesperrt && node tests/e2e/run.js erststart && node tests/e2e/run.js oeffentlich && node tests/e2e/run.js coworker",
-    "dist": "electron-builder --config electron-builder.config.js --win"
+    "dist": "electron-builder --config electron-builder.config.js --win",
+    "dist:portable": "node scripts/build-portable.js"
   },
   "devDependencies": {
     "electron": "44.6.0",

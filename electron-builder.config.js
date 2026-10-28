@@ -1,4 +1,5 @@
 // Windows-Installer für ASK: NSIS, Installation pro Nutzer (ohne Admin-Rechte).
+// Die einzelne EXE ohne Installation baut scripts/build-portable.js aus win-unpacked (ENTSCHEIDE E18).
 // Das mitgelieferte Python baut scripts/build-python.ps1 nach ASK_BUILD_DIR\python.
 const path = require('node:path');
 
