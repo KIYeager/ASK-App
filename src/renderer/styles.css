@@ -296,6 +296,31 @@ body:not(.verbose) .msg.folded { display: none; }
 .input-box:focus-within { border-color: var(--accent-strong); }
 .input-box.disabled { opacity: 0.55; }
 .prompt { color: var(--accent); line-height: 1.5; user-select: none; }
+/* Aufgabenliste über dem Eingabefeld (wie Claude Code) */
+.todo-box { margin-bottom: 8px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--panel); font-size: 13px; }
+.todo-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 10px; border: none; background: none;
+  color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.todo-caret { color: var(--dim); width: 10px; font-size: 11px; }
+.todo-label { font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); }
+.todo-bar { flex: none; width: 90px; height: 4px; border-radius: 2px; background: var(--panel-2); overflow: hidden; }
+.todo-bar span { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+.todo-box.done .todo-bar span { background: #57ab5a; }
+.todo-count { font: 12px var(--mono); color: var(--muted); }
+.todo-current { flex: 1; min-width: 0; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo-box.done .todo-current { color: #57ab5a; }
+.todo-box.open .todo-current { visibility: hidden; }
+.todo-list { list-style: none; margin: 0; padding: 0 10px 8px 30px; display: none; }
+.todo-box.open .todo-list { display: block; }
+.todo-list li { display: flex; gap: 9px; padding: 2px 0; line-height: 1.45; }
+.todo-list .tmark { width: 12px; flex: none; font-family: var(--mono); color: var(--dim); text-align: center; }
+.todo-list li.erledigt { color: var(--dim); }
+.todo-list li.erledigt .ttext { text-decoration: line-through; }
+.todo-list li.erledigt .tmark { color: #57ab5a; }
+.todo-list li.in_arbeit { color: var(--accent); font-weight: 600; }
+.todo-list li.in_arbeit .tmark { color: var(--accent); }
+.todo-list li.more { color: var(--dim); font-size: 12px; padding-left: 21px; }
 .input-box.dropping { border-color: var(--accent-strong); border-style: dashed; }
 .attach-btn {
   flex: none; width: 24px; height: 24px; margin-left: -4px; border: 1px solid var(--border-2); border-radius: 6px;
@@ -342,6 +367,8 @@ body:not(.verbose) .msg.folded { display: none; }
 .send:disabled { opacity: 0.4; cursor: default; }
 .statusline { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .statusline .hint { font-size: 11.5px; }
+.statusline > * { white-space: nowrap; flex: none; }
+.statusline > span.hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pill { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; cursor: pointer; color: var(--muted); font: inherit; }
 .pill:hover { color: var(--text); }
 .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
@@ -359,15 +386,23 @@ body:not(.verbose) .msg.folded { display: none; }
 .panel { padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .panel h2 { font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); margin: 0 0 8px; }
 .goal { margin: 0 0 6px; font-weight: 600; }
-.tasks, .files, .recent, .history { list-style: none; margin: 0; padding: 0; }
-.tasks li { display: flex; gap: 8px; padding: 2px 0; font-size: 13px; }
-.tasks .mark { width: 14px; flex: none; font-family: var(--mono); color: var(--dim); }
-.tasks li.erledigt { color: var(--dim); text-decoration: line-through; }
-.tasks li.erledigt .mark::before { content: "☒"; }
-.tasks li.in_arbeit { font-weight: 600; }
-.tasks li.in_arbeit .mark { color: var(--warn); }
-.tasks li.in_arbeit .mark::before { content: "▸"; }
-.tasks li.offen .mark::before { content: "☐"; }
+.files, .recent, .history { list-style: none; margin: 0; padding: 0; }
+
+/* Browser · live */
+.live-panel h2 { display: flex; align-items: center; gap: 7px; flex: 1; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.live-panel.running .live-dot { background: #e5534b; animation: live-pulse 1.2s ease-in-out infinite; }
+@keyframes live-pulse { 50% { opacity: 0.35; } }
+.live-path { margin: 2px 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+.live-screen { aspect-ratio: 16 / 10; background: #000; border: 1px solid var(--border-2); border-radius: 6px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.live-screen img { width: 100%; height: 100%; object-fit: contain; cursor: zoom-in; }
+.live-screen img:not([src]) { visibility: hidden; }
+.live-status { margin-top: 6px; font: 12.5px var(--mono); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-log { list-style: none; margin: 4px 0 0; padding: 0; font: 12px var(--mono); max-height: 120px; overflow: auto; }
+.live-log li { padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-log li.error { color: #e5534b; }
+.live-log li.warning { color: var(--warn); }
+.preview-body img.live-big { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
 .files li {
   display: grid; grid-template-columns: 46px 1fr auto; gap: 8px; align-items: center; padding: 4px 6px;
   border-radius: 5px; cursor: pointer; font-size: 13px;

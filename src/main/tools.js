@@ -310,6 +310,8 @@ function githubTool(fn) {
   };
 }
 
+const { PAGE_CHARS } = require('./web');
+
 const list = (items, max = 15) => (items.length ? `${items.slice(0, max).join(', ')}${items.length > max ? ` und ${items.length - max} weitere` : ''}` : '–');
 
 TOOLS.push(
@@ -400,6 +402,55 @@ TOOLS.push(
   },
 );
 
+// Internet (src/main/web.js): Suche und Seiten als Text, im Hauptprozess
+function webTool(fn) {
+  return async (terminal, args, ctx) => {
+    if (!ctx.web) throw new Error('Das Internet ist hier nicht verfügbar.');
+    return fn(ctx.web, args, ctx);
+  };
+}
+
+TOOLS.push(
+  {
+    name: 'web_search',
+    label: 'Websuche',
+    describe: (a) => a.anfrage,
+    description: 'Sucht im Internet und liefert bis zu 8 Treffer mit Titel, Adresse und Ausschnitt. Für aktuelle Informationen, Dokumentation und Fakten, '
+      + 'die du nicht sicher weisst. Danach die passenden Seiten mit web_fetch lesen. Nicht curl verwenden.',
+    parameters: { type: 'object', properties: { anfrage: { type: 'string', description: 'Suchbegriffe, z. B. «Proxmox 9 Neuerungen»' } }, required: ['anfrage'] },
+    run: webTool(async (web, a, ctx) => {
+      const r = await web.search(a.anfrage, { signal: ctx.signal });
+      if (!r.results.length) return { ok: true, output: `Keine Treffer für «${a.anfrage}».${r.note ? ` (${r.note})` : ''}`, summary: 'keine Treffer' };
+      const output = r.results.map((x, i) => `${i + 1}. ${x.title}\n   ${x.url}${x.snippet ? `\n   ${x.snippet}` : ''}`).join('\n');
+      return { ok: true, output: `Treffer (${r.engine}):\n${output}`, summary: `${r.results.length} Treffer${r.engine === 'ASK' ? '' : ` · ${r.engine}`}`,
+        sources: r.results.map((x) => ({ url: x.url, title: x.title })) };
+    }),
+  },
+  {
+    name: 'web_fetch',
+    label: 'Webseite',
+    describe: (a) => a.url,
+    description: `Holt eine Webseite und liefert ihren lesbaren Text (ohne HTML), bis ${PAGE_CHARS} Zeichen pro Aufruf; mit «ab» weiterlesen. PDF-Dateien werden gespeichert und mit read_file gelesen.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Vollständige Adresse mit https://' },
+        ab: { type: 'integer', description: 'Ab diesem Zeichen weiterlesen (aus dem letzten Ergebnis)' },
+      },
+      required: ['url'],
+    },
+    run: webTool(async (web, a, ctx) => {
+      const p = await web.page(a.url, { signal: ctx.signal, ab: a.ab, root: ctx.folder, chat: ctx.chat });
+      const source = [{ url: p.url, title: p.title }];
+      if (p.pdf) return { ok: true, output: `PDF gespeichert unter ${p.pdf}. Mit read_file lesen.`, summary: 'PDF gespeichert', sources: source };
+      const more = p.to < p.total ? `\n\n(Zeichen ${p.from}–${p.to} von ${p.total}; weiter mit ab: ${p.to})` : '';
+      return { ok: true, output: `${p.title}\n${p.url}\n\n${p.text || '(kein lesbarer Text, die Seite braucht wohl JavaScript; dann browser_test)'}${more}`,
+        display: `${p.title}\n${p.url}\n\n${p.text.slice(0, 3000)}${p.text.length > 3000 ? ' …' : ''}`,
+        summary: `${p.title.slice(0, 60)} · ${Math.round(p.total / 100) / 10}k Zeichen`, sources: source };
+    }),
+  },
+);
+
 // Ansehen (src/main/visual.js): läuft im Hauptprozess; die Bilder schickt agent.js dem Modell als
 // eigene Nachricht, denn Werkzeugergebnisse dürfen nur Text sein.
 function visualTool(fn) {
@@ -460,7 +511,7 @@ TOOLS.push(
       required: ['path'],
     },
     run: visualTool(async (v, folder, a, ctx) => {
-      const r = await v.browse(folder, a.path, { aktionen: a.aktionen, warten: a.warten, chat: ctx.chat });
+      const r = await v.browse(folder, a.path, { aktionen: a.aktionen, warten: a.warten, chat: ctx.chat, onLive: ctx.onLive });
       if (!ctx.canSee) r.output = r.output.replace('Das Bildschirmfoto folgt in der nächsten Nachricht.', 'Das Bildschirmfoto bekommst du nicht: das Modell in ASK kann keine Bilder ansehen.');
       return r;
     }),

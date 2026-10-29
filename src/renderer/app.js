@@ -136,6 +136,7 @@ function renderComposer() {
   $('activity').hidden = !running;
   $('welcome').hidden = $('messages').childElementCount > 0;
   updateUndo();
+  renderTodo();
   renderGoal();
 }
 
@@ -660,7 +661,7 @@ function shotList(images) {
     onclick: (e) => { e.stopPropagation(); showPreview({ path: p, name: baseName(p) }); } })));
 }
 
-function toolResult(row, { ok, summary, output, tasks, name, images }) {
+function toolResult(row, { ok, summary, output, tasks, name, images }, live = false) {
   const short = shortSummary(name, ok, summary, output);
   if (row.group) {
     row.item.ok = ok !== false;
@@ -672,7 +673,10 @@ function toolResult(row, { ok, summary, output, tasks, name, images }) {
   row.node.classList.remove('running');
   row.node.classList.toggle('bad', ok === false);
   row.summary.textContent = short;
-  if (tasks && tasks.length) row.result.querySelector('.res').append(todoList(tasks));
+  if (tasks && tasks.length) {
+    row.details.append(todoList(tasks));
+    if (live) setTodo(tasks, true);
+  }
   if (images && images.length) row.result.querySelector('.res').append(shotList(images));
   row.details.querySelector('pre.out')?.remove();
   if (output && !(tasks && tasks.length)) row.details.append(detailBlock(output, name === 'edit_file'));
@@ -690,6 +694,60 @@ const num = (n) => Math.round(n).toLocaleString('de-CH');
 const sec = (ms) => (ms / 1000).toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 // Zusammenfassung eines Auftrags: Schritte, Ausgabetoken, Token pro Sekunde, Zeit des Modells.
+// Aufgabenliste über dem Eingabefeld wie in Claude Code: aus dem letzten update_tasks des Chats.
+// Während eines Auftrags offen (Ctrl+T blendet aus), danach eine Zeile, die sich aufklappen lässt.
+let todo = { tasks: [], live: false }; // live: im laufenden Auftrag gesetzt
+let todoOpen = true; // während eines Auftrags
+let todoPeek = false; // nach dem Auftrag aufgeklappt
+const TODO_SHOWN = 7;
+
+function setTodo(tasks, live) {
+  todo = { tasks: Array.isArray(tasks) ? tasks : [], live };
+  renderTodo();
+}
+
+// Neuer Auftrag: eine fertige Liste verschwindet, eine offene bleibt, bis das Modell sie aktualisiert
+function newTurnTodo() {
+  todoPeek = false;
+  setTodo(todo.tasks.every((t) => t.status === 'erledigt') ? [] : todo.tasks, false);
+}
+
+function toggleTodo() {
+  if (!todo.tasks.length) return;
+  if (running && todo.live) todoOpen = !todoOpen;
+  else todoPeek = !todoPeek;
+  renderTodo();
+}
+
+function renderTodo() {
+  const box = $('todo');
+  const tasks = todo.tasks;
+  box.hidden = tasks.length === 0;
+  if (!tasks.length) return;
+  const done = tasks.filter((t) => t.status === 'erledigt').length;
+  const current = tasks.find((t) => t.status === 'in_arbeit');
+  const open = running && todo.live ? todoOpen : todoPeek;
+  box.classList.toggle('open', open);
+  box.classList.toggle('done', done === tasks.length);
+  $('todo-caret').textContent = open ? '▾' : '▸';
+  $('todo-fill').style.width = `${Math.round((done / tasks.length) * 100)}%`;
+  $('todo-count').textContent = `${done}/${tasks.length}`;
+  $('todo-current').textContent = done === tasks.length ? '✓ alle erledigt' : current ? current.titel : '';
+  // Bei langen Listen: zwei erledigte vor der aktuellen, dann die nächsten
+  let from = 0;
+  if (tasks.length > TODO_SHOWN) {
+    const at = Math.max(0, tasks.findIndex((t) => t.status !== 'erledigt'));
+    from = Math.min(Math.max(0, at - 2), tasks.length - TODO_SHOWN);
+  }
+  const shown = tasks.slice(from, from + TODO_SHOWN);
+  const mark = { erledigt: '✓', in_arbeit: '▸', offen: '○' };
+  const items = shown.map((t) => el('li', { class: t.status }, el('span', { class: 'tmark', 'aria-hidden': 'true' }, mark[t.status] || '○'), el('span', { class: 'ttext' }, t.titel)));
+  if (from > 0) items.unshift(el('li', { class: 'more' }, `… ${from} erledigt`));
+  const rest = tasks.length - from - shown.length;
+  if (rest > 0) items.push(el('li', { class: 'more' }, `… und ${rest} weitere`));
+  $('todo-list').replaceChildren(...items);
+}
+
 // Was ein Auftrag im Ordner geändert hat. «Rückgängig» nur beim letzten Auftrag mit Änderungen.
 function addChanges(snapshot, changes, undone = false) {
   if (!snapshot || !changes) return;
@@ -763,6 +821,7 @@ function onEvent(ev) {
         break;
       }
       turnStats = [];
+      newTurnTodo();
       addUser(ev.text, Date.now(), ev.attachments);
       scrollDown(true);
       break;
@@ -788,12 +847,13 @@ function onEvent(ev) {
     }
     case 'tool-end': {
       const row = toolRows.get(ev.id);
-      if (row) toolResult(row, { ...ev, name: row.name });
+      if (row) toolResult(row, { ...ev, name: row.name }, true);
       activityLabel = 'Denkt nach …';
       scrollDown();
       break;
     }
     case 'changes': addChanges(ev.snapshot, ev.changes); break;
+    case 'live': onLive(ev); break;
     case 'undo': onUndo(ev); break;
     case 'notice': addMessage('notice', '⎿', ev.text); break;
     case 'error': addMessage('error', '✗', ev.text); break;
@@ -817,6 +877,7 @@ function renderTranscript(items) {
   let stats = [];
   let lastTime = 0;
   let turn = null; // Eingabe, mit der der Auftrag begann (Sicherung, Änderungen)
+  let lastTasks = null;
   const endTurn = () => {
     if (turn) addChanges(turn.snapshot, turn.changes, turn.undone);
     addStats(stats);
@@ -846,6 +907,7 @@ function renderTranscript(items) {
     } else if (item.role === 'tool') {
       const row = toolRows.get(item.id);
       if (row) toolResult(row, { ...item, name: names.get(item.id) });
+      if (item.tasks?.length) lastTasks = item.tasks;
     }
   }
   for (const row of toolRows.values()) {
@@ -856,6 +918,8 @@ function renderTranscript(items) {
     endTurn();
     foldTurn(lastTime);
   }
+  // Aufgabenliste: die zuletzt gesetzte, solange noch etwas offen ist
+  setTodo(lastTasks && lastTasks.some((t) => t.status !== 'erledigt') ? lastTasks : [], running);
   renderComposer();
   scrollDown(true);
 }
@@ -870,7 +934,8 @@ async function loadTranscript() {
 
 function tickActivity() {
   if (!running) return;
-  $('activity-text').textContent = activityLabel;
+  const current = todo.live && todo.tasks.find((t) => t.status === 'in_arbeit');
+  $('activity-text').textContent = current ? `${current.titel} · ${activityLabel}` : activityLabel;
   $('activity-time').textContent = `${Math.round((Date.now() - runStarted) / 1000)} s`;
 }
 
@@ -1097,16 +1162,44 @@ function onKey(e) {
 
 // ---------- Seitenleiste ----------
 
-function renderTasks(tasks) {
-  const list = $('tasks-list');
-  list.replaceChildren();
-  const items = tasks?.aufgaben || [];
-  for (const t of items) list.append(el('li', { class: t.status }, el('span', { class: 'mark', 'aria-hidden': 'true' }), el('span', {}, t.titel)));
-  const done = items.filter((t) => t.status === 'erledigt').length;
-  $('tasks-count').textContent = items.length ? `${done} von ${items.length}` : '';
-  $('tasks-goal').textContent = tasks?.auftrag || tasks?.fehler || '';
-  $('tasks-goal').hidden = !(tasks?.auftrag || tasks?.fehler);
-  $('tasks-empty').hidden = items.length > 0;
+// Browser · live: was browser_test gerade sieht (Bilder, Schritte, Konsole), wie im Browser-Fenster von Claude Code
+let liveId = null;
+function onLive(ev) {
+  const panel = $('live-panel');
+  if (ev.phase === 'start') {
+    liveId = ev.id;
+    panel.hidden = false;
+    panel.classList.add('running');
+    if (state && !state.sidebarOpen) api.setSidebar(true);
+    $('live-path').textContent = ev.path;
+    $('live-status').textContent = 'lädt …';
+    $('live-log').replaceChildren();
+    $('live-img').removeAttribute('src');
+    return;
+  }
+  if (ev.id !== liveId) return;
+  if (ev.frame) {
+    $('live-img').src = ev.frame;
+    const big = document.getElementById('live-big-img');
+    if (big) big.src = ev.frame;
+  }
+  if (ev.step) $('live-status').textContent = `▸ ${ev.step}`;
+  if (ev.log) {
+    const log = $('live-log');
+    log.append(el('li', { class: ev.level === 'error' ? 'error' : 'warning' }, ev.log));
+    while (log.children.length > 8) log.firstChild.remove();
+  }
+  if (ev.phase === 'end') {
+    panel.classList.remove('running');
+    $('live-status').textContent = `${ev.failed ? '✗' : '✓'} ${ev.summary}`;
+  }
+}
+
+function showLiveBig() {
+  openDialog = 'preview';
+  $('big-title').textContent = `Browser · ${$('live-path').textContent}`;
+  $('big-body').replaceChildren(el('img', { id: 'live-big-img', class: 'live-big', src: $('live-img').src || '', alt: '' }));
+  render();
 }
 
 function extOf(name) {
@@ -1200,6 +1293,10 @@ function reportBounds() {
 
 function wire() {
   wireAttachments();
+  $('todo-head').onclick = () => toggleTodo();
+  $('live-close').onclick = () => { $('live-panel').hidden = true; };
+  $('live-big').onclick = () => showLiveBig();
+  $('live-img').onclick = () => showLiveBig();
   $('folder-btn').onclick = () => api.folderMenu();
   $('sidebar-btn').onclick = () => api.setSidebar(!state.sidebarOpen);
   $('new-btn').onclick = () => newChat();
@@ -1270,6 +1367,10 @@ function wire() {
   };
   $('big-close').onclick = () => { openDialog = null; $('big-body').replaceChildren(); render(); };
   document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 't') {
+      e.preventDefault();
+      toggleTodo();
+    }
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') {
       e.preventDefault();
       setVerbose(!verbose);
@@ -1308,7 +1409,6 @@ function wire() {
     if (!running) $('input').focus();
   });
   api.onFiles((f) => { files = f; renderFiles(); });
-  api.onTasks((t) => renderTasks(t));
   api.onMenuChooseFolder(() => openFolder(api.chooseFolder));
   api.onMenuNewFolder(() => openFolder(api.newFolder));
   api.onMenuGithub(() => showGithub());
@@ -1353,6 +1453,5 @@ function wire() {
   await loadChats();
   files = await api.files();
   renderFiles();
-  renderTasks(await api.tasks());
   $('input').focus();
 })();

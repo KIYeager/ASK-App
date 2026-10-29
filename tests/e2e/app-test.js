@@ -126,15 +126,26 @@ async function chat(ctx, check, shell, shoot) {
     result: m.querySelector('.result').textContent, bad: m.classList.contains('bad'), running: m.classList.contains('running') }))`);
   check('Drei Werkzeugzeilen im Chat', rows.length === 3, JSON.stringify(rows));
   check('Befehl mit Ausgabe «hallo aus ASK»', /Befehl\(echo hallo aus ASK\)/.test(rows[0]?.call) && rows[0].result.includes('hallo aus ASK'), JSON.stringify(rows[0]));
-  check('Aufgabenliste im Chat', /Aufgaben/.test(rows[1]?.call) && rows[1].result.includes('☒ Befehl testen'), JSON.stringify(rows[1]));
+  check('Aufgaben im Chat nur als Zeile «1 von 3 erledigt», Liste in den Details', /Aufgaben/.test(rows[1]?.call) && rows[1].result.includes('1 von 3 erledigt')
+    && !rows[1].result.includes('Befehl testen') && await shell('[...document.querySelectorAll(".msg.tool")][1].querySelector(".details").textContent.includes("☒ Befehl testen")'), JSON.stringify(rows[1]));
   check('Datei geschrieben', fs.readFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'utf8') === 'Inhalt des Berichts');
   const final = await shell(`(() => { const a = [...document.querySelectorAll('.msg.assistant')].pop();
     return { md: a?.querySelector('.md')?.innerHTML || '', think: a?.querySelector('details.thinking pre')?.textContent || '' }; })()`);
   check('Schlusstext als Markdown (Code, Liste, fett)', /Fertig/.test(final.md) && /<code class="file">ausgabe\/bericht.txt<\/code>/.test(final.md)
     && /<li>/.test(final.md) && /<strong>Bericht<\/strong>/.test(final.md), final.md);
   check('Denktext getrennt (reasoning und <think>)', final.think.includes('Ich prüfe') && final.think.includes('Alles erledigt') && !final.md.includes('think'), final.think);
-  await until('Aufgaben in der Seitenleiste', () => shell('document.querySelectorAll("#tasks-list li").length === 3'), 10000);
-  check('Seitenleiste: Aufgaben «1 von 3»', (await shell('document.getElementById("tasks-count").textContent')) === '1 von 3');
+  await until('Aufgaben über der Eingabe', () => shell('!document.getElementById("todo").hidden'), 10000).catch(() => {});
+  const todoLine = await shell(`({ count: document.getElementById('todo-count').textContent, current: document.getElementById('todo-current').textContent,
+    open: document.getElementById('todo').classList.contains('open'), sidebar: !!document.getElementById('tasks-panel') })`);
+  check('Aufgaben über der Eingabe: nach dem Auftrag eine Zeile «1/3 · Bericht schreiben»', todoLine.count === '1/3' && todoLine.current === 'Bericht schreiben'
+    && !todoLine.open && !todoLine.sidebar, JSON.stringify(todoLine));
+  await shell(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, bubbles: true }))`);
+  const todoOpen = await shell(`({ open: document.getElementById('todo').classList.contains('open'),
+    items: [...document.querySelectorAll('#todo-list li')].map((li) => li.className + ':' + li.textContent) })`);
+  check('Ctrl+T klappt die Liste auf (erledigt, aktuell, offen)', todoOpen.open && todoOpen.items.join('|') === 'erledigt:✓Befehl testen|in_arbeit:▸Bericht schreiben|offen:○Prüfen',
+    JSON.stringify(todoOpen));
+  await shoot('2a-aufgaben');
+  await shell(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, bubbles: true }))`);
   await until('Datei unter «Zuletzt geändert»', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("bericht.txt"))'), 10000);
   await shell('[...document.querySelectorAll(".md code")].find((c) => c.textContent === "ausgabe/bericht.txt").click()');
   await until('Vorschau', () => shell('(document.querySelector("#preview-body pre")||{}).textContent === "Inhalt des Berichts"'), 5000)
@@ -177,6 +188,7 @@ await compact(ctx, check, shell, shoot);
   await attachFlow(ctx, check, shell, shoot);
   await undoFlow(ctx, check, shell, shoot);
   await visualFlow(ctx, check, shell, shoot);
+  await webFlow(ctx, check, shell, shoot);
 
   // Sperren gelten auch für die Werkzeuge der App
   const outside = path.join(path.dirname(folder), 'ausserhalb-chat.txt');
@@ -338,6 +350,25 @@ async function attachFlow(ctx, check, shell, shoot) {
   await getJson(`${mockUrl}/__mock/vision/an`);
 }
 
+// Internet: web_search über die Websuche von ASK, web_fetch liefert Text statt HTML, Quellen unter der Antwort
+async function webFlow(ctx, check, shell, shoot) {
+  const { agent } = ctx;
+  const mockUrl = process.env.ASK_TEST_ASK_URL;
+  await order(shell, agent, 'Bitte recherchiere Proxmox 9');
+  const tools = agent.chat.messages.filter((m) => m.role === 'tool').slice(-2);
+  const searches = await getJson(`${mockUrl}/__mock/searches`);
+  check('web_search über die Websuche von ASK', tools[0].ok && searches.at(-1)?.query === 'proxmox 9 neuerungen' && searches.at(-1)?.queries?.[0] === 'proxmox 9 neuerungen'
+    && tools[0].content.includes('Treffer (ASK)') && tools[0].content.includes('Proxmox VE 9 Testseite'), tools[0].content);
+  check('web_fetch liefert lesbaren Text ohne HTML, Skript und Navigation', tools[1].ok && tools[1].content.includes('Proxmox VE 9 bringt einen neuen Kernel & bessere Backups.')
+    && tools[1].content.includes('- Kernel 6.14') && !/<p>|geheim|Impressum|Menü/.test(tools[1].content), tools[1].content.slice(0, 400));
+  const rows = await shell(`[...document.querySelectorAll('.msg.tool')].slice(-2).map((m) => m.querySelector('.call').textContent + ' ⎿ ' + m.querySelector('.result').textContent)`);
+  check('Zeilen «Websuche(…)» und «Webseite(…)» im Chat', /^Websuche\(proxmox 9 neuerungen\) ⎿ ⎿2 Treffer$/.test(rows[0]) && /^Webseite\(http.*__mock\/seite\) ⎿ ⎿Proxmox VE 9 Testseite · [\d.]+k Zeichen$/.test(rows[1]), JSON.stringify(rows));
+  const src = await shell(`(() => { const s = [...document.querySelectorAll('.msg.sources')].pop(); return s ? s.textContent : ''; })()`);
+  check('Gelesene Seite als Quelle unter der Antwort', src.includes('1 Quelle') && src.includes('Proxmox VE 9 Testseite') && !src.includes('Roadmap'), src);
+  const bad = await require('../../src/main/tools').runTool(null, 'web_fetch', { url: 'file:///C:/Windows/win.ini' }, { web: agent.web });
+  check('web_fetch: nur http und https', !bad.ok && /http/.test(bad.output), bad.output);
+}
+
 // Ansehen: das Modell sieht ein Bild und testet eine HTML-Seite im unsichtbaren Browser
 async function visualFlow(ctx, check, shell, shoot) {
   const { agent, settings } = ctx;
@@ -378,6 +409,11 @@ async function visualFlow(ctx, check, shell, shoot) {
   check('Bildschirmfoto 1280 × 800 zeigt die Seite', size.width === 1280 && size.height === 800 && r > 150 && g < 60 && b < 60, JSON.stringify({ size, rgb: [r, g, b] }));
   log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
   check('Bildschirmfoto geht ans Modell', log.lastImages === 1 && log.lastUser.startsWith('[Ansicht] Bilder zu browser_test(spiel.html'), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
+  const live = await shell(`({ visible: !document.getElementById('live-panel').hidden, img: (document.getElementById('live-img').getAttribute('src') || '').slice(0, 22),
+    status: document.getElementById('live-status').textContent, log: document.getElementById('live-log').textContent,
+    path: document.getElementById('live-path').textContent, running: document.getElementById('live-panel').classList.contains('running') })`);
+  check('Browser · live in der Seitenleiste (Bild, Schritte, Konsole)', live.visible && live.img === 'data:image/jpeg;base64' && live.status.startsWith('✓ 1 Fehler')
+    && live.log.includes('absichtlicher Testfehler') && live.path === 'spiel.html' && !live.running, JSON.stringify(live));
   await shoot('14-ansehen');
 }
 

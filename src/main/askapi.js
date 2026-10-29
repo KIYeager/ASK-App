@@ -316,6 +316,23 @@ class AskSession extends EventEmitter {
     return res;
   }
 
+  // Websuche von ASK (Open WebUI /api/v1/retrieval/process/web/search) für das Werkzeug web_search.
+  // Ohne die Abmelde-Logik von request(): ein 403 heisst hier «Websuche nicht freigegeben».
+  // Ältere Open-WebUI-Versionen erwarten «query», neuere «queries»; beides geht mit.
+  async searchWeb(query, signal) {
+    if (!this.token) throw new AuthError('Nicht bei ASK angemeldet.');
+    const res = await this.session.fetch(`${this.base}/api/v1/retrieval/process/web/search`, {
+      method: 'POST', signal,
+      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, queries: [query] }),
+    });
+    if (!res.ok) throw new Error(`Websuche von ASK: HTTP ${res.status}`);
+    const data = await res.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    return items.map((i) => ({ url: i.link || i.url || '', title: String(i.title || '').trim(), snippet: String(i.snippet || i.content || '').trim() }))
+      .filter((i) => /^https?:\/\//i.test(i.url));
+  }
+
   async json(path) {
     const res = await this.request(path);
     if (!res.ok) throw new Error(`ASK antwortet mit HTTP ${res.status} (${path})`);

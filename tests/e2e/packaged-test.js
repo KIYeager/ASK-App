@@ -141,10 +141,6 @@ async function main() {
       check(`Ordnersperre: ${blocked}`, r && r.ok === false, JSON.stringify(r));
     }
 
-    fs.writeFileSync(path.join(workdir, '.ask', 'tasks.json'),
-      JSON.stringify({ auftrag: 'Paket-Test', aufgaben: [{ titel: 'A', status: 'erledigt' }, { titel: 'B', status: 'offen' }] }));
-    await until('Aufgaben', () => shell('document.getElementById("tasks-count").textContent').then((t) => t === '1 von 2'), 10000);
-    check('Seitenleiste zeigt tasks.json live', true);
     fs.writeFileSync(path.join(workdir, 'ergebnis.txt'), 'fertig');
     await until('Ausgabe', () => shell('document.getElementById("output-list").textContent').then((t) => t.includes('ergebnis.txt')), 10000);
     check('Seitenleiste zeigt neue Dateien live', true);

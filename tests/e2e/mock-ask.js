@@ -16,6 +16,7 @@ const mode = process.argv[3] || 'angemeldet';
 const TOKEN = 'test-token';
 const log = [];
 const chatLog = [];
+const searches = []; // Anfragen an die Websuche von ASK
 let toolsAccepted = true;
 let usageAccepted = true;
 let thinkAccepted = true;
@@ -94,6 +95,11 @@ function script(messages) {
     return textChunks('Geholt.');
   }
   if (text.includes('bild an')) return textChunks('Ich sehe das Bild.');
+  if (text.includes('recherchiere')) {
+    if (results === 0) return toolCallChunks([{ name: 'web_search', args: { anfrage: 'proxmox 9 neuerungen' } }]);
+    if (results === 1) return toolCallChunks([{ name: 'web_fetch', args: { url: `http://127.0.0.1:${port}/__mock/seite` } }]);
+    return textChunks('Laut der Testseite bringt Proxmox VE 9 einen neuen Kernel.');
+  }
   if (text.includes('ansehen test')) {
     if (results === 0) return toolCallChunks([{ name: 'view_file', args: { path: 'grafik.png' } }]);
     return textChunks('Angesehen.');
@@ -168,6 +174,13 @@ http.createServer((req, res) => {
     return res.end(page);
   }
   if (url === '/api/config') return json(res, 200, { version: '0.12.3', features: authed ? { enable_web_search: true } : {} });
+  if (url === '/__mock/seite') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end('<!doctype html><html><head><title>Proxmox VE 9 Testseite</title><script>var geheim = 1;</script></head><body>'
+      + '<nav>Menü Start Produkte</nav><main><h1>Proxmox VE 9</h1><p>Proxmox VE 9 bringt einen neuen Kernel &amp; bessere Backups.</p>'
+      + '<ul><li>Kernel 6.14</li><li>ZFS 2.3</li></ul>' + '<p>Mehr Text. </p>'.repeat(60) + '</main><footer>Impressum</footer></body></html>');
+  }
+  if (url === '/__mock/searches') return json(res, 200, searches);
   if (url === '/__mock/log') return json(res, 200, log);
   if (url === '/__mock/chatlog') return json(res, 200, chatLog);
   if (url.startsWith('/__mock/tools/')) {
@@ -189,6 +202,18 @@ http.createServer((req, res) => {
   if (!authed) return json(res, 401, { detail: 'Not authenticated' });
   if (url === '/api/v1/auths/') {
     return json(res, 200, { name: 'Lea Test', email: 'lea@example.ch', role: 'user', permissions: { features: { web_search: true } } });
+  }
+  if (url === '/api/v1/retrieval/process/web/search' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const q = JSON.parse(body || '{}');
+      searches.push(q);
+      json(res, 200, { status: true, collection_names: ['web-x'], filenames: [], items: [
+        { link: `http://127.0.0.1:${port}/__mock/seite`, title: 'Proxmox VE 9 Testseite', snippet: 'Neuer Kernel und bessere Backups' },
+        { link: 'https://pve.proxmox.com/wiki/Roadmap', title: 'Roadmap – Proxmox VE', snippet: 'Geplante Funktionen' }] });
+    });
+    return undefined;
   }
   if (url === '/api/models') {
     // Nach der Anmeldung langsam antworten, damit der Test die Phase «Anmeldung wird geprüft» sieht

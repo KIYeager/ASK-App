@@ -14,6 +14,7 @@ const MAX_PDF = 40 * 1024 * 1024;
 const BROWSER_SIZE = { width: 1280, height: 800 };
 const LOAD_TIMEOUT = 15000;
 const MAX_ACTIONS = 25;
+const LIVE_FPS = 8; // Bilder pro Sekunde für «Browser · live»
 const OFFICE = new Set(['.docx', '.xlsx', '.pptx']);
 const RASTER = new Set(['.png', '.jpg', '.jpeg']);
 const OTHER_IMAGES = { '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml' };
@@ -144,8 +145,10 @@ class Visual {
       output: `${note}${r.count} ${unit}; angesehen: ${shown.join(', ')}. Die Bilder folgen in der nächsten Nachricht.${more}` };
   }
 
-  // browser_test: HTML öffnen, Aktionen ausführen, Bildschirmfoto und Konsole zurück
-  async browse(root, rel, { aktionen, warten, chat }) {
+  // browser_test: HTML öffnen, Aktionen ausführen, Bildschirmfoto und Konsole zurück. onLive bekommt
+  // laufend Bilder (JPEG, 640 Pixel breit, höchstens LIVE_FPS pro Sekunde), Schritte und Konsole für die Seitenleiste.
+  async browse(root, rel, { aktionen, warten, chat, onLive }) {
+    const live = typeof onLive === 'function' ? onLive : () => {};
     const full = this.resolve(root, rel);
     if (!HTML.has(path.extname(full).toLowerCase())) throw new Error('browser_test öffnet nur .html-Dateien.');
     const { BrowserWindow } = this.electron;
@@ -156,9 +159,16 @@ class Visual {
     const logs = [];
     const notes = [];
     let lastPaint = null;
+    let dirty = false;
+    const stream = setInterval(() => {
+      if (!dirty || !lastPaint || lastPaint.isEmpty()) return;
+      dirty = false;
+      live({ frame: `data:image/jpeg;base64,${lastPaint.resize({ width: 640, quality: 'good' }).toJPEG(70).toString('base64')}` });
+    }, Math.round(1000 / LIVE_FPS));
+    live({ phase: 'start', path: rel });
     try {
       wc.setFrameRate(30);
-      wc.on('paint', (_e, _dirty, image) => { lastPaint = image; });
+      wc.on('paint', (_e, _dirty, image) => { lastPaint = image; dirty = true; });
       wc.setWindowOpenHandler(() => ({ action: 'deny' }));
       const fileUrl = require('node:url').pathToFileURL(full).href;
       wc.on('will-navigate', (e, url) => { if (url.split('#')[0] !== fileUrl) { e.preventDefault(); notes.push(`Navigation nach ${url} blockiert`); } });
@@ -168,12 +178,16 @@ class Visual {
         const lvl = e?.level ?? ['verbose', 'info', 'warning', 'error'][level] ?? 'info';
         if (lvl !== 'warning' && lvl !== 'error') return;
         const msg = e?.message ?? message;
+        if (/Electron Security Warning/.test(msg)) return; // Hinweis von Electron selbst, nicht von der Seite
         const ln = e?.lineNumber ?? line;
         const src = path.basename(String(e?.sourceId ?? source ?? '')) || '';
-        if (logs.length < 30) logs.push(`${lvl === 'error' ? 'Fehler' : 'Warnung'}: ${msg}${src ? ` (${src}:${ln})` : ''}`);
+        const entry = `${lvl === 'error' ? 'Fehler' : 'Warnung'}: ${msg}${src ? ` (${src}:${ln})` : ''}`;
+        if (logs.length < 30) logs.push(entry);
+        live({ log: entry, level: lvl });
       });
       wc.on('render-process-gone', () => notes.push('Die Seite ist abgestürzt.'));
       await withTimeout(win.loadFile(full), LOAD_TIMEOUT, 'Die Seite lädt nicht innerhalb von 15 Sekunden.');
+      live({ step: 'geladen' });
       wc.focus();
       await wait(Math.min(Math.max(Number(warten) || 1000, 200), 10000));
 
@@ -186,7 +200,7 @@ class Visual {
               if (!e) return null; e.scrollIntoView({ block: 'center' }); const r = e.getBoundingClientRect();
               return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`).catch(() => null);
           }
-          if (!pos) { done.push(`Klick ${a.klick}: Element nicht gefunden`); continue; }
+          if (!pos) { done.push(`Klick ${a.klick}: Element nicht gefunden`); live({ step: done.at(-1) }); continue; }
           const at = { x: Math.round(pos.x), y: Math.round(pos.y) };
           wc.sendInputEvent({ type: 'mouseMove', ...at });
           wc.sendInputEvent({ type: 'mouseDown', ...at, button: 'left', clickCount: 1 });
@@ -205,8 +219,10 @@ class Visual {
         } else if (a.warten !== undefined) {
           await wait(Math.min(Math.max(Number(a.warten) || 0, 0), 5000));
           done.push(`${Math.min(Number(a.warten) || 0, 5000)} ms gewartet`);
+          live({ step: done.at(-1) });
           continue;
         }
+        live({ step: done.at(-1) });
         await wait(120);
       }
       await wait(300);
@@ -232,8 +248,15 @@ class Visual {
         info.text ? `Sichtbarer Text (Anfang): ${info.text}` : 'Kein sichtbarer Text.',
         images.length ? 'Das Bildschirmfoto folgt in der nächsten Nachricht.' : 'Kein Bildschirmfoto möglich.',
       ].filter(Boolean).join('\n');
-      return { ok: true, output, images, summary: `${errors ? `${errors} Fehler in der Konsole` : 'keine Fehler'}${images.length ? ' · Bildschirmfoto' : ''}` };
+      const summary = `${errors ? `${errors} Fehler in der Konsole` : 'keine Fehler'}${images.length ? ' · Bildschirmfoto' : ''}`;
+      if (shot && !shot.isEmpty()) live({ frame: `data:image/jpeg;base64,${shot.resize({ width: 640, quality: 'good' }).toJPEG(80).toString('base64')}` });
+      live({ phase: 'end', summary });
+      return { ok: true, output, images, summary };
+    } catch (err) {
+      live({ phase: 'end', summary: err.message, failed: true });
+      throw err;
     } finally {
+      clearInterval(stream);
       if (!win.isDestroyed()) win.destroy();
     }
   }

@@ -111,8 +111,9 @@ function apiMessages(system, messages, textMode = false, imageUrl = null) {
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, confirm, getImageUrl, getVision, getSnapshots }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, confirm, getImageUrl, getVision, getSnapshots }) {
     super();
+    this.web = web || null; // web_search und web_fetch (web.js)
     this.githubTrust = githubTrust || null;
     this.visual = visual || null; // view_file und browser_test (visual.js)
     this.getSnapshots = getSnapshots || (() => null); // Sicherung des Arbeitsordners (snapshot.js)
@@ -257,6 +258,7 @@ class Agent extends EventEmitter {
     if (attachments.length) message.attachments = attachments;
     this.push(message);
     this.event({ type: 'user', text, attachments });
+    this.turnSources = { read: [], found: [] }; // web_fetch und web_search in diesem Auftrag
     this.running = true;
     this.controller = new AbortController();
     const { signal } = this.controller;
@@ -363,7 +365,14 @@ class Agent extends EventEmitter {
     const toolCalls = calls.map((c) => ({ id: c.id || `call_${crypto.randomBytes(6).toString('hex')}`, type: 'function',
       function: { name: c.name, arguments: c.arguments || '{}' } }));
     const message = { role: 'assistant', content, time: Date.now(), stats: completion.stats() };
-    if (completion.sources.length) message.sources = completion.sources;
+    // Quellen unter der Schlussantwort: Websuche von ASK und die Seiten, die das Modell mit web_fetch
+    // gelesen hat (ohne gelesene Seiten die ersten Treffer von web_search)
+    let sources = completion.sources;
+    if (!toolCalls.length && this.turnSources) {
+      const web = this.turnSources.read.length ? this.turnSources.read : this.turnSources.found.slice(0, 5);
+      sources = [...sources, ...web].filter((s, i, all) => s.url && all.findIndex((t) => t.url === s.url) === i).slice(0, 10);
+    }
+    if (sources.length) message.sources = sources;
     if (completion.reasoning) message.reasoning = completion.reasoning;
     if (toolCalls.length) message.tool_calls = toolCalls;
     if (textMode) { message.textMode = true; message.raw = completion.content; }
@@ -391,12 +400,15 @@ class Agent extends EventEmitter {
           github: this.github,
           githubTrust: this.githubTrust,
           visual: this.visual,
+          web: this.web,
+          onLive: (data) => this.event({ type: 'live', id: call.id, ...data }),
           canSee,
           chat: this.chat.id,
           folder: this.getFolder(),
           confirm: this.confirm,
         });
       const images = result.images || [];
+      if (result.sources && this.turnSources) this.turnSources[call.function.name === 'web_fetch' ? 'read' : 'found'].push(...result.sources);
       this.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: result.output, ok: result.ok,
         summary: result.summary, display: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, textMode, ms: Date.now() - started });
       this.event({ type: 'tool-end', id: call.id, ok: result.ok, summary: result.summary,

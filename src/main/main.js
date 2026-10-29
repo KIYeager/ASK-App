@@ -17,6 +17,7 @@ const { GitHub } = require('./github');
 const { saveAttachments, imageUrl, nativeResize } = require('./attachments');
 const { Snapshots } = require('./snapshot');
 const { Visual } = require('./visual');
+const { Web } = require('./web');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -72,12 +73,16 @@ const githubTrust = {
   remove: (repo) => settings.set({ githubTrusted: githubTrust.list().filter((r) => r.toLowerCase() !== String(repo).toLowerCase()) }),
 };
 
+// Internet für das Modell; lokale Adressen nur im Test (Mock-Server auf 127.0.0.1)
+const web = new Web({ ask, fetchImpl: (url, options) => net.fetch(url, options), allowLocal: testMode });
+
 const visual = new Visual({ electron: { BrowserWindow, nativeImage }, convertToPdf, renderPage: path.join(__dirname, 'render', 'pdf.html') });
 
 const agent = new Agent({
   github,
   githubTrust,
   visual,
+  web,
   confirm,
   ask,
   terminal,

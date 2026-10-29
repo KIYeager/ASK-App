@@ -82,6 +82,16 @@
             <span id="activity-text">Denkt nach …</span>
             <span class="muted">(<span id="activity-time">0 s</span> · Esc zum Stoppen)</span>
           </div>
+          <div id="todo" class="todo-box" hidden>
+            <button id="todo-head" class="todo-head" title="Aufgaben ein- oder ausblenden (Ctrl+T)">
+              <span id="todo-caret" class="todo-caret" aria-hidden="true">▾</span>
+              <span class="todo-label">Aufgaben</span>
+              <span class="todo-bar" aria-hidden="true"><span id="todo-fill"></span></span>
+              <span id="todo-count" class="todo-count"></span>
+              <span id="todo-current" class="todo-current"></span>
+            </button>
+            <ul id="todo-list" class="todo-list"></ul>
+          </div>
           <div id="slash" class="slash" hidden></div>
           <div id="attach-row" class="attach-row" hidden></div>
           <div class="input-box" id="input-box">
@@ -94,7 +104,7 @@
             <button id="terminal-pill" class="pill" title="Terminal"><span class="dot"></span><span id="terminal-text">Terminal gestoppt</span></button>
             <button id="ask-pill" class="pill" title="ASK"><span class="dot"></span><span id="ask-text">ASK: unbekannt</span></button>
             <span class="spacer"></span>
-            <span class="muted hint">Enter senden · Shift+Enter neue Zeile · / Befehle · </span>
+            <span class="muted hint">Enter senden · Shift+Enter Zeile · / Befehle · Ctrl+T Aufgaben · </span>
             <button id="verbose-btn" class="pill hint" title="Gedanken und alle Details ein- oder ausblenden">Ctrl+O Details</button>
           </div>
         </div>
@@ -102,11 +112,16 @@
     </section>
 
     <aside id="sidebar" class="sidebar">
-      <section class="panel" id="tasks-panel">
-        <h2>Aufgaben <span id="tasks-count" class="muted"></span></h2>
-        <p id="tasks-goal" class="goal"></p>
-        <ul id="tasks-list" class="tasks"></ul>
-        <p id="tasks-empty" class="muted small">Bei grösseren Aufträgen führt das Modell hier eine Aufgabenliste.</p>
+      <section class="panel live-panel" id="live-panel" hidden>
+        <div class="preview-head">
+          <h2><span class="live-dot" aria-hidden="true"></span>Browser · live</h2>
+          <button id="live-big" class="ghost small">Gross</button>
+          <button id="live-close" class="ghost small" aria-label="Browser-Ansicht schliessen">×</button>
+        </div>
+        <div id="live-path" class="live-path muted small"></div>
+        <div class="live-screen"><img id="live-img" alt="Was das Modell im Browser sieht"></div>
+        <div id="live-status" class="live-status"></div>
+        <ul id="live-log" class="live-log"></ul>
       </section>
       <section class="panel" id="output-panel">
         <h2>Zuletzt geändert</h2>
