@@ -155,6 +155,59 @@ class AppWindow {
     this.view.setVisible(!!show);
   }
 
+  // Browser-Bereich für browser_test (ENTSCHEIDE E27): eine echte Seite in der App, die das Modell steuert
+  // und die Person sieht und selbst bedienen kann. Eigene flüchtige Sitzung, ohne Popups, Downloads und
+  // Berechtigungen; Navigation nur innerhalb der geöffneten Datei (allowedUrl).
+  ensureBrowser() {
+    if (this.browser && !this.browser.webContents.isDestroyed()) return this.browser;
+    this.browserBounds = this.browserBounds || null;
+    this.browserVisible = !!this.browserVisible;
+    this.browser = new WebContentsView({
+      webPreferences: { partition: 'ask-browser', sandbox: true, contextIsolation: true, nodeIntegration: false,
+        backgroundThrottling: false, spellcheck: false },
+    });
+    this.browser.setBackgroundColor('#000000');
+    this.browser.setVisible(false);
+    this.browser.allowedUrl = '';
+    this.win.contentView.addChildView(this.browser);
+    const wc = this.browser.webContents;
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+    wc.on('will-navigate', (e, url) => { if (url.split('#')[0] !== this.browser.allowedUrl) e.preventDefault(); });
+    wc.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+    wc.session.setPermissionCheckHandler(() => false);
+    wc.session.on('will-download', (e) => e.preventDefault());
+    this.applyBrowserLayout();
+    return this.browser;
+  }
+
+  setBrowserBounds(bounds) {
+    this.browserBounds = bounds;
+    this.applyBrowserLayout();
+  }
+
+  setBrowserVisible(visible) {
+    this.browserVisible = !!visible;
+    this.applyBrowserLayout();
+  }
+
+  // Ist der Browser-Bereich sichtbar und gross genug? (sonst testet visual.js unsichtbar)
+  browserReady() {
+    const b = this.browserBounds;
+    return !!(this.browser && this.browserVisible && b && b.width >= 200 && b.height >= 150
+      && this.win.isVisible() && !this.win.isMinimized());
+  }
+
+  applyBrowserLayout() {
+    if (!this.browser) return;
+    const b = this.browserBounds;
+    const show = this.browserVisible && b && b.width > 0 && b.height > 0;
+    if (show) {
+      const z = this.win.webContents.getZoomFactor(); // Bereich in CSS-Pixeln der Oberfläche
+      this.browser.setBounds({ x: Math.round(b.x * z), y: Math.round(b.y * z), width: Math.round(b.width * z), height: Math.round(b.height * z) });
+    }
+    this.browser.setVisible(!!show);
+  }
+
   send(channel, payload) {
     if (!this.win.isDestroyed()) this.win.webContents.send(channel, payload);
   }

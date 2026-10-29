@@ -16,6 +16,7 @@
     </button>
     <div class="spacer"></div>
     <button id="web-btn" class="toggle" title="Websuche über ASK (/web)">🌐 Web</button>
+    <button id="memory-btn" class="toggle" title="Frühere Chats (/chats)">◷ Chats</button>
     <div class="think-wrap">
       <button id="think-btn" class="toggle" title="Denkaufwand des Modells (/denken)">✻ <span id="think-label">Standard</span></button>
       <div id="think-pop" class="think-pop" hidden>
@@ -112,17 +113,6 @@
     </section>
 
     <aside id="sidebar" class="sidebar">
-      <section class="panel live-panel" id="live-panel" hidden>
-        <div class="preview-head">
-          <h2><span class="live-dot" aria-hidden="true"></span>Browser · live</h2>
-          <button id="live-big" class="ghost small">Gross</button>
-          <button id="live-close" class="ghost small" aria-label="Browser-Ansicht schliessen">×</button>
-        </div>
-        <div id="live-path" class="live-path muted small"></div>
-        <div class="live-screen"><img id="live-img" alt="Was das Modell im Browser sieht"></div>
-        <div id="live-status" class="live-status"></div>
-        <ul id="live-log" class="live-log"></ul>
-      </section>
       <section class="panel" id="output-panel">
         <h2>Zuletzt geändert</h2>
         <ul id="output-list" class="files"></ul>
@@ -142,6 +132,22 @@
         <div id="preview-body" class="preview-body"></div>
       </section>
     </aside>
+
+    <!-- Browser für browser_test: die echte Seite (WebContentsView) liegt über #browser-host -->
+    <section id="browser-pane" class="browser-pane" hidden>
+      <div class="bp-head">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span class="bp-title">Browser</span>
+        <span id="bp-path" class="bp-path"></span>
+        <span id="bp-status" class="bp-status"></span>
+        <button id="bp-reload" class="ghost small" title="Seite neu laden">↻</button>
+        <button id="bp-big" class="ghost small" title="Gross: ganzes Fenster">⤢</button>
+        <button id="bp-close" class="ghost small" title="Browser schliessen" aria-label="Browser schliessen">×</button>
+      </div>
+      <div id="browser-host" class="browser-host"><img id="bp-frame" class="bp-frame" alt="" hidden></div>
+      <ul id="bp-log" class="live-log"></ul>
+      <div class="bp-hint muted small">Du kannst selbst klicken und Tasten drücken. Was du während eines Tests machst, erfährt das Modell.</div>
+    </section>
   </main>
 
   <!-- Dialoge: Solange einer offen ist, ist die ASK-Seite verborgen. -->

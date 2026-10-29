@@ -18,6 +18,7 @@ const { saveAttachments, imageUrl, nativeResize } = require('./attachments');
 const { Snapshots } = require('./snapshot');
 const { Visual } = require('./visual');
 const { Web } = require('./web');
+const { historyPrompt } = require('./history');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -76,7 +77,18 @@ const githubTrust = {
 // Internet für das Modell; lokale Adressen nur im Test (Mock-Server auf 127.0.0.1)
 const web = new Web({ ask, fetchImpl: (url, options) => net.fetch(url, options), allowLocal: testMode });
 
-const visual = new Visual({ electron: { BrowserWindow, nativeImage }, convertToPdf, renderPage: path.join(__dirname, 'render', 'pdf.html') });
+// Browser-Bereich der App für browser_test. Die Oberfläche öffnet ihn beim Start des Tests und meldet
+// Grösse und Sichtbarkeit; ist er nach 2 s nicht sichtbar (App minimiert), testet visual.js unsichtbar.
+async function browserPane() {
+  if (!appWindow) return null;
+  const view = appWindow.ensureBrowser();
+  for (let i = 0; i < 40 && !appWindow.browserReady(); i++) await new Promise((r) => setTimeout(r, 50));
+  if (!appWindow.browserReady()) return null;
+  return { wc: view.webContents, mode: 'sichtbar', allow: (url) => { view.allowedUrl = url; }, close: () => {} };
+}
+
+const visual = new Visual({ electron: { BrowserWindow, nativeImage }, convertToPdf, renderPage: path.join(__dirname, 'render', 'pdf.html'),
+  getPane: browserPane });
 
 const agent = new Agent({
   github,
@@ -88,7 +100,9 @@ const agent = new Agent({
   terminal,
   getFolder: () => (terminal.state === 'läuft' ? terminal.folder : settings.get('folder')),
   getModel: () => currentModel(),
-  getSystemPrompt: (chat) => readInstruction('systemprompt.md', settings.get('folder'), chat) + projectNotes(settings.get('folder')) + thinkingSwitch(),
+  getSystemPrompt: (chat) => readInstruction('systemprompt.md', settings.get('folder'), chat) + projectNotes(settings.get('folder'))
+    + (settings.get('chatMemory') ? historyPrompt(settings.get('folder'), chat) : '') + thinkingSwitch(),
+  getChatMemory: () => !!settings.get('chatMemory'),
   getCommandHint: (chat) => readInstruction('befehle.md', settings.get('folder'), chat),
   getWebSearch: () => !!ask.webSearch && settings.get('webSearch'),
   getThinking: () => thinkingLevel(),
@@ -169,6 +183,7 @@ function state() {
     models: ask.models,
     model: currentModel(),
     webSearch: !!s.webSearch,
+    chatMemory: !!s.chatMemory,
     thinking: thinkingLevel(),
     webSearchAvailable: !!ask.webSearch,
     chat: agent.state(),
@@ -346,6 +361,10 @@ function setupIpc() {
     settings.set({ thinking: THINKING_LEVELS.includes(level) ? level : 'standard' });
     pushState();
   });
+  ipcMain.handle('memory:set', (_e, on) => {
+    settings.set({ chatMemory: !!on });
+    pushState();
+  });
   ipcMain.handle('web:set', (_e, on) => {
     settings.set({ webSearch: !!on });
     pushState();
@@ -418,6 +437,15 @@ function setupIpc() {
   });
   ipcMain.on('ui:ask-bounds', (_e, bounds) => appWindow.setAskBounds(bounds));
   ipcMain.on('ui:ask-visible', (_e, visible) => appWindow.setAskVisible(visible));
+  ipcMain.on('ui:browser-bounds', (_e, bounds) => appWindow.setBrowserBounds(bounds));
+  ipcMain.on('ui:browser-visible', (_e, visible) => appWindow.setBrowserVisible(visible));
+  ipcMain.handle('browser:reload', () => { if (appWindow.browser && appWindow.browser.allowedUrl) appWindow.browser.webContents.reload(); });
+  ipcMain.handle('browser:close', () => {
+    if (!appWindow.browser) return;
+    appWindow.browser.allowedUrl = 'about:blank';
+    appWindow.browser.webContents.loadURL('about:blank').catch(() => {});
+    appWindow.setBrowserVisible(false);
+  });
   ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
   ipcMain.handle('link:open', (_e, url) => {
     if (/^https?:\/\//i.test(String(url))) shell.openExternal(String(url));

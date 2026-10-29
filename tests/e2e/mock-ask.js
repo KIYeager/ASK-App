@@ -95,6 +95,16 @@ function script(messages) {
     return textChunks('Geholt.');
   }
   if (text.includes('bild an')) return textChunks('Ich sehe das Bild.');
+  if (text.includes('früher gemacht')) {
+    const memory = messages[0]?.role === 'system' && String(messages[0].content).includes('# Frühere Chats');
+    if (!memory) return textChunks('Ich sehe keine früheren Chats.');
+    if (results === 0) return toolCallChunks([{ name: 'chat_search', args: { anfrage: 'proxmox backups' } }]);
+    if (results === 1) {
+      const found = /\(id ([\w-]+)/.exec(textOf(after.filter((m) => m.role === 'tool').pop()?.content))?.[1] || 'fehlt';
+      return toolCallChunks([{ name: 'chat_read', args: { id: found } }]);
+    }
+    return textChunks('Früher haben wir den Proxmox-Bericht geschrieben.');
+  }
   if (text.includes('recherchiere')) {
     if (results === 0) return toolCallChunks([{ name: 'web_search', args: { anfrage: 'proxmox 9 neuerungen' } }]);
     if (results === 1) return toolCallChunks([{ name: 'web_fetch', args: { url: `http://127.0.0.1:${port}/__mock/seite` } }]);

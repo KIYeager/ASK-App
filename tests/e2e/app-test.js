@@ -189,6 +189,7 @@ await compact(ctx, check, shell, shoot);
   await undoFlow(ctx, check, shell, shoot);
   await visualFlow(ctx, check, shell, shoot);
   await webFlow(ctx, check, shell, shoot);
+  await memoryFlow(ctx, check, shell, shoot);
 
   // Sperren gelten auch für die Werkzeuge der App
   const outside = path.join(path.dirname(folder), 'ausserhalb-chat.txt');
@@ -350,6 +351,33 @@ async function attachFlow(ctx, check, shell, shoot) {
   await getJson(`${mockUrl}/__mock/vision/an`);
 }
 
+// Frühere Chats: Schalter «Chats», Liste im Systemprompt, chat_search und chat_read
+async function memoryFlow(ctx, check, shell, shoot) {
+  const { agent, settings } = ctx;
+  const mockUrl = process.env.ASK_TEST_ASK_URL;
+  const folder = settings.get('folder');
+  const old = path.join(folder, '.ask', 'chats', 'alt-test.json');
+  fs.writeFileSync(old, JSON.stringify({ id: 'alt-test', title: 'Alter Bericht über Proxmox', created: 1, updated: Date.now() - 86400000, messages: [
+    { role: 'user', content: 'Schreib den Bericht über Proxmox Backups', time: 1 },
+    { role: 'assistant', content: 'Der Bericht liegt in bericht.docx. Backups laufen jeden Tag um 2 Uhr.', time: 2 }] }));
+  await order(shell, agent, 'Was haben wir früher gemacht?');
+  let log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
+  check('Schalter «Chats» aus: keine Liste, keine Chat-Werkzeuge', !log.system.includes('Frühere Chats') && !log.tools.includes('chat_search')
+    && !(await shell('document.getElementById("memory-btn").classList.contains("on")')));
+  await shell('document.getElementById("memory-btn").click()');
+  await until('Chats an', () => settings.get('chatMemory') === true, 3000).catch(() => {});
+  await order(shell, agent, 'Was haben wir früher gemacht?');
+  const first = (await getJson(`${mockUrl}/__mock/chatlog`)).slice(-3)[0];
+  check('Schalter «Chats» an: Liste früherer Chats im Systemprompt, Werkzeuge dabei', settings.get('chatMemory') === true && first.system.includes('# Frühere Chats in diesem Ordner')
+    && first.system.includes('«Alter Bericht über Proxmox» (id alt-test)') && first.tools.includes('chat_search') && first.tools.includes('chat_read'), first.system.slice(-400));
+  const tools = agent.chat.messages.filter((m) => m.role === 'tool').slice(-2);
+  check('chat_search findet, chat_read liest den alten Chat', tools[0].ok && tools[0].content.includes('(id alt-test') && tools[1].ok
+    && tools[1].content.includes('Backups laufen jeden Tag um 2 Uhr'), JSON.stringify(tools.map((t) => t.content.slice(0, 160))));
+  await shell('document.getElementById("memory-btn").click()');
+  await until('Chats aus', () => settings.get('chatMemory') === false, 3000).catch(() => {});
+  fs.rmSync(old, { force: true });
+}
+
 // Internet: web_search über die Websuche von ASK, web_fetch liefert Text statt HTML, Quellen unter der Antwort
 async function webFlow(ctx, check, shell, shoot) {
   const { agent } = ctx;
@@ -371,7 +399,7 @@ async function webFlow(ctx, check, shell, shoot) {
 
 // Ansehen: das Modell sieht ein Bild und testet eine HTML-Seite im unsichtbaren Browser
 async function visualFlow(ctx, check, shell, shoot) {
-  const { agent, settings } = ctx;
+  const { agent, settings, appWindow } = ctx;
   const { nativeImage } = require('electron');
   const mockUrl = process.env.ASK_TEST_ASK_URL;
   const folder = settings.get('folder');
@@ -405,16 +433,46 @@ async function visualFlow(ctx, check, shell, shoot) {
   const size = shot?.getSize() || {};
   const px = shot ? shot.toBitmap() : Buffer.alloc(0);
   const at = (x, y) => { const i = (y * size.width + x) * 4; return [px[i + 2], px[i + 1], px[i]]; }; // BGRA
-  const [r, g, b] = shot ? at(1000, 600) : [0, 0, 0];
-  check('Bildschirmfoto 1280 × 800 zeigt die Seite', size.width === 1280 && size.height === 800 && r > 150 && g < 60 && b < 60, JSON.stringify({ size, rgb: [r, g, b] }));
+  const [r, g, b] = shot ? at(Math.round(size.width * 0.7), Math.round(size.height * 0.7)) : [0, 0, 0];
+  const pane = appWindow.browserBounds || {};
+  check('Bildschirmfoto aus dem Browser-Bereich zeigt die Seite', size.width > 300 && size.height > 200 && r > 150 && g < 60 && b < 60
+    && (([, w, h]) => Math.abs(w - pane.width) <= 2 && Math.abs(h - pane.height) <= 2)(/Fenster (\d+) × (\d+)/.exec(tested.content)?.map(Number) || []),
+    JSON.stringify({ size, rgb: [r, g, b], pane, text: /Fenster \d+ × \d+/.exec(tested.content)?.[0] }));
   log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
   check('Bildschirmfoto geht ans Modell', log.lastImages === 1 && log.lastUser.startsWith('[Ansicht] Bilder zu browser_test(spiel.html'), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
-  const live = await shell(`({ visible: !document.getElementById('live-panel').hidden, img: (document.getElementById('live-img').getAttribute('src') || '').slice(0, 22),
-    status: document.getElementById('live-status').textContent, log: document.getElementById('live-log').textContent,
-    path: document.getElementById('live-path').textContent, running: document.getElementById('live-panel').classList.contains('running') })`);
-  check('Browser · live in der Seitenleiste (Bild, Schritte, Konsole)', live.visible && live.img === 'data:image/jpeg;base64' && live.status.startsWith('✓ 1 Fehler')
-    && live.log.includes('absichtlicher Testfehler') && live.path === 'spiel.html' && !live.running, JSON.stringify(live));
+  const live = await shell(`({ visible: !document.getElementById('browser-pane').hidden, mode: document.getElementById('browser-pane').dataset.mode,
+    status: document.getElementById('bp-status').textContent, log: document.getElementById('bp-log').textContent,
+    path: document.getElementById('bp-path').textContent, running: document.getElementById('browser-pane').classList.contains('running'),
+    sidebar: getComputedStyle(document.getElementById('sidebar')).display })`);
+  check('Browser-Bereich: echte Seite sichtbar, Schritte, Konsole, Seitenleiste weg', live.visible && live.mode === 'sichtbar' && appWindow.browser?.getVisible()
+    && live.status.startsWith('✓ 1 Fehler') && live.log.includes('absichtlicher Testfehler') && live.path === 'spiel.html' && !live.running && live.sidebar === 'none', JSON.stringify(live));
+  check('Seite bleibt nach dem Test offen und bedienbar', appWindow.browser.webContents.getURL().endsWith('spiel.html')
+    && await appWindow.browser.webContents.executeJavaScript('document.getElementById("s").textContent') === 'Gestartet Rechts');
+  // Eigene Eingabe der Person: Klick in die Seite
+  appWindow.browser.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Right' });
+  appWindow.browser.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Right' });
+  await wait(300);
+  check('Eigene Tasten wirken in der Seite', (await appWindow.browser.webContents.executeJavaScript('document.getElementById("s").textContent')) === 'Gestartet Rechts Rechts');
   await shoot('14-ansehen');
+  const small = appWindow.browserBounds.width;
+  await shell('document.getElementById("bp-big").click()');
+  await until('gross', () => appWindow.browserBounds.width > small + 200, 3000).catch(() => {});
+  check('«Gross» vergrössert den Browser aufs ganze Fenster', appWindow.browserBounds.width > small + 200, `${small} → ${appWindow.browserBounds.width}`);
+  await shoot('14b-browser-gross');
+  await shell('document.getElementById("bp-big").click()');
+  await shell('document.getElementById("bp-close").click()');
+  await until('zu', () => !appWindow.browser.getVisible(), 3000).catch(() => {});
+  check('Schliessen versteckt den Browser und leert die Seite', !appWindow.browser.getVisible() && await shell('getComputedStyle(document.getElementById("sidebar")).display !== "none"'));
+
+  // App nicht sichtbar: unsichtbar testen, Bilder an die Oberfläche
+  const { Visual } = require('../../src/main/visual');
+  const { BrowserWindow } = require('electron');
+  const events = [];
+  const hidden = await new Visual({ electron: { BrowserWindow, nativeImage } }).browse(folder, 'spiel.html', { chat: agent.chat.id, onLive: (e) => events.push(e),
+    aktionen: [{ klick: '#start' }] });
+  const hiddenShot = nativeImage.createFromPath(path.join(folder, hidden.images[0])).getSize();
+  check('Ausweichlösung unsichtbar: Bilder fürs Live-Bild, 1280 × 800', events.some((e) => e.mode === 'unsichtbar') && events.some((e) => String(e.frame).startsWith('data:image/jpeg'))
+    && hiddenShot.width === 1280 && hiddenShot.height === 800 && hidden.output.includes('Gestartet'), JSON.stringify({ hiddenShot, modes: events.filter((e) => e.mode) }));
 }
 
 // Rückgängig: Auftrag ändert und legt an, Knopf setzt den Ordner zurück, das Modell erfährt es

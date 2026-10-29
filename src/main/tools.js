@@ -311,6 +311,7 @@ function githubTool(fn) {
 }
 
 const { PAGE_CHARS } = require('./web');
+const history = require('./history');
 
 const list = (items, max = 15) => (items.length ? `${items.slice(0, max).join(', ')}${items.length > max ? ` und ${items.length - max} weitere` : ''}` : '–');
 
@@ -447,6 +448,46 @@ TOOLS.push(
       return { ok: true, output: `${p.title}\n${p.url}\n\n${p.text || '(kein lesbarer Text, die Seite braucht wohl JavaScript; dann browser_test)'}${more}`,
         display: `${p.title}\n${p.url}\n\n${p.text.slice(0, 3000)}${p.text.length > 3000 ? ' …' : ''}`,
         summary: `${p.title.slice(0, 60)} · ${Math.round(p.total / 100) / 10}k Zeichen`, sources: source };
+    }),
+  },
+);
+
+// Frühere Chats (src/main/history.js), nur mit eingeschaltetem Schalter «Chats»
+function historyTool(fn) {
+  return async (terminal, args, ctx) => {
+    if (!ctx.chatMemory || !ctx.folder) return { ok: false, output: 'Frühere Chats sind nicht freigegeben (Schalter «Chats» oben ist aus).', summary: 'nicht freigegeben' };
+    return fn(ctx.folder, args, ctx);
+  };
+}
+
+TOOLS.push(
+  {
+    name: 'chat_search',
+    label: 'Chats durchsuchen',
+    describe: (a) => a.anfrage,
+    description: 'Durchsucht die früheren Chats in diesem Arbeitsordner (Eingaben, Antworten, Werkzeugaufrufe) und liefert passende Chats mit id und Fundstellen.',
+    parameters: { type: 'object', properties: { anfrage: { type: 'string', description: 'Suchwörter, alle müssen vorkommen' } }, required: ['anfrage'] },
+    run: historyTool(async (folder, a, ctx) => {
+      const hits = history.search(folder, a.anfrage, ctx.chat);
+      if (!hits.length) return { ok: true, output: `Kein früherer Chat enthält «${a.anfrage}».`, summary: 'keine Treffer' };
+      const output = hits.map((h) => `«${h.title}» (id ${h.id}, ${history.date(h.updated)})\n${h.snippets.map((s) => `   ${s}`).join('\n')}`).join('\n\n');
+      return { ok: true, output: `${output}\n\nGanzen Chat mit chat_read lesen.`, summary: `${hits.length} ${hits.length === 1 ? 'Chat' : 'Chats'}` };
+    }),
+  },
+  {
+    name: 'chat_read',
+    label: 'Chat lesen',
+    describe: (a) => a.id,
+    description: 'Liest einen früheren Chat aus diesem Arbeitsordner als Text (Eingaben, Antworten, Werkzeugaufrufe als Kurzzeile), bis 15000 Zeichen pro Aufruf; mit «ab» weiterlesen.',
+    parameters: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'id aus der Liste oder aus chat_search' }, ab: { type: 'integer', description: 'Ab diesem Zeichen weiterlesen' } },
+      required: ['id'],
+    },
+    run: historyTool(async (folder, a) => {
+      const r = history.read(folder, a.id, a.ab);
+      const more = r.to < r.total ? `\n\n(Zeichen ${r.from}–${r.to} von ${r.total}; weiter mit ab: ${r.to})` : '';
+      return { ok: true, output: `Chat «${r.title}» vom ${history.date(r.updated)}\n\n${r.text}${more}`, summary: `«${r.title.slice(0, 50)}»` };
     }),
   },
 );

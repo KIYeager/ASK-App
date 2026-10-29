@@ -14,7 +14,7 @@ const MAX_PDF = 40 * 1024 * 1024;
 const BROWSER_SIZE = { width: 1280, height: 800 };
 const LOAD_TIMEOUT = 15000;
 const MAX_ACTIONS = 25;
-const LIVE_FPS = 8; // Bilder pro Sekunde für «Browser · live»
+const LIVE_FPS = 12; // Bilder pro Sekunde, wenn unsichtbar getestet wird
 const OFFICE = new Set(['.docx', '.xlsx', '.pptx']);
 const RASTER = new Set(['.png', '.jpg', '.jpeg']);
 const OTHER_IMAGES = { '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml' };
@@ -43,9 +43,11 @@ const KEYS = { pfeilhoch: 'Up', pfeilrunter: 'Down', pfeillinks: 'Left', pfeilre
 const keyCode = (name) => KEYS[String(name).toLowerCase().replace(/[\s_-]/g, '')] || String(name);
 
 class Visual {
-  // electron: { BrowserWindow, nativeImage }; convertToPdf(root, file) aus office.js; renderPage: Pfad zu render/pdf.html
-  constructor({ electron, convertToPdf, renderPage }) {
+  // electron: { BrowserWindow, nativeImage }; convertToPdf(root, file) aus office.js; renderPage: Pfad zu render/pdf.html;
+  // getPane(): Promise auf { wc, mode, allow(url), close() } des Browser-Bereichs oder null
+  constructor({ electron, convertToPdf, renderPage, getPane }) {
     this.electron = electron;
+    this.getPane = getPane || null; // sichtbarer Browser-Bereich der App (main.js), sonst null
     this.convertToPdf = convertToPdf;
     this.renderPage = renderPage;
     this.window = null;
@@ -145,48 +147,72 @@ class Visual {
       output: `${note}${r.count} ${unit}; angesehen: ${shown.join(', ')}. Die Bilder folgen in der nächsten Nachricht.${more}` };
   }
 
-  // browser_test: HTML öffnen, Aktionen ausführen, Bildschirmfoto und Konsole zurück. onLive bekommt
-  // laufend Bilder (JPEG, 640 Pixel breit, höchstens LIVE_FPS pro Sekunde), Schritte und Konsole für die Seitenleiste.
-  async browse(root, rel, { aktionen, warten, chat, onLive }) {
-    const live = typeof onLive === 'function' ? onLive : () => {};
-    const full = this.resolve(root, rel);
-    if (!HTML.has(path.extname(full).toLowerCase())) throw new Error('browser_test öffnet nur .html-Dateien.');
+  // Unsichtbares Fenster mit fester Grösse, wenn der Browser-Bereich der App nicht sichtbar ist (App
+  // minimiert, im Test ohne Fenster). Liefert laufend Bilder an onLive.
+  offscreen(live) {
     const { BrowserWindow } = this.electron;
     const win = new BrowserWindow({ show: false, ...BROWSER_SIZE, useContentSize: true,
       webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false,
         partition: `ask-browser-${Date.now()}`, spellcheck: false } });
     const wc = win.webContents;
-    const logs = [];
-    const notes = [];
     let lastPaint = null;
     let dirty = false;
+    wc.setFrameRate(30);
+    wc.on('paint', (_e, _dirty, image) => { lastPaint = image; dirty = true; });
+    wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+    wc.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+    wc.session.on('will-download', (e) => e.preventDefault());
     const stream = setInterval(() => {
       if (!dirty || !lastPaint || lastPaint.isEmpty()) return;
       dirty = false;
-      live({ frame: `data:image/jpeg;base64,${lastPaint.resize({ width: 640, quality: 'good' }).toJPEG(70).toString('base64')}` });
+      live({ frame: `data:image/jpeg;base64,${lastPaint.resize({ width: 960, quality: 'good' }).toJPEG(80).toString('base64')}` });
     }, Math.round(1000 / LIVE_FPS));
+    return {
+      wc, mode: 'unsichtbar', lastPaint: () => lastPaint,
+      allow: (url) => wc.on('will-navigate', (e, to) => { if (to.split('#')[0] !== url) e.preventDefault(); }),
+      close: () => { clearInterval(stream); if (!win.isDestroyed()) win.destroy(); },
+    };
+  }
+
+  // browser_test: HTML öffnen, Aktionen ausführen, Bildschirmfoto und Konsole zurück (ENTSCHEIDE E25, E27).
+  // Sichtbar im Browser-Bereich der App (getPane), sonst unsichtbar. onLive meldet Start, Schritte,
+  // Konsole und Ende (unsichtbar auch Bilder) an die Oberfläche.
+  async browse(root, rel, { aktionen, warten, chat, onLive }) {
+    const live = typeof onLive === 'function' ? onLive : () => {};
+    const full = this.resolve(root, rel);
+    if (!HTML.has(path.extname(full).toLowerCase())) throw new Error('browser_test öffnet nur .html-Dateien.');
+    const fileUrl = require('node:url').pathToFileURL(full).href;
     live({ phase: 'start', path: rel });
+    const pane = this.getPane ? await this.getPane().catch(() => null) : null;
+    const target = pane || this.offscreen(live);
+    live({ mode: target.mode });
+    const { wc } = target;
+    const logs = [];
+    const notes = [];
+    let synthetic = 0; // Zeitpunkt der letzten eigenen Eingabe; Eingaben danach stammen von der Person
+    let userInputs = 0;
+    const onConsole = (e, level, message, line, source) => {
+      const lvl = e?.level ?? ['verbose', 'info', 'warning', 'error'][level] ?? 'info';
+      if (lvl !== 'warning' && lvl !== 'error') return;
+      const msg = e?.message ?? message;
+      if (/Electron Security Warning/.test(msg)) return; // Hinweis von Electron selbst, nicht von der Seite
+      const ln = e?.lineNumber ?? line;
+      const src = path.basename(String(e?.sourceId ?? source ?? '')) || '';
+      const entry = `${lvl === 'error' ? 'Fehler' : 'Warnung'}: ${msg}${src ? ` (${src}:${ln})` : ''}`;
+      if (logs.length < 30) logs.push(entry);
+      live({ log: entry, level: lvl });
+    };
+    const onGone = () => notes.push('Die Seite ist abgestürzt.');
+    const onInput = (_e, input) => {
+      if (['mouseDown', 'keyDown', 'rawKeyDown'].includes(input?.type) && Date.now() - synthetic > 150) userInputs++;
+    };
+    const send = (event) => { synthetic = Date.now(); wc.sendInputEvent(event); };
+    wc.on('console-message', onConsole);
+    wc.on('render-process-gone', onGone);
+    wc.on('input-event', onInput);
+    target.allow(fileUrl);
     try {
-      wc.setFrameRate(30);
-      wc.on('paint', (_e, _dirty, image) => { lastPaint = image; dirty = true; });
-      wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-      const fileUrl = require('node:url').pathToFileURL(full).href;
-      wc.on('will-navigate', (e, url) => { if (url.split('#')[0] !== fileUrl) { e.preventDefault(); notes.push(`Navigation nach ${url} blockiert`); } });
-      wc.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-      wc.session.on('will-download', (e) => e.preventDefault());
-      wc.on('console-message', (e, level, message, line, source) => {
-        const lvl = e?.level ?? ['verbose', 'info', 'warning', 'error'][level] ?? 'info';
-        if (lvl !== 'warning' && lvl !== 'error') return;
-        const msg = e?.message ?? message;
-        if (/Electron Security Warning/.test(msg)) return; // Hinweis von Electron selbst, nicht von der Seite
-        const ln = e?.lineNumber ?? line;
-        const src = path.basename(String(e?.sourceId ?? source ?? '')) || '';
-        const entry = `${lvl === 'error' ? 'Fehler' : 'Warnung'}: ${msg}${src ? ` (${src}:${ln})` : ''}`;
-        if (logs.length < 30) logs.push(entry);
-        live({ log: entry, level: lvl });
-      });
-      wc.on('render-process-gone', () => notes.push('Die Seite ist abgestürzt.'));
-      await withTimeout(win.loadFile(full), LOAD_TIMEOUT, 'Die Seite lädt nicht innerhalb von 15 Sekunden.');
+      await withTimeout(wc.loadFile(full), LOAD_TIMEOUT, 'Die Seite lädt nicht innerhalb von 15 Sekunden.');
       live({ step: 'geladen' });
       wc.focus();
       await wait(Math.min(Math.max(Number(warten) || 1000, 200), 10000));
@@ -202,18 +228,20 @@ class Visual {
           }
           if (!pos) { done.push(`Klick ${a.klick}: Element nicht gefunden`); live({ step: done.at(-1) }); continue; }
           const at = { x: Math.round(pos.x), y: Math.round(pos.y) };
-          wc.sendInputEvent({ type: 'mouseMove', ...at });
-          wc.sendInputEvent({ type: 'mouseDown', ...at, button: 'left', clickCount: 1 });
-          wc.sendInputEvent({ type: 'mouseUp', ...at, button: 'left', clickCount: 1 });
+          send({ type: 'mouseMove', ...at });
+          send({ type: 'mouseDown', ...at, button: 'left', clickCount: 1 });
+          send({ type: 'mouseUp', ...at, button: 'left', clickCount: 1 });
           done.push(`Klick ${a.klick ?? `${at.x},${at.y}`}`);
         } else if (a.taste !== undefined) {
           const code = keyCode(a.taste);
-          wc.sendInputEvent({ type: 'keyDown', keyCode: code });
-          if (code.length === 1) wc.sendInputEvent({ type: 'char', keyCode: code });
+          wc.focus();
+          send({ type: 'keyDown', keyCode: code });
+          if (code.length === 1) send({ type: 'char', keyCode: code });
           await wait(Math.min(Math.max(Number(a.dauer) || 60, 20), 3000));
-          wc.sendInputEvent({ type: 'keyUp', keyCode: code });
+          send({ type: 'keyUp', keyCode: code });
           done.push(`Taste ${a.taste}${a.dauer ? ` ${a.dauer} ms` : ''}`);
         } else if (a.text !== undefined) {
+          synthetic = Date.now();
           await wc.insertText(String(a.text));
           done.push(`Text «${String(a.text).slice(0, 30)}»`);
         } else if (a.warten !== undefined) {
@@ -227,37 +255,43 @@ class Visual {
       }
       await wait(300);
       const info = await wc.executeJavaScript(`({ title: document.title, text: (document.body ? document.body.innerText : '').replace(/\\s+/g, ' ').trim().slice(0, 600),
-        w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight })`).catch(() => ({ title: '', text: '', w: 0, h: 0 }));
+        vw: innerWidth, vh: innerHeight, h: document.documentElement.scrollHeight })`).catch(() => ({ title: '', text: '', vw: 0, vh: 0, h: 0 }));
       let shot = await wc.capturePage().catch(() => null);
-      if ((!shot || shot.isEmpty()) && lastPaint) shot = lastPaint;
-      if (shot && !shot.isEmpty()) { // Offscreen-Fenster sind teils ein paar Pixel grösser
+      if ((!shot || shot.isEmpty()) && target.lastPaint) shot = target.lastPaint();
+      if (shot && !shot.isEmpty()) {
         const s = shot.getSize();
-        if (s.width > BROWSER_SIZE.width || s.height > BROWSER_SIZE.height) {
+        if (target.mode === 'unsichtbar' && (s.width > BROWSER_SIZE.width || s.height > BROWSER_SIZE.height)) { // Offscreen-Fenster sind teils ein paar Pixel grösser
           shot = shot.crop({ x: 0, y: 0, width: Math.min(s.width, BROWSER_SIZE.width), height: Math.min(s.height, BROWSER_SIZE.height) });
+        } else if (s.width > IMAGE_MAX) {
+          shot = shot.resize({ width: IMAGE_MAX, quality: 'good' });
         }
       }
       const images = shot && !shot.isEmpty()
         ? [this.save(root, chat, `${path.basename(full, path.extname(full)).replace(/[^\w.-]+/g, '_').slice(0, 40)}-${Date.now().toString(36)}-browser.png`, shot.toPNG())]
         : [];
       const errors = logs.filter((l) => l.startsWith('Fehler')).length;
+      const size = info.vw ? `${info.vw} × ${info.vh}` : `${BROWSER_SIZE.width} × ${BROWSER_SIZE.height}`;
       const output = [
-        `Geöffnet: ${rel}${info.title ? ` («${info.title}»)` : ''}, Fenster ${BROWSER_SIZE.width} × ${BROWSER_SIZE.height}${info.h > BROWSER_SIZE.height + 20 ? `, Seite ${info.h} Pixel hoch (nur der obere Teil ist im Bild)` : ''}.`,
+        `Geöffnet: ${rel}${info.title ? ` («${info.title}»)` : ''}, Fenster ${size}${info.h > (info.vh || BROWSER_SIZE.height) + 20 ? `, Seite ${info.h} Pixel hoch (nur der obere Teil ist im Bild)` : ''}.`,
         done.length ? `Aktionen: ${done.join('; ')}.` : '',
+        userInputs ? `Die Person hat während des Tests selbst ${userInputs}-mal geklickt oder eine Taste gedrückt; das Bild zeigt auch ihre Eingaben.` : '',
         logs.length ? `Konsole:\n${logs.join('\n')}` : 'Konsole: keine Fehler oder Warnungen.',
         ...notes,
         info.text ? `Sichtbarer Text (Anfang): ${info.text}` : 'Kein sichtbarer Text.',
         images.length ? 'Das Bildschirmfoto folgt in der nächsten Nachricht.' : 'Kein Bildschirmfoto möglich.',
       ].filter(Boolean).join('\n');
       const summary = `${errors ? `${errors} Fehler in der Konsole` : 'keine Fehler'}${images.length ? ' · Bildschirmfoto' : ''}`;
-      if (shot && !shot.isEmpty()) live({ frame: `data:image/jpeg;base64,${shot.resize({ width: 640, quality: 'good' }).toJPEG(80).toString('base64')}` });
-      live({ phase: 'end', summary });
+      if (target.mode === 'unsichtbar' && shot && !shot.isEmpty()) live({ frame: `data:image/jpeg;base64,${shot.toJPEG(85).toString('base64')}` });
+      live({ phase: 'end', summary, userInputs });
       return { ok: true, output, images, summary };
     } catch (err) {
       live({ phase: 'end', summary: err.message, failed: true });
       throw err;
     } finally {
-      clearInterval(stream);
-      if (!win.isDestroyed()) win.destroy();
+      wc.removeListener('console-message', onConsole);
+      wc.removeListener('render-process-gone', onGone);
+      wc.removeListener('input-event', onInput);
+      target.close();
     }
   }
 }

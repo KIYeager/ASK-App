@@ -111,8 +111,9 @@ function apiMessages(system, messages, textMode = false, imageUrl = null) {
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, confirm, getImageUrl, getVision, getSnapshots }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, confirm, getImageUrl, getVision, getSnapshots, getChatMemory }) {
     super();
+    this.getChatMemory = getChatMemory || (() => false); // Schalter «Chats»: frühere Chats lesen (history.js)
     this.web = web || null; // web_search und web_fetch (web.js)
     this.githubTrust = githubTrust || null;
     this.visual = visual || null; // view_file und browser_test (visual.js)
@@ -313,7 +314,8 @@ class Agent extends EventEmitter {
     const model = this.getModel();
     if (!model) throw new Error('Kein Modell gewählt.');
     const goal = this.chat.goal && !this.chat.goal.done ? this.chat.goal : null;
-    const specs = [...toolSpecs(this.getCommandHint(this.chat.id)), ...(goal ? [GOAL_TOOL] : [])];
+    const memory = !!this.getChatMemory();
+    const specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => memory || !s.function.name.startsWith('chat_')), ...(goal ? [GOAL_TOOL] : [])];
     let sentImages = false;
     const request = () => {
       const system = this.getSystemPrompt(this.chat.id) + (goal ? goalPrompt(goal) : '') + (this.textMode ? textModePrompt(specs) : '');
@@ -401,6 +403,7 @@ class Agent extends EventEmitter {
           githubTrust: this.githubTrust,
           visual: this.visual,
           web: this.web,
+          chatMemory: memory,
           onLive: (data) => this.event({ type: 'live', id: call.id, ...data }),
           canSee,
           chat: this.chat.id,

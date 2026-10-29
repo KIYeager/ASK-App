@@ -115,6 +115,11 @@ function renderStatus() {
   web.title = !s.webSearchAvailable ? 'Websuche ist in ASK für dein Konto nicht freigegeben'
     : s.webSearch ? 'Websuche an: ASK sucht vor der Antwort im Web (/web zum Ausschalten)' : 'Websuche aus (/web zum Einschalten)';
 
+  const memory = $('memory-btn');
+  memory.classList.toggle('on', !!s.chatMemory);
+  memory.title = s.chatMemory ? 'Frühere Chats an: das Modell sieht die Liste der früheren Chats in diesem Ordner und kann sie durchsuchen und lesen (/chats zum Ausschalten)'
+    : 'Frühere Chats aus: jeder Chat beginnt ohne Wissen über andere Chats (/chats zum Einschalten)';
+
   const setup = s.warningAccepted && !!s.askUrl;
   $('folder-btn').disabled = !setup;
   $('new-btn').disabled = running || !s.folder;
@@ -155,6 +160,7 @@ function renderThinking(level) {
 function toggleThinkPop(open = $('think-pop').hidden) {
   $('think-pop').hidden = !open;
   if (open) $('think-range').focus();
+  reportBrowser(); // die Browser-Ansicht läge sonst über dem Regler
 }
 
 // ---------- Ziel (/goal) ----------
@@ -217,6 +223,7 @@ function renderDialogs() {
   $('login-area').classList.toggle('loading', login && !showAskPage());
   if (!askFailed) $('ask-placeholder').textContent = state.ask.state === 'pruefen' ? 'Anmeldung wird geprüft …' : 'Verbinde mit ASK …';
   api.setAskVisible(login && showAskPage() && !currentDialog && !askFailed);
+  reportBrowser(); // Dialoge liegen sonst unter der Browser-Ansicht
   if (login) reportBounds();
   if (currentDialog === 'start') renderStart();
   if (currentDialog === 'ask') renderAskDialog();
@@ -951,6 +958,7 @@ const COMMANDS = [
   { cmd: '/modell', text: 'Modell wählen', run: () => $('model-select').focus() },
   { cmd: '/denken', text: 'Denkaufwand einstellen (Standard, Tief bis Maximal)', run: () => toggleThinkPop(true) },
   { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api.setWebSearch(!state.webSearch); } },
+  { cmd: '/chats', text: 'Frühere Chats für das Modell ein- oder ausschalten', run: () => api.setChatMemory(!state.chatMemory) },
   { cmd: '/neustart', text: 'Terminal neu starten', run: () => api.restartTerminal() },
   { cmd: '/abmelden', text: 'Bei ASK abmelden', run: () => api.logout() },
 ];
@@ -1162,44 +1170,72 @@ function onKey(e) {
 
 // ---------- Seitenleiste ----------
 
-// Browser · live: was browser_test gerade sieht (Bilder, Schritte, Konsole), wie im Browser-Fenster von Claude Code
+// Browser-Bereich: die echte Seite, die browser_test öffnet und steuert (wie das Browser-Fenster in Claude).
+// Die Seite selbst ist eine WebContentsView im Hauptprozess; hier liegen Kopfzeile, Platz und Konsole.
+// Ist die App nicht sichtbar, testet sie unsichtbar und schickt Bilder (Modus «unsichtbar»).
 let liveId = null;
+let browserMode = '';
+
+function browserOpen() {
+  return !$('browser-pane').hidden;
+}
+
+function reportBrowser() {
+  const r = $('browser-host').getBoundingClientRect();
+  api.setBrowserBounds({ x: r.x, y: r.y, width: r.width, height: r.height });
+  api.setBrowserVisible(browserOpen() && browserMode !== 'unsichtbar' && !activeDialog() && $('think-pop').hidden);
+}
+
+function openBrowser() {
+  $('browser-pane').hidden = false;
+  document.body.classList.add('browser-open');
+  requestAnimationFrame(reportBrowser);
+}
+
+function closeBrowser() {
+  $('browser-pane').hidden = true;
+  document.body.classList.remove('browser-open', 'browser-big');
+  api.browserClose();
+  reportBrowser();
+}
+
+function toggleBrowserBig() {
+  document.body.classList.toggle('browser-big');
+  requestAnimationFrame(reportBrowser);
+}
+
 function onLive(ev) {
-  const panel = $('live-panel');
   if (ev.phase === 'start') {
     liveId = ev.id;
-    panel.hidden = false;
-    panel.classList.add('running');
-    if (state && !state.sidebarOpen) api.setSidebar(true);
-    $('live-path').textContent = ev.path;
-    $('live-status').textContent = 'lädt …';
-    $('live-log').replaceChildren();
-    $('live-img').removeAttribute('src');
+    browserMode = '';
+    $('browser-pane').classList.add('running');
+    $('browser-pane').dataset.mode = '';
+    $('bp-path').textContent = ev.path;
+    $('bp-status').textContent = 'lädt …';
+    $('bp-log').replaceChildren();
+    $('bp-frame').hidden = true;
+    $('bp-frame').removeAttribute('src');
+    openBrowser();
     return;
   }
   if (ev.id !== liveId) return;
-  if (ev.frame) {
-    $('live-img').src = ev.frame;
-    const big = document.getElementById('live-big-img');
-    if (big) big.src = ev.frame;
+  if (ev.mode) {
+    browserMode = ev.mode;
+    $('browser-pane').dataset.mode = ev.mode;
+    $('bp-frame').hidden = ev.mode !== 'unsichtbar';
+    reportBrowser();
   }
-  if (ev.step) $('live-status').textContent = `▸ ${ev.step}`;
+  if (ev.frame) $('bp-frame').src = ev.frame;
+  if (ev.step) $('bp-status').textContent = `▸ ${ev.step}`;
   if (ev.log) {
-    const log = $('live-log');
+    const log = $('bp-log');
     log.append(el('li', { class: ev.level === 'error' ? 'error' : 'warning' }, ev.log));
-    while (log.children.length > 8) log.firstChild.remove();
+    while (log.children.length > 6) log.firstChild.remove();
   }
   if (ev.phase === 'end') {
-    panel.classList.remove('running');
-    $('live-status').textContent = `${ev.failed ? '✗' : '✓'} ${ev.summary}`;
+    $('browser-pane').classList.remove('running');
+    $('bp-status').textContent = `${ev.failed ? '✗' : '✓'} ${ev.summary}${ev.userInputs ? ` · ${ev.userInputs} eigene Eingaben` : ''}`;
   }
-}
-
-function showLiveBig() {
-  openDialog = 'preview';
-  $('big-title').textContent = `Browser · ${$('live-path').textContent}`;
-  $('big-body').replaceChildren(el('img', { id: 'live-big-img', class: 'live-big', src: $('live-img').src || '', alt: '' }));
-  render();
 }
 
 function extOf(name) {
@@ -1294,9 +1330,9 @@ function reportBounds() {
 function wire() {
   wireAttachments();
   $('todo-head').onclick = () => toggleTodo();
-  $('live-close').onclick = () => { $('live-panel').hidden = true; };
-  $('live-big').onclick = () => showLiveBig();
-  $('live-img').onclick = () => showLiveBig();
+  $('bp-close').onclick = () => closeBrowser();
+  $('bp-big').onclick = () => toggleBrowserBig();
+  $('bp-reload').onclick = () => api.browserReload();
   $('folder-btn').onclick = () => api.folderMenu();
   $('sidebar-btn').onclick = () => api.setSidebar(!state.sidebarOpen);
   $('new-btn').onclick = () => newChat();
@@ -1305,6 +1341,7 @@ function wire() {
   $('chat-search').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; renderChats(); } });
   $('model-select').onchange = (e) => api.setModel(e.target.value);
   $('web-btn').onclick = () => api.setWebSearch(!state.webSearch);
+  $('memory-btn').onclick = () => api.setChatMemory(!state.chatMemory);
   $('think-btn').onclick = (e) => { e.stopPropagation(); toggleThinkPop(); };
   $('think-pop').addEventListener('click', (e) => e.stopPropagation());
   $('think-range').addEventListener('input', (e) => api.setThinking(THINK_LEVELS[Number(e.target.value)]));
@@ -1442,6 +1479,8 @@ function wire() {
 
   new ResizeObserver(reportBounds).observe($('ask-host'));
   window.addEventListener('resize', reportBounds);
+  new ResizeObserver(reportBrowser).observe($('browser-host'));
+  window.addEventListener('resize', reportBrowser);
   setInterval(tickActivity, 500);
 }
 
