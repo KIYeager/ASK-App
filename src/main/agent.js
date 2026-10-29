@@ -31,6 +31,7 @@ function goalPrompt(goal) {
     + 'Kündige Arbeit nicht nur an, sondern führe sie mit den Werkzeugen aus. Ist das Ziel erreicht, rufe goal_done auf.';
 }
 const KEEP_FULL_TOOL_RESULTS = 8; // ältere Werkzeugergebnisse gehen gekürzt an das Modell
+const IMAGE_TURNS = 2; // Bilder aus so vielen der letzten Eingaben gehen an das Modell
 const CHAT_DIR = path.join('.ask', 'chats');
 const NEW = 'neu'; // openLatest: leeren Chat beginnen
 const { WORK_DIRS } = require('./cleanup'); // unter .ask, je ein Unterordner pro Chat
@@ -65,14 +66,29 @@ function textModePrompt(specs) {
     + 'Danach wartest du auf das Ergebnis in <tool_response>.';
 }
 
+// Text einer Eingabe mit Anhängen: das Modell erfährt, wo die Dateien liegen.
+function userText(m) {
+  const files = (m.attachments || []).map((a) => a.path);
+  if (!files.length) return m.content;
+  return `${m.content || 'Siehe Anhang.'}\n\n[Angehängt, liegt im Arbeitsordner: ${files.join(', ')}]`;
+}
+
 // Verlauf für die Anfrage: ohne Denktexte, alte Ergebnisse gekürzt, im Textmodus ohne tool-Rollen
-// (auch für frühere Schritte, die noch mit Werkzeugliste liefen).
-function apiMessages(system, messages, textMode = false) {
+// (auch für frühere Schritte, die noch mit Werkzeugliste liefen). imageUrl(anhang) liefert Bilder
+// als data-URL; sie gehen nur bei den letzten IMAGE_TURNS Eingaben mit, ältere nur als Pfad.
+function apiMessages(system, messages, textMode = false, imageUrl = null) {
   const toolIndexes = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
   const recent = new Set(toolIndexes.slice(-KEEP_FULL_TOOL_RESULTS));
+  const withImages = imageUrl ? new Set(messages.map((m, i) => (m.role === 'user' && m.attachments?.some((a) => a.image) ? i : -1))
+    .filter((i) => i >= 0).slice(-IMAGE_TURNS)) : new Set();
   const out = [{ role: 'system', content: system }];
   for (const [i, m] of messages.entries()) {
-    if (m.role === 'user') out.push({ role: 'user', content: m.content });
+    if (m.role === 'user') {
+      const urls = withImages.has(i) ? m.attachments.filter((a) => a.image).map(imageUrl).filter(Boolean) : [];
+      out.push({ role: 'user', content: urls.length
+        ? [{ type: 'text', text: userText(m) }, ...urls.map((url) => ({ type: 'image_url', image_url: { url } }))]
+        : userText(m) });
+    }
     else if (m.role === 'assistant') {
       if (m.textMode) out.push({ role: 'assistant', content: m.raw || m.content || '' });
       else if (textMode && m.tool_calls?.length) {
@@ -93,10 +109,13 @@ function apiMessages(system, messages, textMode = false) {
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, confirm }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, confirm, getImageUrl, getVision }) {
     super();
     this.github = github;
     this.confirm = confirm || (async () => false);
+    this.getImageUrl = getImageUrl || null; // Anhang → data-URL für das Modell
+    this.getVision = getVision || (() => undefined); // false: Modell versteht laut ASK keine Bilder
+    this.noImages = false; // ASK hat Bilder abgelehnt
     this.ask = ask;
     this.terminal = terminal;
     this.getFolder = getFolder;
@@ -223,12 +242,15 @@ class Agent extends EventEmitter {
     this.chat.messages.push(message);
   }
 
-  async send(text) {
+  // attachments: bereits in eingang/ gespeicherte Anhänge (siehe attachments.js)
+  async send(text, attachments = []) {
     text = String(text || '').trim();
-    if (!text || this.running) return;
-    if (!this.chat.title) this.chat.title = text.replace(/\s+/g, ' ').slice(0, 80);
-    this.push({ role: 'user', content: text, time: Date.now() });
-    this.event({ type: 'user', text });
+    if ((!text && !attachments.length) || this.running) return;
+    if (!this.chat.title) this.chat.title = (text || attachments.map((a) => a.name).join(', ')).replace(/\s+/g, ' ').slice(0, 80);
+    const message = { role: 'user', content: text, time: Date.now() };
+    if (attachments.length) message.attachments = attachments;
+    this.push(message);
+    this.event({ type: 'user', text, attachments });
     this.running = true;
     this.controller = new AbortController();
     const { signal } = this.controller;
@@ -280,12 +302,16 @@ class Agent extends EventEmitter {
     if (!model) throw new Error('Kein Modell gewählt.');
     const goal = this.chat.goal && !this.chat.goal.done ? this.chat.goal : null;
     const specs = [...toolSpecs(this.getCommandHint(this.chat.id)), ...(goal ? [GOAL_TOOL] : [])];
+    let sentImages = false;
     const request = () => {
       const system = this.getSystemPrompt(this.chat.id) + (goal ? goalPrompt(goal) : '') + (this.textMode ? textModePrompt(specs) : '');
+      const imageUrl = this.getImageUrl && !this.noImages && this.getVision() !== false ? this.getImageUrl : null;
+      const messages = apiMessages(system, this.chat.messages, this.textMode, imageUrl);
+      sentImages = messages.some((m) => Array.isArray(m.content));
       this.event({ type: 'assistant-start', webSearch });
       return this.ask.chat({
         model,
-        messages: apiMessages(system, this.chat.messages, this.textMode),
+        messages,
         tools: this.textMode ? null : specs,
         webSearch,
         thinking: this.getThinking(),
@@ -297,8 +323,13 @@ class Agent extends EventEmitter {
     try {
       completion = await request();
     } catch (err) {
-      // Manche Server lehnen «tools» ab: dann Werkzeuge im Text beschreiben.
-      if (!this.textMode && err.status === 400 && /tool/i.test(err.message)) {
+      // Nimmt das Modell keine Bilder an, gehen sie künftig nur als Pfad mit.
+      if (sentImages && err.status >= 400 && /image|vision|multimodal|modalit/i.test(err.message)) {
+        this.noImages = true;
+        this.event({ type: 'notice', text: 'Das Modell in ASK nimmt keine Bilder an. Die Bilder liegen in eingang/, das Modell kann sie nur als Datei bearbeiten, nicht ansehen.' });
+        completion = await request();
+      } else if (!this.textMode && err.status === 400 && /tool/i.test(err.message)) {
+        // Manche Server lehnen «tools» ab: dann Werkzeuge im Text beschreiben.
         this.textMode = true;
         this.event({ type: 'notice', text: 'ASK nimmt keine Werkzeugliste an, die App beschreibt die Werkzeuge im Text.' });
         completion = await request();
@@ -381,7 +412,7 @@ class Agent extends EventEmitter {
           calls: (m.tool_calls || []).map((c) => ({ id: c.id, name: c.function.name, ...this.describeCall(c) })) };
       }
       if (m.role === 'tool') return { role: 'tool', id: m.tool_call_id, ok: m.ok !== false, summary: m.summary || '', output: m.display ?? m.content, tasks: m.tasks };
-      return { role: m.auto ? 'auto' : m.role, content: m.content, time: m.time };
+      return { role: m.auto ? 'auto' : m.role, content: m.content, time: m.time, attachments: m.attachments || [] };
     });
   }
 }

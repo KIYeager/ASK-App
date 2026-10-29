@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' askfile: data:; frame-src askfile:; media-src askfile:; style-src 'self'; script-src 'self'">
+        content="default-src 'self'; img-src 'self' askfile: data: blob:; frame-src askfile:; media-src askfile:; style-src 'self'; script-src 'self'">
   <title>ASK</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -83,8 +83,10 @@
             <span class="muted">(<span id="activity-time">0 s</span> · Esc zum Stoppen)</span>
           </div>
           <div id="slash" class="slash" hidden></div>
+          <div id="attach-row" class="attach-row" hidden></div>
           <div class="input-box" id="input-box">
-            <span class="prompt" aria-hidden="true">›</span>
+            <button id="attach-btn" class="attach-btn" title="Dateien oder Bilder anhängen (auch mit Ctrl+V oder Hineinziehen)" aria-label="Anhängen">+</button>
+            <input id="attach-file" type="file" multiple hidden>
             <textarea id="input" rows="1" spellcheck="true" placeholder="Was soll ich im Arbeitsordner erledigen?"></textarea>
             <button id="send-btn" class="send" title="Senden (Enter)">↵</button>
           </div>

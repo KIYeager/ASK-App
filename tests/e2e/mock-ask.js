@@ -19,6 +19,10 @@ const chatLog = [];
 let toolsAccepted = true;
 let usageAccepted = true;
 let thinkAccepted = true;
+let visionAccepted = true;
+// Text einer Nachricht; mit Bildern ist content eine Liste von Teilen
+const textOf = (content) => (Array.isArray(content) ? content.filter((p) => p.type === 'text').map((p) => p.text).join('\n') : String(content ?? ''));
+const imagesIn = (messages) => messages.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((p) => p.type === 'image_url') : [])).length;
 
 const page = `<!doctype html><html><head><meta charset="utf-8"><title>Mock ASK</title></head>
 <body style="font-family:Segoe UI;padding:20px"><h1>Mock ASK</h1>
@@ -59,11 +63,11 @@ function textChunks(text, reasoning = '') {
 
 // Antwort des Modells aus dem bisherigen Verlauf
 function script(messages) {
-  const lastUser = messages.map((m, i) => (m.role === 'user' && !String(m.content).startsWith('<tool_response>') ? i : -1))
+  const lastUser = messages.map((m, i) => (m.role === 'user' && !textOf(m.content).startsWith('<tool_response>') ? i : -1))
     .filter((i) => i >= 0).pop();
-  const text = String(messages[lastUser]?.content || '').toLowerCase();
+  const text = textOf(messages[lastUser]?.content).toLowerCase();
   const after = messages.slice(lastUser + 1);
-  const results = after.filter((m) => m.role === 'tool' || String(m.content).startsWith('<tool_response>')).length;
+  const results = after.filter((m) => m.role === 'tool' || textOf(m.content).startsWith('<tool_response>')).length;
   if (text.includes('textmodus')) {
     if (results === 0) return textChunks('Ich führe den Befehl aus.\n<tool_call>\n{"name": "run_command", "arguments": {"command": "echo textmodus ok"}}\n</tool_call>');
     return textChunks('Textmodus fertig.');
@@ -88,6 +92,11 @@ function script(messages) {
   if (text.includes('von github holen')) {
     if (results === 0) return toolCallChunks([{ name: 'github_pull', args: {} }]);
     return textChunks('Geholt.');
+  }
+  if (text.includes('bild an')) return textChunks('Ich sehe das Bild.');
+  if (text.includes('anhang')) {
+    if (results === 0) return toolCallChunks([{ name: 'read_file', args: { path: 'eingang/notiz.txt' } }]);
+    return textChunks('Anhang gelesen.');
   }
   if (text.includes('schleife')) return toolCallChunks([{ name: 'run_command', args: { command: 'echo immer gleich' } }]);
   if (text.includes('lies')) {
@@ -153,6 +162,10 @@ http.createServer((req, res) => {
     thinkAccepted = url.endsWith('/an');
     return json(res, 200, { thinkAccepted });
   }
+  if (url.startsWith('/__mock/vision/')) {
+    visionAccepted = url.endsWith('/an');
+    return json(res, 200, { visionAccepted });
+  }
   if (url.startsWith('/__mock/usage/')) {
     usageAccepted = url.endsWith('/an');
     return json(res, 200, { usageAccepted });
@@ -167,7 +180,7 @@ http.createServer((req, res) => {
       setTimeout(() => json(res, 200, { data: [{ id: 'qwen-test', name: 'Qwen Test' }] }), 1500);
       return undefined;
     }
-    return json(res, 200, { data: [{ id: 'qwen-test', name: 'Qwen Test' }, { id: 'versteckt', name: 'Versteckt', info: { meta: { hidden: true } } }] });
+    return json(res, 200, { data: [{ id: 'qwen-test', name: 'Qwen Test', info: { meta: { capabilities: { vision: true } } } }, { id: 'versteckt', name: 'Versteckt', info: { meta: { hidden: true } } }] });
   }
   if (url === '/api/chat/completions' && req.method === 'POST') {
     let body = '';
@@ -177,9 +190,11 @@ http.createServer((req, res) => {
       chatLog.push({ model: data.model, stream: data.stream, usage: !!data.stream_options?.include_usage, web: !!data.features?.web_search,
         effort: data.reasoning_effort, think: data.think, enableThinking: data.chat_template_kwargs?.enable_thinking, tools: (data.tools || []).map((t) => t.function.name),
         system: data.messages[0]?.content || '', roles: data.messages.map((m) => m.role),
-        toolIds: data.messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id) });
+        toolIds: data.messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id),
+        images: imagesIn(data.messages), lastUser: textOf(data.messages.filter((m) => m.role === 'user').pop()?.content) });
       if (data.stream_options && !usageAccepted) return json(res, 400, { detail: 'Unrecognized request argument: stream_options' });
       if (data.reasoning_effort !== undefined && !thinkAccepted) return json(res, 400, { detail: 'Unrecognized request argument: reasoning_effort' });
+      if (imagesIn(data.messages) && !visionAccepted) return json(res, 400, { detail: 'image input is not supported by this model' });
       if (data.tools && !toolsAccepted) return json(res, 400, { detail: 'tools are not supported by this model' });
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
       const chunks = script(data.messages);

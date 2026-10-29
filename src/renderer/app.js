@@ -410,8 +410,8 @@ function addMessage(cls, mark, ...content) {
 let turnNode = null; // Eingabe der Person, mit der der laufende Auftrag begann
 let turnStart = 0;
 
-function addUser(text, time = Date.now()) {
-  turnNode = addMessage('user', '›', text);
+function addUser(text, time = Date.now(), attachments = []) {
+  turnNode = addMessage('user', '›', text || null, attachmentList(attachments));
   turnStart = time;
 }
 
@@ -713,7 +713,7 @@ function onEvent(ev) {
         break;
       }
       turnStats = [];
-      addUser(ev.text);
+      addUser(ev.text, Date.now(), ev.attachments);
       scrollDown(true);
       break;
     case 'assistant-start':
@@ -772,7 +772,7 @@ function renderTranscript(items) {
       addStats(stats);
       stats = [];
       foldTurn(lastTime);
-      addUser(item.content, item.time || 0);
+      addUser(item.content, item.time || 0, item.attachments);
     } else if (item.role === 'assistant') {
       lastTime = item.time || lastTime;
       stats.push(item.stats);
@@ -866,7 +866,7 @@ async function submit() {
   }
   const input = $('input');
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && !pending.length) return;
   const goalCmd = /^\/goal(?:\s+([\s\S]*))?$/i.exec(text);
   if (goalCmd) {
     input.value = '';
@@ -883,18 +883,122 @@ async function submit() {
   if (blocker()) return;
   input.value = '';
   autosize();
-  await sendText(text);
+  const files = pending;
+  pending = [];
+  renderPending();
+  await sendText(text, files);
 }
 
-async function sendText(text) {
-  sent.push(text);
+async function sendText(text, files = []) {
+  if (text) sent.push(text);
   sentIndex = -1;
   running = true;
   runStarted = Date.now();
   activityLabel = 'Denkt nach …';
   tickActivity();
   renderComposer();
-  await api.chatSend(text);
+  const res = await api.chatSend(text, files.map(({ name, type, data }) => ({ name, type, data })));
+  if (res && res.ok === false) {
+    // Nichts gesendet: Anhänge und Text zurück ins Eingabefeld
+    running = false;
+    pending = files;
+    renderPending();
+    if (text && !$('input').value) { $('input').value = text; autosize(); }
+    addMessage('error', '✗', res.reason);
+    renderComposer();
+  } else {
+    for (const f of files) if (f.url) URL.revokeObjectURL(f.url);
+  }
+}
+
+// ---------- Anhänge ----------
+
+const MAX_ATTACH = 10;
+const MAX_ATTACH_SIZE = 50 * 1024 * 1024;
+const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
+let pending = []; // { name, type, size, data, url }
+
+async function addFiles(list) {
+  for (const file of [...list]) {
+    if (pending.length >= MAX_ATTACH) {
+      addMessage('notice', '⎿', `Höchstens ${MAX_ATTACH} Anhänge auf einmal.`);
+      break;
+    }
+    if (file.size > MAX_ATTACH_SIZE) {
+      addMessage('notice', '⎿', `${file.name} ist grösser als 50 MB und wurde nicht angehängt.`);
+      continue;
+    }
+    let data;
+    try {
+      data = new Uint8Array(await file.arrayBuffer());
+    } catch {
+      addMessage('notice', '⎿', `${file.name || 'Die Datei'} lässt sich nicht lesen (ein Ordner?).`);
+      continue;
+    }
+    const image = file.type.startsWith('image/') || IMAGE_RE.test(file.name);
+    pending.push({ name: file.name, type: file.type, size: file.size, data, url: image ? URL.createObjectURL(file) : '' });
+  }
+  renderPending();
+  $('input').focus();
+}
+
+function renderPending() {
+  const row = $('attach-row');
+  row.hidden = pending.length === 0;
+  row.replaceChildren(...pending.map((f, i) => el('span', { class: 'attach-chip', title: `${f.name} (${formatSize(f.size)})` },
+    f.url ? el('img', { src: f.url, alt: '' }) : el('span', { class: `badge ${extOf(f.name)}` }, (extOf(f.name) || 'Datei').slice(0, 4).toUpperCase()),
+    el('span', { class: 'name' }, f.name || 'Bild'),
+    el('button', { class: 'remove', title: 'Entfernen', 'aria-label': `${f.name} entfernen`, onclick: () => {
+      if (f.url) URL.revokeObjectURL(f.url);
+      pending.splice(i, 1);
+      renderPending();
+    } }, '×'))));
+}
+
+// Anhänge in einer Eingabe im Chat: Bilder als Vorschaubild, sonst Name; Klick zeigt die Vorschau.
+function attachmentList(attachments) {
+  if (!attachments?.length) return null;
+  const fileUrl = (p) => `askfile://datei/${p.split('/').map(encodeURIComponent).join('/')}`;
+  return el('div', { class: 'attachments' }, ...attachments.map((a) => {
+    const open = () => showPreview({ path: a.path, name: a.name });
+    return a.image
+      ? el('img', { class: 'attach-thumb', src: fileUrl(a.path), alt: a.name, title: a.path, onclick: open })
+      : el('span', { class: 'attach-chip', title: a.path, onclick: open },
+        el('span', { class: `badge ${extOf(a.name)}` }, (extOf(a.name) || 'Datei').slice(0, 4).toUpperCase()), el('span', { class: 'name' }, a.name));
+  }));
+}
+
+function wireAttachments() {
+  $('attach-btn').onclick = () => $('attach-file').click();
+  $('attach-file').onchange = (e) => {
+    addFiles(e.target.files);
+    e.target.value = '';
+  };
+  // Einfügen: Dateien und Bildschirmfotos. Steht auch Text in der Zwischenablage (z. B. aus Excel
+  // kopierte Zellen, die zusätzlich als Bild kommen), gilt der Text.
+  $('input').addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length || e.clipboardData.types.includes('text/plain')) return;
+    e.preventDefault();
+    addFiles(files);
+  });
+  // Hineinziehen irgendwo ins Fenster
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  document.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    $('input-box').classList.add('dropping');
+  });
+  document.addEventListener('dragleave', (e) => {
+    if (!e.relatedTarget) $('input-box').classList.remove('dropping');
+  });
+  document.addEventListener('drop', (e) => {
+    $('input-box').classList.remove('dropping');
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (activeDialog()) return;
+    addFiles(e.dataTransfer.files);
+  });
 }
 
 async function newChat() {
@@ -1035,6 +1139,7 @@ function reportBounds() {
 }
 
 function wire() {
+  wireAttachments();
   $('folder-btn').onclick = () => api.folderMenu();
   $('sidebar-btn').onclick = () => api.setSidebar(!state.sidebarOpen);
   $('new-btn').onclick = () => newChat();

@@ -154,6 +154,7 @@ async function chat(ctx, check, shell, shoot) {
 await compact(ctx, check, shell, shoot);
 
   await githubFlow(ctx, check, shell, shoot);
+  await attachFlow(ctx, check, shell, shoot);
 
   // Sperren gelten auch für die Werkzeuge der App
   const outside = path.join(path.dirname(folder), 'ausserhalb-chat.txt');
@@ -257,6 +258,60 @@ await compact(ctx, check, shell, shoot);
   check('Chat löschen', otherChats.length === 1 && agent.remove(opened.path, otherChats[0].id) && agent.list(opened.path).length === 0, JSON.stringify(otherChats));
   check('Skripte des gelöschten Chats sind weg', !fs.existsSync(chatScripts));
   check('Dateien im Ordner bleiben beim Löschen', fs.existsSync(path.join(opened.path, 'ausgabe', 'bericht.txt')));
+}
+
+// Anhänge: Bildschirmfoto einfügen, Datei hineinziehen, Bild geht ans Modell, Datei liegt in eingang/
+async function attachFlow(ctx, check, shell, shoot) {
+  const { agent, settings } = ctx;
+  const mockUrl = process.env.ASK_TEST_ASK_URL;
+  const folder = settings.get('folder');
+  const chips = () => shell('document.querySelectorAll("#attach-row .attach-chip").length');
+  const pasteImage = `(async () => {
+    const c = document.createElement('canvas'); c.width = 40; c.height = 30;
+    const g = c.getContext('2d'); g.fillStyle = '#c33'; g.fillRect(0, 0, 40, 30);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], 'image.png', { type: 'image/png' }));
+    document.getElementById('input').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    return true; })()`;
+  const drop = (name, text) => `(() => {
+    const dt = new DataTransfer(); dt.items.add(new File([${JSON.stringify(text)}], ${JSON.stringify(name)}, { type: 'text/plain' }));
+    document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }));
+    return true; })()`;
+
+  await shell(pasteImage);
+  await shell(drop('notiz.txt', 'Notiz für den Test'));
+  await shell(drop('weg.txt', 'kommt wieder weg'));
+  await until('drei Anhänge', async () => (await chips()) === 3, 5000).catch(() => {});
+  check('Einfügen und Hineinziehen: drei Anhänge über der Eingabe', (await chips()) === 3 && await shell('!!document.querySelector("#attach-row img")'));
+  await shell('[...document.querySelectorAll("#attach-row .attach-chip")].pop().querySelector(".remove").click()');
+  check('Anhang lässt sich vor dem Senden entfernen', (await chips()) === 2);
+  await shoot('12-anhaenge');
+
+  await order(shell, agent, 'Schau dir das Bild an');
+  const inbox = fs.readdirSync(path.join(folder, 'eingang'));
+  check('Anhänge in eingang/ gespeichert, Bildschirmfoto mit Datum benannt', inbox.includes('notiz.txt') && inbox.some((n) => /^bild-\d{8}-\d{6}\.png$/.test(n))
+    && !inbox.includes('weg.txt') && fs.readFileSync(path.join(folder, 'eingang', 'notiz.txt'), 'utf8') === 'Notiz für den Test', inbox.join(', '));
+  let log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
+  check('Bild geht ans Modell, Pfade stehen in der Nachricht', log.images === 1 && log.lastUser.includes('eingang/notiz.txt'), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
+  check('Eingabe im Chat zeigt Bild und Datei, Eingabezeile wieder leer', await shell(`(() => { const u = [...document.querySelectorAll('.msg.user')].pop();
+    return !!u.querySelector('img.attach-thumb') && u.textContent.includes('notiz.txt') && document.getElementById('attach-row').hidden; })()`));
+  await until('Vorschaubild geladen', () => shell('[...document.querySelectorAll(".msg.user img.attach-thumb")].pop().naturalWidth > 0'), 5000).catch(() => {});
+  check('Vorschaubild im Chat aus eingang/ geladen', await shell('[...document.querySelectorAll(".msg.user img.attach-thumb")].pop().naturalWidth === 40'));
+  check('Anhänge im Chat gespeichert', agent.chat.messages.filter((m) => m.role === 'user').pop().attachments?.length === 2);
+
+  await order(shell, agent, 'Werte den Anhang aus');
+  const read = agent.chat.messages.filter((m) => m.role === 'tool').pop();
+  check('Modell liest den Anhang aus eingang/', read.ok && read.content.includes('Notiz für den Test'), read.content);
+
+  // ASK lehnt Bilder ab: einmal ohne Bild wiederholen, Hinweis, künftig nur Pfade
+  await getJson(`${mockUrl}/__mock/vision/aus`);
+  await shell(pasteImage);
+  await until('Anhang', async () => (await chips()) === 1, 5000).catch(() => {});
+  await order(shell, agent, 'Schau dir das Bild an');
+  log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
+  check('Bild abgelehnt: Hinweis und Antwort ohne Bild', log.images === 0 && agent.chat.messages.at(-1).content === 'Ich sehe das Bild.'
+    && await shell('[...document.querySelectorAll(".msg.notice")].some((n) => n.textContent.includes("nimmt keine Bilder an"))'), JSON.stringify(log.images));
+  await getJson(`${mockUrl}/__mock/vision/an`);
 }
 
 // GitHub: verbinden über /github, Projekt anlegen, hochladen, holen (gegen den Nachbau in mock-github.js)

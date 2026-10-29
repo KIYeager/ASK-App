@@ -326,7 +326,8 @@ class AskSession extends EventEmitter {
     const data = await this.json('/api/models');
     this.models = (data.data || data || [])
       .filter((m) => m && m.id && !m.info?.meta?.hidden)
-      .map((m) => ({ id: m.id, name: m.name || m.id }));
+      // vision: true/false, wenn ASK angibt, ob das Modell Bilder versteht; sonst undefined
+      .map((m) => ({ id: m.id, name: m.name || m.id, vision: m.info?.meta?.capabilities?.vision }));
     this.emit('models', this.models);
     return this.models;
   }

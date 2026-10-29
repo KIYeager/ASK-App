@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage } = require('electron');
+const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage, nativeImage } = require('electron');
 const settings = require('./settings');
 const paths = require('./paths');
 const { checkFolder } = require('./folders');
@@ -14,6 +14,7 @@ const { AppWindow } = require('./window');
 const { convertToPdf } = require('./office');
 const { cleanupOldVersions } = require('./portable');
 const { GitHub } = require('./github');
+const { saveAttachments, imageUrl, nativeResize } = require('./attachments');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -69,6 +70,8 @@ const agent = new Agent({
   getCommandHint: (chat) => readInstruction('befehle.md', settings.get('folder'), chat),
   getWebSearch: () => !!ask.webSearch && settings.get('webSearch'),
   getThinking: () => thinkingLevel(),
+  getImageUrl: (attachment) => imageUrl(agent.getFolder(), attachment, nativeResize(nativeImage)),
+  getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
 });
 
 // Denkaufwand aus den Einstellungen; ältere Werte des früheren Schalters werden übernommen.
@@ -297,7 +300,22 @@ function setupIpc() {
     settings.set({ model: String(id) });
     pushState();
   });
-  ipcMain.handle('chat:send', (_e, text) => { agent.send(text); });
+  // Anhänge zuerst nach eingang/ speichern; scheitert das, geht nichts an das Modell.
+  ipcMain.handle('chat:send', (_e, text, files) => {
+    if (agent.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' };
+    let attachments = [];
+    if (Array.isArray(files) && files.length) {
+      const folder = agent.getFolder();
+      if (!folder) return { ok: false, reason: 'Zuerst einen Arbeitsordner wählen.' };
+      try {
+        attachments = saveAttachments(folder, files);
+      } catch (err) {
+        return { ok: false, reason: `Anhänge nicht gespeichert: ${err.message}` };
+      }
+    }
+    agent.send(text, attachments);
+    return { ok: true };
+  });
   ipcMain.handle('chat:stop', () => agent.stop());
   ipcMain.handle('chat:goal', (_e, text) => agent.setGoal(text));
   ipcMain.handle('github:status', async () => {

@@ -113,4 +113,12 @@ Ein Projekt soll sich auf GitHub ablegen lassen, damit man es in einer anderen S
 - **Abgleich.** `.ask/github.json` merkt sich Repository, Branch, letzten Commit und den Blob-SHA jeder Datei beim letzten Abgleich. Damit lässt sich für jede Datei sagen, ob sie hier, auf GitHub oder an beiden Orten geändert wurde. Beidseitig geänderte Dateien bleiben unangetastet und werden als Konflikt gemeldet; die Person entscheidet. Ist GitHub neuer als der letzte Abgleich, lehnt `github_push` ab, bis geholt wurde. Es gibt kein Zusammenführen innerhalb einer Datei.
 - **Ausgeschlossen.** `.ask`, `.git`, `node_modules`, `__pycache__` und `.venv` werden nie hochgeladen. Dateien über 50 MB und Ordner mit mehr als 3000 Dateien lehnt die App ab.
 
-Nicht gewählt: ein mitgeliefertes Git (rund 50 MB mehr, Anmeldung über den Git Credential Manager mit Fenster, Token wäre im Terminal) und das Token als Umgebungsvariable im Terminal (das Modell könnte es auslesen).
+Nicht gewählt (GitHub): ein mitgeliefertes Git (rund 50 MB mehr, Anmeldung über den Git Credential Manager mit Fenster, Token wäre im Terminal) und das Token als Umgebungsvariable im Terminal (das Modell könnte es auslesen).
+
+## E23 Anhänge als Dateien in eingang/, Bilder zusätzlich direkt
+
+Eingefügte oder hineingezogene Dateien speichert die App im Arbeitsordner unter `eingang/`, bevor sie die Nachricht schickt. So arbeitet das Modell mit denselben Werkzeugen wie bei jeder anderen Datei (lesen, bearbeiten, in ein Dokument übernehmen), und die Datei bleibt nach dem Chat im Projekt. Die Nachricht an das Modell nennt die Pfade. Vorhandene Dateien werden nie überschrieben, ein gleicher Name bekommt « (2)».
+
+Qwen3.8 Flash Next versteht Bilder, und die ASK-Webseite schickt sie mit. Die App schickt Bilder deshalb zusätzlich als `image_url` (data-URL) in der Nachricht, wie Open WebUI. Damit der Verlauf nicht mit jedem Schritt wächst, gehen nur die Bilder der letzten zwei Eingaben mit Bildern mit; ältere stehen nur noch als Pfad im Text. Bilder über 2048 Pixel werden für das Modell verkleinert, die Datei in `eingang/` bleibt im Original. Gibt ASK beim Modell `capabilities.vision: false` an oder lehnt es eine Anfrage mit Bild ab, wiederholt die App sie ohne Bilder und schickt künftig nur Pfade.
+
+Nicht gewählt: Dateien über die Datei-Schnittstelle von Open WebUI hochladen. Die Inhalte gingen dann zusätzlich in die Wissensverarbeitung von ASK, und das Modell könnte die Datei im Ordner nicht bearbeiten.
