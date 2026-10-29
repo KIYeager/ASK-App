@@ -16,15 +16,17 @@ test('Namen: ohne Pfad, ohne verbotene Zeichen, Bildschirmfoto mit Datum', () =>
   assert.match(cleanName('', 'image/jpeg'), /^bild-\d{8}-\d{6}\.jpg$/);
 });
 
-test('Anhänge landen in eingang/, nichts wird überschrieben', () => {
+test('Anhänge landen in .ask/anhaenge/<Chat>/, nichts wird überschrieben', () => {
   const folder = tmp();
   try {
-    const first = saveAttachments(folder, [{ name: 'bericht.docx', data: bytes('eins') }, { name: 'foto.PNG', data: bytes('png') }]);
-    assert.deepStrictEqual(first.map((a) => [a.path, a.image]), [['eingang/bericht.docx', false], ['eingang/foto.PNG', true]]);
-    const second = saveAttachments(folder, [{ name: 'bericht.docx', data: bytes('zwei') }]);
-    assert.strictEqual(second[0].path, 'eingang/bericht (2).docx');
-    assert.strictEqual(fs.readFileSync(path.join(folder, 'eingang', 'bericht.docx'), 'utf8'), 'eins');
-    assert.throws(() => saveAttachments(folder, Array.from({ length: 11 }, (_, i) => ({ name: `${i}.txt`, data: bytes('x') }))), /Höchstens 10/);
+    const first = saveAttachments(folder, [{ name: 'bericht.docx', data: bytes('eins') }, { name: 'foto.PNG', data: bytes('png') }], 'c1');
+    assert.deepStrictEqual(first.map((a) => [a.path, a.image]), [['.ask/anhaenge/c1/bericht.docx', false], ['.ask/anhaenge/c1/foto.PNG', true]]);
+    const second = saveAttachments(folder, [{ name: 'bericht.docx', data: bytes('zwei') }], 'c1');
+    assert.strictEqual(second[0].path, '.ask/anhaenge/c1/bericht (2).docx');
+    assert.strictEqual(fs.readFileSync(path.join(folder, '.ask', 'anhaenge', 'c1', 'bericht.docx'), 'utf8'), 'eins');
+    assert.strictEqual(saveAttachments(folder, [{ name: 'bericht.docx', data: bytes('drei') }], 'c2')[0].path, '.ask/anhaenge/c2/bericht.docx');
+    assert.throws(() => saveAttachments(folder, Array.from({ length: 11 }, (_, i) => ({ name: `${i}.txt`, data: bytes('x') })), 'c1'), /Höchstens 10/);
+    assert.throws(() => saveAttachments(folder, [], '../x'), /Ungültiger Chat/);
   } finally {
     fs.rmSync(folder, { recursive: true, force: true });
   }
@@ -33,11 +35,11 @@ test('Anhänge landen in eingang/, nichts wird überschrieben', () => {
 test('Bild als data-URL, verkleinert wenn möglich, fehlende Datei ohne Fehler', () => {
   const folder = tmp();
   try {
-    const [img, doc] = saveAttachments(folder, [{ name: 'a.png', data: bytes('PNGDATA') }, { name: 'b.txt', data: bytes('t') }]);
+    const [img, doc] = saveAttachments(folder, [{ name: 'a.png', data: bytes('PNGDATA') }, { name: 'b.txt', data: bytes('t') }], 'c1');
     assert.strictEqual(imageUrl(folder, img), `data:image/png;base64,${Buffer.from('PNGDATA').toString('base64')}`);
     assert.strictEqual(imageUrl(folder, img, () => ({ data: Buffer.from('klein'), type: 'image/jpeg' })), `data:image/jpeg;base64,${Buffer.from('klein').toString('base64')}`);
     assert.strictEqual(imageUrl(folder, doc), null);
-    assert.strictEqual(imageUrl(folder, { path: 'eingang/weg.png' }), null);
+    assert.strictEqual(imageUrl(folder, { path: '.ask/anhaenge/c1/weg.png' }), null);
   } finally {
     fs.rmSync(folder, { recursive: true, force: true });
   }

@@ -10,7 +10,7 @@ Werkzeug: python-docx. Immer zuerst ein Skript schreiben (z. B. `.ask/skripte/er
 - Struktur über Formatvorlagen, nicht über Schriftgrösse von Hand: `Title`, `Heading 1`, `Heading 2`, `List Bullet`, `List Number`, Tabellenstil `Table Grid`.
 - Liegt in `.ask/skills/vorlagen/` eine Word-Vorlage (`.docx`), damit beginnen (siehe unten). Sonst die Grundeinstellungen aus dem Gerüst übernehmen.
 - Schweizer Rechtschreibung: «ss» statt «ß», Anführungszeichen « ».
-- Speichern unter `ausgabe/`. Dateien der Person nie überschreiben. Eigene Ergebnisse in `ausgabe/` bei Änderungswünschen unter demselben Namen neu speichern, keine `_V2`.
+- Neue Dateien im Arbeitsordner speichern, dort wo sie hingehören, mit sprechendem Namen. Vorhandene Dateien direkt ändern und unter demselben Namen speichern, keine Kopien wie `_V2`. Die App sichert den Ordner vor jedem Auftrag, die Person kann ihn rückgängig machen.
 - Soll ein vorhandenes Dokument geändert werden: nicht neu aufbauen, sondern öffnen und nur die verlangten Stellen ändern (siehe «Vorhandene Datei bearbeiten»).
 
 ## Gerüst
@@ -61,7 +61,7 @@ for i, zeile in enumerate(daten):
             zelle.paragraphs[0].runs[0].bold = True
 
 # Bild: doc.add_picture("bild.png", width=Cm(15))
-doc.save("ausgabe/Anleitung.docx")
+doc.save("Anleitung.docx")
 print("gespeichert")
 ```
 
@@ -76,15 +76,14 @@ for el in list(body):
 
 ## Vorhandene Datei bearbeiten
 Zuerst mit `read_file` lesen. Dann öffnen, nur die verlangten Stellen ändern, speichern. So bleiben Formatvorlagen, Kopf- und Fusszeilen, Bilder und Tabellen erhalten.
-- Datei der Person (liegt im Arbeitsordner): Ergebnis unter demselben Namen in `ausgabe/` speichern, das Original bleibt.
-- Eigene Datei in `ausgabe/`: direkt diese Datei öffnen und überschreiben (`quelle` gleich `ziel`).
+Die Datei wird direkt geändert und unter demselben Namen gespeichert. Will die Person ausdrücklich eine Kopie, `ziel` auf einen neuen Namen setzen.
 ```python
 import sys; sys.path.insert(0, ".ask/skills")
 from docx import Document
 from bearbeiten import word_ersetzen, word_finde, word_absatz_nach, word_loeschen
 
-quelle = "bericht.docx"            # Datei der Person; eigene Datei: "ausgabe/bericht.docx"
-ziel = "ausgabe/bericht.docx"
+quelle = "bericht.docx"
+ziel = quelle                      # direkt ändern
 doc = Document(quelle)
 print(word_ersetzen(doc, "Proxmox 7", "Proxmox 8"), "Stellen ersetzt")   # auch in Tabellen, Kopf- und Fusszeilen
 titel = word_finde(doc, "Installation")
@@ -108,5 +107,5 @@ print("gespeichert")
 - Überschriften fett formatieren statt `add_heading`: dann fehlt die Gliederung.
 
 ## Prüfen
-`python .ask/skills/pruefen.py ausgabe/Anleitung.docx --pdf`
+`python .ask/skills/pruefen.py Anleitung.docx --pdf`
 Zeigt Überschriften, Tabellen, Bilder und Auffälligkeiten. Mit `--pdf` wandelt die App die Datei mit Word in PDF um (wenn Office installiert ist) und meldet Seitenzahl und Text. Fehler beheben und erneut prüfen.

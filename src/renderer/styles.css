@@ -314,6 +314,17 @@ body:not(.verbose) .msg.folded { display: none; }
 .attach-chip .remove:hover { color: var(--text); }
 .attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; white-space: normal; }
 .attachments .attach-chip { cursor: pointer; }
+.msg.changes { color: var(--muted); font-size: 12.5px; }
+.msg.changes > .mark { color: var(--dim); }
+.msg.changes .undone-label { display: none; }
+.msg.changes.undone .undone-label { display: inline; }
+.msg.changes.undone > .body > span:first-child { text-decoration: line-through; }
+.undo-btn {
+  margin-left: 10px; padding: 1px 8px; border: 1px solid var(--border-2); border-radius: 5px; background: none;
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.undo-btn:hover { border-color: var(--accent-strong); }
+.undo-btn:disabled { opacity: 0.5; cursor: default; }
 .attach-thumb { max-width: 220px; max-height: 160px; border-radius: 4px; border: 1px solid var(--border-2); cursor: pointer; background: #fff; }
 #input {
   flex: 1; resize: none; border: none; outline: none; background: none; color: var(--text);

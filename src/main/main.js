@@ -15,6 +15,7 @@ const { convertToPdf } = require('./office');
 const { cleanupOldVersions } = require('./portable');
 const { GitHub } = require('./github');
 const { saveAttachments, imageUrl, nativeResize } = require('./attachments');
+const { Snapshots } = require('./snapshot');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -66,13 +67,22 @@ const agent = new Agent({
   terminal,
   getFolder: () => (terminal.state === 'läuft' ? terminal.folder : settings.get('folder')),
   getModel: () => currentModel(),
-  getSystemPrompt: (chat) => readInstruction('systemprompt.md', settings.get('folder'), chat) + thinkingSwitch(),
+  getSystemPrompt: (chat) => readInstruction('systemprompt.md', settings.get('folder'), chat) + projectNotes(settings.get('folder')) + thinkingSwitch(),
   getCommandHint: (chat) => readInstruction('befehle.md', settings.get('folder'), chat),
   getWebSearch: () => !!ask.webSearch && settings.get('webSearch'),
   getThinking: () => thinkingLevel(),
   getImageUrl: (attachment) => imageUrl(agent.getFolder(), attachment, nativeResize(nativeImage)),
   getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
+  getSnapshots: () => snapshotsFor(agent.getFolder()),
 });
+
+// Sicherung des Arbeitsordners (snapshot.js), eine Instanz pro Ordner
+let snapshots = null;
+function snapshotsFor(folder) {
+  if (!folder) return null;
+  if (!snapshots || !sameFolder(snapshots.root, folder)) snapshots = new Snapshots(folder);
+  return snapshots;
+}
 
 // Denkaufwand aus den Einstellungen; ältere Werte des früheren Schalters werden übernommen.
 function thinkingLevel() {
@@ -100,6 +110,28 @@ function readInstruction(name, folder, chat = 'allgemein') {
   } catch {
     return '';
   }
+}
+
+// Projektnotizen (.ask/projekt.md): was jeder Chat in diesem Ordner wissen soll, wie CLAUDE.md in
+// Claude Code. Das Modell pflegt sie selbst, die Person kann sie im Editor ändern.
+const NOTES = path.join('.ask', 'projekt.md');
+const NOTES_MAX = 6000;
+
+function projectNotes(folder) {
+  let text = '';
+  try { text = fs.readFileSync(path.join(folder, NOTES), 'utf8').trim(); } catch { return ''; }
+  if (!text) return '';
+  if (text.length > NOTES_MAX) text = `${text.slice(0, NOTES_MAX)}\n… (gekürzt, halte die Notizen kürzer)`;
+  return `\n\n# Projektnotizen (.ask/projekt.md)\n${text}`;
+}
+
+function openNotes(folder) {
+  const file = path.join(folder, NOTES);
+  if (!fs.existsSync(file)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '# Projektnotizen\n\nWas das Modell in jedem Chat in diesem Ordner wissen soll (Aufbau, wichtige Dateien, Vorlagen, Wünsche).\n');
+  }
+  shell.openPath(file);
 }
 
 function state() {
@@ -252,6 +284,7 @@ function setupIpc() {
     if (folder) {
       items.push({ type: 'separator' });
       items.push({ label: 'Arbeitsordner im Explorer öffnen', click: () => shell.openPath(folder) });
+      items.push({ label: 'Projektnotizen bearbeiten', click: () => openNotes(folder) });
       items.push({ label: 'Aus der Liste entfernen', click: () => { settings.removeRecent(folder); workspace.close(); terminal.stop(); pushState(); } });
     }
     Menu.buildFromTemplate(items).popup({ window: appWindow.win });
@@ -300,7 +333,7 @@ function setupIpc() {
     settings.set({ model: String(id) });
     pushState();
   });
-  // Anhänge zuerst nach eingang/ speichern; scheitert das, geht nichts an das Modell.
+  // Anhänge zuerst nach .ask/anhaenge/<Chat>/ speichern; scheitert das, geht nichts an das Modell.
   ipcMain.handle('chat:send', (_e, text, files) => {
     if (agent.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' };
     let attachments = [];
@@ -308,7 +341,7 @@ function setupIpc() {
       const folder = agent.getFolder();
       if (!folder) return { ok: false, reason: 'Zuerst einen Arbeitsordner wählen.' };
       try {
-        attachments = saveAttachments(folder, files);
+        attachments = saveAttachments(folder, files, agent.chat.id);
       } catch (err) {
         return { ok: false, reason: `Anhänge nicht gespeichert: ${err.message}` };
       }
@@ -316,6 +349,7 @@ function setupIpc() {
     agent.send(text, attachments);
     return { ok: true };
   });
+  ipcMain.handle('chat:undo', (_e, snapshot) => agent.undo(String(snapshot || '')));
   ipcMain.handle('chat:stop', () => agent.stop());
   ipcMain.handle('chat:goal', (_e, text) => agent.setGoal(text));
   ipcMain.handle('github:status', async () => {

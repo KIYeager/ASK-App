@@ -145,9 +145,9 @@ async function main() {
       JSON.stringify({ auftrag: 'Paket-Test', aufgaben: [{ titel: 'A', status: 'erledigt' }, { titel: 'B', status: 'offen' }] }));
     await until('Aufgaben', () => shell('document.getElementById("tasks-count").textContent').then((t) => t === '1 von 2'), 10000);
     check('Seitenleiste zeigt tasks.json live', true);
-    fs.writeFileSync(path.join(workdir, 'ausgabe', 'ergebnis.txt'), 'fertig');
+    fs.writeFileSync(path.join(workdir, 'ergebnis.txt'), 'fertig');
     await until('Ausgabe', () => shell('document.getElementById("output-list").textContent').then((t) => t.includes('ergebnis.txt')), 10000);
-    check('Seitenleiste zeigt ausgabe/ live', true);
+    check('Seitenleiste zeigt neue Dateien live', true);
     check('Skills in .ask/skills kopiert', fs.existsSync(path.join(workdir, '.ask', 'skills', 'word', 'SKILL.md')));
 
     const pids = bundledPython();

@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 const api = window.ask;
 
 let state = null;
-let files = { top: [], output: [] };
+let files = { top: [], recent: [] };
 let selected = null; // { path, modified }
 let openDialog = null; // manuell geöffnet: 'ask' | 'terminal' | 'preview'
 let startError = '';
@@ -135,6 +135,7 @@ function renderComposer() {
   send.disabled = !running && !!block;
   $('activity').hidden = !running;
   $('welcome').hidden = $('messages').childElementCount > 0;
+  updateUndo();
   renderGoal();
 }
 
@@ -443,13 +444,13 @@ function foldTurn(endTime = Date.now()) {
   steps.forEach((n) => n.classList.add('folded'));
 }
 
-// Datei im Arbeitsordner zu einem Inline-Code wie `ausgabe/bericht.docx` oder `bericht.docx`
+// Datei im Arbeitsordner zu einem Inline-Code wie `berichte/bericht.docx` oder `bericht.docx`
 function fileFor(text) {
   const rel = String(text).trim().replace(/^\.?[\\/]/, '').replaceAll('\\', '/').toLowerCase();
   if (!rel || rel.length > 260) return null;
-  const all = [...files.output, ...files.top].filter((f) => !f.dir);
+  const all = [...files.recent, ...files.top].filter((f) => !f.dir);
   return all.find((f) => f.path.replaceAll('\\', '/').toLowerCase() === rel)
-    || files.output.find((f) => f.name.toLowerCase() === rel) || null;
+    || files.recent.find((f) => f.name.toLowerCase() === rel) || null;
 }
 
 function markFiles(root) {
@@ -677,6 +678,43 @@ const num = (n) => Math.round(n).toLocaleString('de-CH');
 const sec = (ms) => (ms / 1000).toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 // Zusammenfassung eines Auftrags: Schritte, Ausgabetoken, Token pro Sekunde, Zeit des Modells.
+// Was ein Auftrag im Ordner geändert hat. «Rückgängig» nur beim letzten Auftrag mit Änderungen.
+function addChanges(snapshot, changes, undone = false) {
+  if (!snapshot || !changes) return;
+  const [changed, added, removed] = changes.counts || [changes.changed.length, changes.added.length, changes.removed.length];
+  const parts = [];
+  if (changed) parts.push(`${changed} geändert`);
+  if (added) parts.push(`${added} neu`);
+  if (removed) parts.push(`${removed} gelöscht`);
+  const names = [...changes.added, ...changes.changed, ...changes.removed];
+  const short = names.slice(0, 3).map(baseName).join(', ') + (names.length > 3 ? ', …' : '');
+  const btn = el('button', { class: 'undo-btn', title: 'Ordner auf den Stand vor diesem Auftrag zurücksetzen' }, '↶ Rückgängig');
+  const node = addMessage(`changes${undone ? ' undone' : ''}`, '⎿', el('span', {}, `Dateien: ${parts.join(' · ')}`),
+    el('span', { class: 'muted' }, ` (${short})`), el('span', { class: 'undone-label muted' }, ' · rückgängig gemacht'), btn);
+  node.dataset.snapshot = snapshot;
+  node.title = [...changes.changed.map((f) => `geändert: ${f}`), ...changes.added.map((f) => `neu: ${f}`), ...changes.removed.map((f) => `gelöscht: ${f}`)].join('\n');
+  btn.onclick = async () => {
+    if (running) return;
+    btn.disabled = true;
+    const res = await api.chatUndo(snapshot);
+    btn.disabled = false;
+    if (res && !res.ok && !res.cancelled) addMessage('error', '✗', res.reason);
+  };
+  updateUndo();
+}
+
+function updateUndo() {
+  const rows = [...document.querySelectorAll('.msg.changes')];
+  const last = rows.filter((r) => !r.classList.contains('undone')).pop();
+  for (const r of rows) r.querySelector('.undo-btn').hidden = r !== last || running;
+}
+
+function onUndo(ev) {
+  document.querySelectorAll('.msg.changes').forEach((r) => { if (r.dataset.snapshot === ev.snapshot) r.classList.add('undone'); });
+  addMessage('notice', '↶', ev.text);
+  updateUndo();
+}
+
 function addStats(list) {
   list = list.filter(Boolean);
   if (!list.length) return;
@@ -743,6 +781,8 @@ function onEvent(ev) {
       scrollDown();
       break;
     }
+    case 'changes': addChanges(ev.snapshot, ev.changes); break;
+    case 'undo': onUndo(ev); break;
     case 'notice': addMessage('notice', '⎿', ev.text); break;
     case 'error': addMessage('error', '✗', ev.text); break;
     case 'done':
@@ -764,12 +804,20 @@ function renderTranscript(items) {
   const names = new Map();
   let stats = [];
   let lastTime = 0;
+  let turn = null; // Eingabe, mit der der Auftrag begann (Sicherung, Änderungen)
+  const endTurn = () => {
+    if (turn) addChanges(turn.snapshot, turn.changes, turn.undone);
+    addStats(stats);
+  };
   turnNode = null;
   for (const item of items) {
     if (item.role === 'auto') {
       addMessage('notice auto', '↻', 'Weiter am Ziel …');
+    } else if (item.role === 'undo') {
+      addMessage('notice', '↶', item.text);
     } else if (item.role === 'user') {
-      addStats(stats);
+      endTurn();
+      turn = item;
       stats = [];
       foldTurn(lastTime);
       addUser(item.content, item.time || 0, item.attachments);
@@ -793,7 +841,7 @@ function renderTranscript(items) {
     if (open) toolResult(row, { ok: false, summary: 'nicht beendet', name: row.name });
   }
   if (!running) {
-    addStats(stats);
+    endTurn();
     foldTurn(lastTime);
   }
   renderComposer();
@@ -1065,14 +1113,14 @@ function fileItem(entry, meta) {
 }
 
 function renderFiles() {
-  $('output-list').replaceChildren(...files.output.map((f) => fileItem({ ...f, name: f.path.replace(/^ausgabe[\\/]/, '') }, formatTime(f.modified))));
-  $('output-empty').hidden = files.output.length > 0;
-  const entries = files.top.filter((f) => f.name !== 'ausgabe');
+  $('output-list').replaceChildren(...files.recent.map((f) => fileItem({ ...f, name: f.path.replaceAll('\\', '/') }, formatTime(f.modified))));
+  $('output-empty').hidden = files.recent.length > 0;
+  const entries = files.top;
   $('files-list').replaceChildren(...entries.map((f) => fileItem(f, f.dir ? '' : formatSize(f.size))));
   $('files-empty').hidden = entries.length > 0;
   markFiles($('messages')); // neue Dateien im Chat als Link markieren
   if (selected) {
-    const found = [...files.output, ...files.top].find((f) => f.path === selected.path);
+    const found = [...files.recent, ...files.top].find((f) => f.path === selected.path);
     if (!found) closePreview();
     else if (found.modified !== selected.modified) showPreview(found);
   }

@@ -109,8 +109,10 @@ function apiMessages(system, messages, textMode = false, imageUrl = null) {
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, confirm, getImageUrl, getVision }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, confirm, getImageUrl, getVision, getSnapshots }) {
     super();
+    this.getSnapshots = getSnapshots || (() => null); // Sicherung des Arbeitsordners (snapshot.js)
+    this.lastSkipped = '';
     this.github = github;
     this.confirm = confirm || (async () => false);
     this.getImageUrl = getImageUrl || null; // Anhang → data-URL für das Modell
@@ -242,7 +244,7 @@ class Agent extends EventEmitter {
     this.chat.messages.push(message);
   }
 
-  // attachments: bereits in eingang/ gespeicherte Anhänge (siehe attachments.js)
+  // attachments: bereits in .ask/anhaenge/<Chat>/ gespeicherte Anhänge (siehe attachments.js)
   async send(text, attachments = []) {
     text = String(text || '').trim();
     if ((!text && !attachments.length) || this.running) return;
@@ -255,7 +257,10 @@ class Agent extends EventEmitter {
     this.controller = new AbortController();
     const { signal } = this.controller;
     this.emit('changed');
+    const snapshots = this.getSnapshots();
     try {
+      // Stand des Ordners vor dem Auftrag, für «Rückgängig»
+      if (snapshots) await this.backup(snapshots, message);
       let idle = 0; // Anstösse ohne Arbeitsschritt hintereinander (Ziel-Modus)
       for (let step = 0; step < MAX_STEPS; step++) {
         if (signal.aborted) break;
@@ -288,6 +293,7 @@ class Agent extends EventEmitter {
       if (!signal.aborted && err.name !== 'AbortError') this.event({ type: 'error', text: err.message });
     } finally {
       if (signal.aborted) this.event({ type: 'notice', text: 'Gestoppt.' });
+      if (snapshots && message.snapshot) await this.recordChanges(snapshots, message);
       this.running = false;
       this.controller = null;
       this.save();
@@ -326,7 +332,7 @@ class Agent extends EventEmitter {
       // Nimmt das Modell keine Bilder an, gehen sie künftig nur als Pfad mit.
       if (sentImages && err.status >= 400 && /image|vision|multimodal|modalit/i.test(err.message)) {
         this.noImages = true;
-        this.event({ type: 'notice', text: 'Das Modell in ASK nimmt keine Bilder an. Die Bilder liegen in eingang/, das Modell kann sie nur als Datei bearbeiten, nicht ansehen.' });
+        this.event({ type: 'notice', text: 'Das Modell in ASK nimmt keine Bilder an. Die Bilder liegen als Datei bei den Anhängen, das Modell kann sie nur so bearbeiten, nicht ansehen.' });
         completion = await request();
       } else if (!this.textMode && err.status === 400 && /tool/i.test(err.message)) {
         // Manche Server lehnen «tools» ab: dann Werkzeuge im Text beschreiben.
@@ -388,6 +394,66 @@ class Agent extends EventEmitter {
     return false;
   }
 
+  async backup(snapshots, message) {
+    try {
+      const stand = await snapshots.take(this.chat.title);
+      message.snapshot = stand.id;
+      const skipped = stand.skipped.join('\n');
+      if (skipped && skipped !== this.lastSkipped) {
+        this.event({ type: 'notice', text: `Nicht gesichert (grösser als 100 MB oder gesperrt): ${stand.skipped.slice(0, 5).join(', ')}`
+          + `${stand.skipped.length > 5 ? ` und ${stand.skipped.length - 5} weitere` : ''}. Änderungen daran lassen sich nicht rückgängig machen.` });
+      }
+      this.lastSkipped = skipped;
+    } catch (err) {
+      this.event({ type: 'notice', text: `Der Ordner wurde nicht gesichert: ${err.message} Änderungen dieses Auftrags lassen sich nicht rückgängig machen.` });
+    }
+  }
+
+  // Nach dem Auftrag: was hat sich im Ordner geändert? Anzeige mit Knopf «Rückgängig».
+  async recordChanges(snapshots, message) {
+    try {
+      const d = await snapshots.diff(message.snapshot);
+      if (!d.changed.length && !d.added.length && !d.removed.length) return;
+      message.changes = { changed: d.changed.slice(0, 50), added: d.added.slice(0, 50), removed: d.removed.slice(0, 50),
+        counts: [d.changed.length, d.added.length, d.removed.length] };
+      this.event({ type: 'changes', snapshot: message.snapshot, changes: message.changes });
+    } catch {
+      // Sicherung verschwunden: kein Rückgängig
+    }
+  }
+
+  // Ordner auf den Stand vor einem Auftrag zurücksetzen (nach Rückfrage). Das Modell erfährt es im Verlauf.
+  async undo(id) {
+    if (this.running) return { ok: false, reason: 'Es läuft gerade ein Auftrag.' };
+    const message = this.chat.messages.find((m) => m.role === 'user' && m.snapshot === id);
+    const snapshots = this.getSnapshots();
+    if (!message || !snapshots) return { ok: false, reason: 'Zu diesem Auftrag gibt es keine Sicherung.' };
+    let d;
+    try {
+      d = await snapshots.diff(id);
+    } catch {
+      return { ok: false, reason: 'Die Sicherung gibt es nicht mehr (sie wird nach 14 Tagen gelöscht).' };
+    }
+    const total = d.changed.length + d.added.length + d.removed.length;
+    if (!total) return { ok: false, reason: 'Seit diesem Auftrag hat sich im Ordner nichts geändert.' };
+    const list = (title, files) => (files.length ? `${title}:\n${files.slice(0, 12).map((f) => `  ${f}`).join('\n')}${files.length > 12 ? `\n  … und ${files.length - 12} weitere` : ''}` : '');
+    const detail = [list('Wird auf den alten Stand gesetzt', d.changed), list('Wird gelöscht (neu seit dem Auftrag)', d.added),
+      list('Wird wiederhergestellt', d.removed)].filter(Boolean).join('\n\n');
+    if (!(await this.confirm('Ordner auf den Stand vor diesem Auftrag zurücksetzen?', `${detail}\n\nAuch spätere Änderungen an diesen Dateien gehen dabei verloren.`))) {
+      return { ok: false, cancelled: true };
+    }
+    const r = await snapshots.restore(id);
+    message.undone = true;
+    const done = total - r.failed.length;
+    const text = `Rückgängig gemacht: ${done} ${done === 1 ? 'Datei' : 'Dateien'} auf den Stand vor dem Auftrag gesetzt.`
+      + (r.failed.length ? ` Nicht möglich (wohl geöffnet): ${r.failed.slice(0, 5).join(', ')}.` : '');
+    this.push({ role: 'user', auto: true, note: 'undo', summary: text, time: Date.now(),
+      content: `[Hinweis der App: Die Person hat den Auftrag «${clip(message.content || 'Anhang', 80)}» rückgängig gemacht. Der Arbeitsordner ist wieder auf dem Stand vor diesem Auftrag; was dabei geändert oder angelegt wurde, gibt es so nicht mehr.]` });
+    this.save();
+    this.event({ type: 'undo', snapshot: id, text });
+    return { ok: true, text };
+  }
+
   // Werkzeug goal_done: Ziel als erreicht markieren
   finishGoal(rawArgs) {
     let summary = '';
@@ -412,7 +478,9 @@ class Agent extends EventEmitter {
           calls: (m.tool_calls || []).map((c) => ({ id: c.id, name: c.function.name, ...this.describeCall(c) })) };
       }
       if (m.role === 'tool') return { role: 'tool', id: m.tool_call_id, ok: m.ok !== false, summary: m.summary || '', output: m.display ?? m.content, tasks: m.tasks };
-      return { role: m.auto ? 'auto' : m.role, content: m.content, time: m.time, attachments: m.attachments || [] };
+      if (m.note === 'undo') return { role: 'undo', text: m.summary };
+      return { role: m.auto ? 'auto' : m.role, content: m.content, time: m.time, attachments: m.attachments || [],
+        snapshot: m.snapshot || null, changes: m.changes || null, undone: !!m.undone };
     });
   }
 }

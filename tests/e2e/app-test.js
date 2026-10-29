@@ -53,27 +53,27 @@ async function coworker(ctx, check, shell, shoot, folder) {
     const w = await runTool(terminal, 'write_file', { path: `.ask/skripte/${skill}.py`, content: skeleton(skill) });
     check(`Skript .ask/skripte/${skill}.py mit write_file`, w.ok, w.output);
     const r = await run(`python .ask/skripte/${skill}.py`);
-    check(`${file} erstellt`, r.ok && fs.existsSync(path.join(folder, 'ausgabe', file)), r.output);
-    const p = await run(`python .ask/skills/pruefen.py ausgabe/${file} --pdf`);
+    check(`${file} erstellt`, r.ok && fs.existsSync(path.join(folder, file)), r.output);
+    const p = await run(`python .ask/skills/pruefen.py ${file} --pdf`);
     check(`pruefen.py --pdf ${file}`, p.ok && /PDF erstellt/.test(p.output) && /Seiten: \d/.test(p.output), p.output);
   }
   const visible = fs.readdirSync(folder).filter((n) => n.endsWith('.py'));
   check('Keine Skripte im sichtbaren Arbeitsordner', visible.length === 0, visible.join(', '));
-  const doc = await runTool(terminal, 'read_file', { path: 'ausgabe/Anleitung.docx' });
+  const doc = await runTool(terminal, 'read_file', { path: 'Anleitung.docx' });
   check('read_file liest Word als Text', doc.ok && doc.output.length > 50, doc.output.slice(0, 200));
   const pdfDir = path.join(folder, '.ask', 'pdf');
   check('PDFs in .ask/pdf', fs.existsSync(pdfDir) && fs.readdirSync(pdfDir).length === 3, fs.existsSync(pdfDir) ? fs.readdirSync(pdfDir).join(', ') : '-');
 
-  const img = await run('python -c "import matplotlib.pyplot as p; p.bar([1,2],[3,4]); p.savefig(\'ausgabe/diagramm.png\')"');
+  const img = await run('python -c "import matplotlib.pyplot as p; p.bar([1,2],[3,4]); p.savefig(\'diagramm.png\')"');
   check('Diagramm mit matplotlib', img.ok, img.output);
   fs.copyFileSync(path.join(pdfDir, fs.readdirSync(pdfDir).find((n) => n.endsWith('.pdf') && !n.includes('-'))),
-    path.join(folder, 'ausgabe', 'Anleitung.pdf'));
-  await until('Bild in Ausgabe', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("diagramm.png"))'), 10000);
+    path.join(folder, 'Anleitung.pdf'));
+  await until('Bild unter «Zuletzt geändert»', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("diagramm.png"))'), 10000);
   await shell('[...document.querySelectorAll("#output-list li")].find((li) => li.textContent.includes("diagramm.png")).click()');
   const imgOk = await until('Bildvorschau', () => shell('(() => { const i = document.querySelector("#preview-body img"); return i && i.complete && i.naturalWidth > 0; })()'), 10000).catch(() => false);
   check('Bildvorschau', imgOk);
   await shoot('vorschau-bild');
-  await until('PDF in Ausgabe', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("Anleitung.pdf"))'), 10000);
+  await until('PDF unter «Zuletzt geändert»', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("Anleitung.pdf"))'), 10000);
   await shell('[...document.querySelectorAll("#output-list li")].find((li) => li.textContent.includes("Anleitung.pdf")).click()');
   check('PDF-Vorschau eingebettet', await until('PDF-iframe', () => shell('!!document.querySelector("#preview-body iframe")'), 5000).catch(() => false));
   await shell('[...document.querySelectorAll("#output-list li")].find((li) => li.textContent.includes("Auswertung.xlsx")).click()');
@@ -117,7 +117,7 @@ async function chat(ctx, check, shell, shoot) {
   check('Denktext getrennt (reasoning und <think>)', final.think.includes('Ich prüfe') && final.think.includes('Alles erledigt') && !final.md.includes('think'), final.think);
   await until('Aufgaben in der Seitenleiste', () => shell('document.querySelectorAll("#tasks-list li").length === 3'), 10000);
   check('Seitenleiste: Aufgaben «1 von 3»', (await shell('document.getElementById("tasks-count").textContent')) === '1 von 3');
-  await until('Datei in Ausgabe', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("bericht.txt"))'), 10000);
+  await until('Datei unter «Zuletzt geändert»', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("bericht.txt"))'), 10000);
   await shell('[...document.querySelectorAll(".md code")].find((c) => c.textContent === "ausgabe/bericht.txt").click()');
   await until('Vorschau', () => shell('(document.querySelector("#preview-body pre")||{}).textContent === "Inhalt des Berichts"'), 5000)
     .then(() => check('Klick auf Dateinamen im Chat zeigt die Vorschau', true))
@@ -130,6 +130,8 @@ async function chat(ctx, check, shell, shoot) {
     && !stats.text.includes('≈') && /Schritt 3: .*Eingabe/.test(stats.title), JSON.stringify(stats));
   const savedStats = JSON.parse(fs.readFileSync(path.join(folder, '.ask', 'chats', saved[0]), 'utf8')).messages.filter((m) => m.role === 'assistant').map((m) => m.stats);
   check('Werte pro Schritt im Chat gespeichert', savedStats.length === 3 && savedStats.every((s) => s && s.tokens > 0 && !s.estimated && s.genMs > 0), JSON.stringify(savedStats));
+  check('Unter dem Auftrag: neue Datei mit «Rückgängig»', await shell(`(() => { const c = [...document.querySelectorAll('.msg.changes')];
+    return c.length === 1 && c[0].textContent.includes('1 neu') && c[0].textContent.includes('bericht.txt') && !c[0].querySelector('.undo-btn').hidden; })()`));
   check('Ohne Schalter keine Websuche angefordert', log.every((l) => !l.web), JSON.stringify(log.map((l) => l.web)));
   await shoot('2-chat');
 
@@ -155,6 +157,7 @@ await compact(ctx, check, shell, shoot);
 
   await githubFlow(ctx, check, shell, shoot);
   await attachFlow(ctx, check, shell, shoot);
+  await undoFlow(ctx, check, shell, shoot);
 
   // Sperren gelten auch für die Werkzeuge der App
   const outside = path.join(path.dirname(folder), 'ausserhalb-chat.txt');
@@ -260,7 +263,7 @@ await compact(ctx, check, shell, shoot);
   check('Dateien im Ordner bleiben beim Löschen', fs.existsSync(path.join(opened.path, 'ausgabe', 'bericht.txt')));
 }
 
-// Anhänge: Bildschirmfoto einfügen, Datei hineinziehen, Bild geht ans Modell, Datei liegt in eingang/
+// Anhänge: Bildschirmfoto einfügen, Datei hineinziehen, Bild geht ans Modell, Datei liegt in .ask/anhaenge/<Chat>/
 async function attachFlow(ctx, check, shell, shoot) {
   const { agent, settings } = ctx;
   const mockUrl = process.env.ASK_TEST_ASK_URL;
@@ -288,20 +291,22 @@ async function attachFlow(ctx, check, shell, shoot) {
   await shoot('12-anhaenge');
 
   await order(shell, agent, 'Schau dir das Bild an');
-  const inbox = fs.readdirSync(path.join(folder, 'eingang'));
-  check('Anhänge in eingang/ gespeichert, Bildschirmfoto mit Datum benannt', inbox.includes('notiz.txt') && inbox.some((n) => /^bild-\d{8}-\d{6}\.png$/.test(n))
-    && !inbox.includes('weg.txt') && fs.readFileSync(path.join(folder, 'eingang', 'notiz.txt'), 'utf8') === 'Notiz für den Test', inbox.join(', '));
+  const inboxDir = path.join(folder, '.ask', 'anhaenge', agent.chat.id);
+  const inbox = fs.readdirSync(inboxDir);
+  check('Anhänge in .ask/anhaenge/<Chat>/ gespeichert, Bildschirmfoto mit Datum benannt', inbox.includes('notiz.txt') && inbox.some((n) => /^bild-\d{8}-\d{6}\.png$/.test(n))
+    && !inbox.includes('weg.txt') && fs.readFileSync(path.join(inboxDir, 'notiz.txt'), 'utf8') === 'Notiz für den Test'
+    && !fs.existsSync(path.join(folder, 'eingang')), inbox.join(', '));
   let log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
-  check('Bild geht ans Modell, Pfade stehen in der Nachricht', log.images === 1 && log.lastUser.includes('eingang/notiz.txt'), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
+  check('Bild geht ans Modell, Pfade stehen in der Nachricht', log.images === 1 && log.lastUser.includes(`.ask/anhaenge/${agent.chat.id}/notiz.txt`), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
   check('Eingabe im Chat zeigt Bild und Datei, Eingabezeile wieder leer', await shell(`(() => { const u = [...document.querySelectorAll('.msg.user')].pop();
     return !!u.querySelector('img.attach-thumb') && u.textContent.includes('notiz.txt') && document.getElementById('attach-row').hidden; })()`));
   await until('Vorschaubild geladen', () => shell('[...document.querySelectorAll(".msg.user img.attach-thumb")].pop().naturalWidth > 0'), 5000).catch(() => {});
-  check('Vorschaubild im Chat aus eingang/ geladen', await shell('[...document.querySelectorAll(".msg.user img.attach-thumb")].pop().naturalWidth === 40'));
+  check('Vorschaubild im Chat aus .ask/anhaenge geladen', await shell('[...document.querySelectorAll(".msg.user img.attach-thumb")].pop().naturalWidth === 40'));
   check('Anhänge im Chat gespeichert', agent.chat.messages.filter((m) => m.role === 'user').pop().attachments?.length === 2);
 
   await order(shell, agent, 'Werte den Anhang aus');
   const read = agent.chat.messages.filter((m) => m.role === 'tool').pop();
-  check('Modell liest den Anhang aus eingang/', read.ok && read.content.includes('Notiz für den Test'), read.content);
+  check('Modell liest den Anhang', read.ok && read.content.includes('Notiz für den Test'), read.content);
 
   // ASK lehnt Bilder ab: einmal ohne Bild wiederholen, Hinweis, künftig nur Pfade
   await getJson(`${mockUrl}/__mock/vision/aus`);
@@ -312,6 +317,31 @@ async function attachFlow(ctx, check, shell, shoot) {
   check('Bild abgelehnt: Hinweis und Antwort ohne Bild', log.images === 0 && agent.chat.messages.at(-1).content === 'Ich sehe das Bild.'
     && await shell('[...document.querySelectorAll(".msg.notice")].some((n) => n.textContent.includes("nimmt keine Bilder an"))'), JSON.stringify(log.images));
   await getJson(`${mockUrl}/__mock/vision/an`);
+}
+
+// Rückgängig: Auftrag ändert und legt an, Knopf setzt den Ordner zurück, das Modell erfährt es
+async function undoFlow(ctx, check, shell, shoot) {
+  const { agent, settings } = ctx;
+  const folder = settings.get('folder');
+  const bericht = path.join(folder, 'ausgabe', 'bericht.txt');
+  const vorher = fs.readFileSync(bericht, 'utf8');
+  await order(shell, agent, 'Bitte ändere den Bericht');
+  check('Modell ändert direkt und legt neu an', fs.readFileSync(bericht, 'utf8') === 'Vom Modell geändert' && fs.existsSync(path.join(folder, 'projekt', 'neu.txt')));
+  const row = await shell(`(() => { const c = [...document.querySelectorAll('.msg.changes')]; const last = c.pop();
+    return { text: last.textContent, button: !last.querySelector('.undo-btn').hidden, others: c.every((r) => r.querySelector('.undo-btn').hidden) }; })()`);
+  check('Änderungen «1 geändert · 1 neu», «Rückgängig» nur beim letzten Auftrag', /1 geändert · 1 neu/.test(row.text) && row.button && row.others, JSON.stringify(row));
+  await shoot('13-aenderungen');
+  await shell(`[...document.querySelectorAll('.msg.changes')].pop().querySelector('.undo-btn').click()`);
+  await until('zurückgesetzt', () => agent.chat.messages.some((m) => m.note === 'undo'), 10000).catch(() => {});
+  check('Rückgängig setzt die Datei zurück und löscht die neue', fs.readFileSync(bericht, 'utf8') === vorher
+    && !fs.existsSync(path.join(folder, 'projekt', 'neu.txt')) && !fs.existsSync(path.join(folder, 'projekt')));
+  check('Hinweis im Chat, Auftrag als rückgängig markiert', await shell(`(() => { const c = [...document.querySelectorAll('.msg.changes')].pop();
+    return c.classList.contains('undone') && c.querySelector('.undo-btn').hidden
+      && [...document.querySelectorAll('.msg.notice')].some((n) => n.textContent.includes('Rückgängig gemacht: 2 Dateien')); })()`));
+  const note = agent.chat.messages.find((m) => m.note === 'undo');
+  check('Das Modell erfährt es im Verlauf', note?.role === 'user' && note.content.includes('rückgängig gemacht'), JSON.stringify(note));
+  const stands = fs.readdirSync(path.join(folder, '.ask', 'sicherung', 'staende')).length;
+  check('Sicherung in .ask/sicherung (ein Stand pro Auftrag, einer vor Rückgängig)', stands >= 3, String(stands));
 }
 
 // GitHub: verbinden über /github, Projekt anlegen, hochladen, holen (gegen den Nachbau in mock-github.js)

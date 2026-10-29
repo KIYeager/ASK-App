@@ -11,7 +11,7 @@ Werkzeug: python-pptx. Immer zuerst ein Skript schreiben (z. B. `.ask/skripte/pr
 - Pro Folie ein Gedanke, ein klarer Titel, höchstens 5 Stichpunkte mit je höchstens 12 Wörtern.
 - Ausführliche Erklärungen gehören in die Notizen, nicht auf die Folie.
 - Liegt in `.ask/skills/vorlagen/` eine PowerPoint-Vorlage (`.pptx`), damit beginnen und ihre Layouts verwenden.
-- Format 16:9. Speichern unter `ausgabe/`. Dateien der Person nie überschreiben. Eigene Ergebnisse in `ausgabe/` bei Änderungswünschen unter demselben Namen neu speichern, keine `_V2`.
+- Format 16:9. Neue Dateien im Arbeitsordner speichern, dort wo sie hingehören, mit sprechendem Namen. Vorhandene Dateien direkt ändern und unter demselben Namen speichern, keine Kopien wie `_V2`. Die App sichert den Ordner vor jedem Auftrag, die Person kann ihn rückgängig machen.
 - Soll eine vorhandene Präsentation geändert werden: nicht neu aufbauen, sondern öffnen und nur die verlangten Folien ändern (siehe «Vorhandene Datei bearbeiten»).
 
 ## Gerüst
@@ -47,7 +47,7 @@ inhaltsfolie("Was ist ein Netzwerk?", ["Geräte tauschen Daten aus", "Kabel oder
 # f = prs.slides.add_slide(prs.slide_layouts[NUR_TITEL]); f.shapes.title.text = "Aufbau"
 # f.shapes.add_picture("diagramm.png", Inches(1.5), Inches(1.6), height=Inches(5.3))
 
-prs.save("ausgabe/Praesentation.pptx")
+prs.save("Praesentation.pptx")
 print("gespeichert")
 ```
 
@@ -62,8 +62,8 @@ from pptx import Presentation
 from pptx.util import Pt
 from bearbeiten import pptx_ersetzen
 
-quelle = "vortrag.pptx"            # Datei der Person; eigene Datei: "ausgabe/vortrag.pptx"
-ziel = "ausgabe/vortrag.pptx"
+quelle = "vortrag.pptx"
+ziel = quelle                      # direkt ändern
 prs = Presentation(quelle)
 for i, folie in enumerate(prs.slides, start=1):
     print(i, folie.shapes.title.text if folie.shapes.title else "(ohne Titel)")
@@ -86,5 +86,5 @@ print("gespeichert")
 - Platzhalter leer lassen: `pruefen.py` meldet leere Platzhalter, diese füllen oder Layout wechseln.
 
 ## Prüfen
-`python .ask/skills/pruefen.py ausgabe/Praesentation.pptx --pdf`
+`python .ask/skills/pruefen.py Praesentation.pptx --pdf`
 Zeigt pro Folie Titel, Anzahl Punkte und Warnungen bei zu viel Text. Mit `--pdf` wandelt die App die Präsentation mit PowerPoint in PDF um (falls installiert).

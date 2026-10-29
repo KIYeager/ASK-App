@@ -5,10 +5,12 @@ const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const paths = require('./paths');
 const { cleanupWorkDirs, hideFolder } = require('./cleanup');
+const { Snapshots } = require('./snapshot');
 
 const ASK_DIR = '.ask';
-const OUTPUT_DIR = 'ausgabe';
 const MAX_ENTRIES = 300;
+const RECENT = 12; // Seitenleiste «Zuletzt geändert»
+const HIDDEN = /^(\.ask|\.git|node_modules|__pycache__|\.venv)$|^~\$/i; // nicht in der Seitenleiste
 
 function listRecursive(root, dir, depth, out) {
   if (out.length >= MAX_ENTRIES || depth < 0) return;
@@ -33,6 +35,36 @@ function listRecursive(root, dir, depth, out) {
       depth: rel.split(path.sep).length - 1 });
     if (entry.isDirectory()) listRecursive(root, full, depth - 1, out);
   }
+}
+
+// Zuletzt geänderte Dateien im ganzen Ordner (ohne .ask, .git, node_modules usw.), neueste zuerst.
+function recentFiles(root) {
+  const files = [];
+  let seen = 0;
+  const walk = (dir, depth) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (++seen > 5000 || HIDDEN.test(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (depth > 0) walk(full, depth - 1);
+      } else {
+        try {
+          const stat = fs.statSync(full);
+          files.push({ path: path.relative(root, full), name: entry.name, dir: false, size: stat.size, modified: stat.mtimeMs });
+        } catch {
+          // gerade gelöscht
+        }
+      }
+    }
+  };
+  walk(root, 6);
+  return files.sort((a, b) => b.modified - a.modified).slice(0, RECENT);
 }
 
 function hashDir(dir) {
@@ -79,9 +111,11 @@ class Workspace extends EventEmitter {
     this.close();
     this.root = folder;
     fs.mkdirSync(path.join(folder, ASK_DIR), { recursive: true });
-    fs.mkdirSync(path.join(folder, OUTPUT_DIR), { recursive: true });
     hideFolder(path.join(folder, ASK_DIR));
-    setTimeout(() => cleanupWorkDirs(folder), 2000); // nicht beim Öffnen bremsen
+    setTimeout(() => { // nicht beim Öffnen bremsen
+      cleanupWorkDirs(folder);
+      try { new Snapshots(folder).prune(); } catch { /* beim nächsten Mal */ }
+    }, 2000);
     fs.rmSync(path.join(folder, ASK_DIR, 'auftraege'), { recursive: true, force: true });
     this.syncSkills();
     try {
@@ -119,7 +153,7 @@ class Workspace extends EventEmitter {
   }
 
   onChange(name) {
-    if (['skills', 'chats', 'skripte', 'arbeit'].some((sub) => name.startsWith(path.join(ASK_DIR, sub)))) return;
+    if (['skills', 'chats', 'skripte', 'arbeit', 'anhaenge', 'sicherung'].some((sub) => name.startsWith(path.join(ASK_DIR, sub)))) return;
     if (/^\.ask[\\/]auftraege[\\/][0-9a-f]{6,32}\.json$/i.test(name)) {
       const file = path.join(this.root, name);
       if (fs.existsSync(file)) this.emit('auftrag', file);
@@ -138,14 +172,11 @@ class Workspace extends EventEmitter {
   }
 
   files() {
-    if (!this.root) return { top: [], output: [] };
+    if (!this.root) return { top: [], recent: [] };
     const top = [];
     listRecursive(this.root, this.root, 0, top);
-    const output = [];
-    listRecursive(this.root, path.join(this.root, OUTPUT_DIR), 3, output);
-    output.sort((a, b) => b.modified - a.modified);
     const sortTop = (a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name, 'de');
-    return { top: top.sort(sortTop), output: output.filter((e) => !e.dir) };
+    return { top: top.sort(sortTop), recent: recentFiles(this.root) };
   }
 
   tasks() {
@@ -174,4 +205,4 @@ class Workspace extends EventEmitter {
   }
 }
 
-module.exports = { Workspace, normalizeTasks, ASK_DIR, OUTPUT_DIR };
+module.exports = { Workspace, normalizeTasks, recentFiles, ASK_DIR };

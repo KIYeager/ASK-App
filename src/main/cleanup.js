@@ -1,12 +1,12 @@
-// Hält den versteckten Ordner .ask klein: Hilfsskripte und Zwischendateien des Modells
-// (.ask/skripte/<Chat>, .ask/arbeit/<Chat>) werden nach einiger Zeit gelöscht. Chats, Anleitungen,
-// Aufgabenliste und ausgabe/ bleiben.
+// Hält den versteckten Ordner .ask klein: Hilfsskripte, Zwischendateien und Anhänge
+// (.ask/skripte/<Chat>, .ask/arbeit/<Chat>, .ask/anhaenge/<Chat>) werden nach einiger Zeit gelöscht.
+// Chats, Anleitungen und Aufgabenliste bleiben. Die Sicherung räumt snapshot.js selbst auf.
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 
 const KEEP_DAYS = 14;
-const WORK_DIRS = ['skripte', 'arbeit'];
+const WORK_DIRS = ['skripte', 'arbeit', 'anhaenge'];
 
 // Löscht Dateien, die seit KEEP_DAYS Tagen unverändert sind, und danach leere Unterordner.
 // Liefert die Anzahl gelöschter Dateien.

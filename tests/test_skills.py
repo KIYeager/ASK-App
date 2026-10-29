@@ -44,7 +44,7 @@ class SkillTest(unittest.TestCase):
         r = self.run_py(f"{skill}.py")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("gespeichert", r.stdout)
-        p = self.run_py(os.path.join(".ask", "skills", "pruefen.py"), os.path.join("ausgabe", ausgabe))
+        p = self.run_py(os.path.join(".ask", "skills", "pruefen.py"), ausgabe)
         print(f"\n--- pruefen.py {ausgabe} ---\n{p.stdout}{p.stderr}")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertNotIn("WARNUNG", p.stdout)
@@ -102,8 +102,8 @@ class SkillTest(unittest.TestCase):
 
         out = self.bearbeite("word")
         self.assertIn("4 Stellen ersetzt", out)
-        self.assertIn("Deckblatt Proxmox 8", Document(os.path.join(self.dir, "ausgabe", "bericht.docx")).element.body.xpath("string(.//w:sdt)"))
-        neu = Document(os.path.join(self.dir, "ausgabe", "bericht.docx"))
+        self.assertIn("Deckblatt Proxmox 8", Document(quelle).element.body.xpath("string(.//w:sdt)"))
+        neu = Document(quelle)  # direkt geändert
         texte = [p.text for p in neu.paragraphs]
         i = texte.index("Installation")
         self.assertEqual(texte[i + 1:i + 4], ["Vor der Installation ein Backup erstellen.", "Backup auf externe Festplatte",
@@ -114,11 +114,10 @@ class SkillTest(unittest.TestCase):
         self.assertEqual(fett, ["Proxmox 8"], "Formatierung im Absatz bleibt erhalten")
         self.assertEqual(neu.tables[0].cell(0, 0).text, "Version: Proxmox 8")
         self.assertEqual(neu.sections[0].header.paragraphs[0].text, "Proxmox 8 Handbuch")
-        self.assertIn("Proxmox 7", Document(quelle).paragraphs[2].text, "Original unverändert")
         # pruefen.py zählt Kopfzeilen-Bilder und Abschnitte aus dem XML
-        p = self.run_py(os.path.join(".ask", "skills", "pruefen.py"), os.path.join("ausgabe", "bericht.docx"))
+        p = self.run_py(os.path.join(".ask", "skills", "pruefen.py"), "bericht.docx")
         self.assertIn("in Kopf- und Fusszeilen", p.stdout)
-        p = self.run_py(os.path.join(".ask", "skills", "pruefen.py"), os.path.join("ausgabe", "bericht.docx"))
+        p = self.run_py(os.path.join(".ask", "skills", "pruefen.py"), "bericht.docx")
         self.assertEqual(p.returncode, 0, p.stdout)
 
     def test_excel_bearbeiten(self):
@@ -140,7 +139,7 @@ class SkillTest(unittest.TestCase):
 
         out = self.bearbeite("excel")
         self.assertIn("Risiken: ['Diagramme bleiben", out)
-        ziel = os.path.join(self.dir, "ausgabe", "budget.xlsx")
+        ziel = os.path.join(self.dir, "budget.xlsx")  # direkt geändert
         ws = load_workbook(ziel)["Budget"]
         self.assertEqual(ws["B3"].value, 450)
         self.assertEqual(ws["B5"].value, "=SUM(B2:B4)", "Formel bleibt")
@@ -174,7 +173,7 @@ class SkillTest(unittest.TestCase):
 
         out = self.bearbeite("powerpoint")
         self.assertIn("3 Stellen ersetzt", out)
-        neu = Presentation(os.path.join(self.dir, "ausgabe", "vortrag.pptx"))
+        neu = Presentation(os.path.join(self.dir, "vortrag.pptx"))
         self.assertEqual(len(neu.slides), 3)
         self.assertEqual(neu.slides[0].shapes.title.text, "Proxmox 8 Kurs")
         runs = neu.slides[1].placeholders[1].text_frame.paragraphs[0].runs
@@ -192,7 +191,7 @@ class SkillTest(unittest.TestCase):
         c.save()
 
         self.bearbeite("pdf")
-        neu = PdfReader(os.path.join(self.dir, "ausgabe", "unterlagen.pdf"))
+        neu = PdfReader(os.path.join(self.dir, "unterlagen.pdf"))
         self.assertEqual(len(neu.pages), 2)
         self.assertIn("Seite 3", neu.pages[1].extract_text())
         self.assertEqual(neu.pages[1].rotation, 90)

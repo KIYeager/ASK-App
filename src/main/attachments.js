@@ -1,10 +1,10 @@
-// Anhänge aus dem Chat (eingefügt, hineingezogen oder mit der Büroklammer gewählt). Sie landen im
-// Arbeitsordner unter eingang/, damit das Modell sie mit seinen Werkzeugen lesen und bearbeiten kann.
-// Bilder gehen zusätzlich direkt an das Modell, wenn es Bilder versteht.
+// Anhänge aus dem Chat (eingefügt, hineingezogen oder mit «+» gewählt). Sie landen versteckt unter
+// .ask/anhaenge/<Chat>/, damit das Modell sie mit seinen Werkzeugen lesen kann; sie verschwinden mit
+// dem Chat oder nach 14 Tagen (cleanup.js). Bilder gehen zusätzlich direkt an das Modell.
 const fs = require('node:fs');
 const path = require('node:path');
 
-const INBOX = 'eingang';
+const INBOX = '.ask/anhaenge';
 const MAX_FILES = 10;
 const MAX_SIZE = 50 * 1024 * 1024;
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // grössere Bilder nur als Datei
@@ -27,7 +27,7 @@ function cleanName(name, type = '') {
   return base;
 }
 
-// Freier Name in eingang/: «bericht.docx», sonst «bericht (2).docx» usw.
+// Freier Name: «bericht.docx», sonst «bericht (2).docx» usw.
 function freeName(dir, name) {
   const ext = path.extname(name);
   const stem = name.slice(0, name.length - ext.length);
@@ -38,11 +38,13 @@ function freeName(dir, name) {
 
 const isImage = (name) => Object.hasOwn(IMAGE_TYPES, path.extname(name).toLowerCase());
 
-// files: [{ name, type, data (Uint8Array) }] → [{ path: 'eingang/…', name, size, image }]
-function saveAttachments(folder, files) {
+// files: [{ name, type, data (Uint8Array) }] → [{ path: '.ask/anhaenge/<chat>/…', name, size, image }]
+function saveAttachments(folder, files, chat) {
   const list = Array.isArray(files) ? files : [];
   if (list.length > MAX_FILES) throw new Error(`Höchstens ${MAX_FILES} Anhänge auf einmal.`);
-  const dir = path.join(folder, INBOX);
+  if (!/^[\w-]+$/.test(String(chat))) throw new Error('Ungültiger Chat');
+  const sub = `${INBOX}/${chat}`;
+  const dir = path.join(folder, ...sub.split('/'));
   fs.mkdirSync(dir, { recursive: true });
   return list.map((f) => {
     const data = Buffer.from(f.data || []);
@@ -50,7 +52,7 @@ function saveAttachments(folder, files) {
     if (data.length > MAX_SIZE) throw new Error(`${original || 'Ein Anhang'} ist grösser als 50 MB.`);
     const name = freeName(dir, cleanName(original, f.type));
     fs.writeFileSync(path.join(dir, name), data, { flag: 'wx' });
-    return { path: `${INBOX}/${name}`, name, size: data.length, image: isImage(name) };
+    return { path: `${sub}/${name}`, name, size: data.length, image: isImage(name) };
   });
 }
 

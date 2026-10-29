@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('ask', {
   setWebSearch: (on) => ipcRenderer.invoke('web:set', on),
   setThinking: (level) => ipcRenderer.invoke('thinking:set', level),
   chatSend: (text, files = []) => ipcRenderer.invoke('chat:send', text, files),
+  chatUndo: (snapshot) => ipcRenderer.invoke('chat:undo', snapshot),
   chatStop: () => ipcRenderer.invoke('chat:stop'),
   chatGoal: (text) => ipcRenderer.invoke('chat:goal', text),
   githubStatus: () => ipcRenderer.invoke('github:status'),

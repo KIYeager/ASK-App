@@ -94,8 +94,16 @@ function script(messages) {
     return textChunks('Geholt.');
   }
   if (text.includes('bild an')) return textChunks('Ich sehe das Bild.');
+  if (text.includes('ändere den bericht')) {
+    if (results === 0) {
+      return toolCallChunks([{ name: 'write_file', args: { path: 'ausgabe/bericht.txt', content: 'Vom Modell geändert' } },
+        { name: 'write_file', args: { path: 'projekt/neu.txt', content: 'neu' } }]);
+    }
+    return textChunks('Geändert.');
+  }
   if (text.includes('anhang')) {
-    if (results === 0) return toolCallChunks([{ name: 'read_file', args: { path: 'eingang/notiz.txt' } }]);
+    const file = messages.map((m) => textOf(m.content)).join('\n').match(/\.ask\/anhaenge\/[\w-]+\/notiz\.txt/)?.[0];
+    if (results === 0) return toolCallChunks([{ name: 'read_file', args: { path: file || 'notiz.txt' } }]);
     return textChunks('Anhang gelesen.');
   }
   if (text.includes('schleife')) return toolCallChunks([{ name: 'run_command', args: { command: 'echo immer gleich' } }]);

@@ -115,10 +115,25 @@ Ein Projekt soll sich auf GitHub ablegen lassen, damit man es in einer anderen S
 
 Nicht gewählt (GitHub): ein mitgeliefertes Git (rund 50 MB mehr, Anmeldung über den Git Credential Manager mit Fenster, Token wäre im Terminal) und das Token als Umgebungsvariable im Terminal (das Modell könnte es auslesen).
 
-## E23 Anhänge als Dateien in eingang/, Bilder zusätzlich direkt
+## E23 Anhänge als Dateien, Bilder zusätzlich direkt
 
-Eingefügte oder hineingezogene Dateien speichert die App im Arbeitsordner unter `eingang/`, bevor sie die Nachricht schickt. So arbeitet das Modell mit denselben Werkzeugen wie bei jeder anderen Datei (lesen, bearbeiten, in ein Dokument übernehmen), und die Datei bleibt nach dem Chat im Projekt. Die Nachricht an das Modell nennt die Pfade. Vorhandene Dateien werden nie überschrieben, ein gleicher Name bekommt « (2)».
+Eingefügte oder hineingezogene Dateien speichert die App unter `.ask/anhaenge/<Chat>/`, bevor sie die Nachricht schickt. So arbeitet das Modell mit denselben Werkzeugen wie bei jeder anderen Datei (lesen, in ein Dokument übernehmen). Zuerst lagen sie sichtbar in `eingang/`; bei jedem eingefügten Bildschirmfoto wäre dieser Ordner gewachsen, und ein Anhang ist Material für einen Auftrag, kein Ergebnis. Darum liegen sie jetzt versteckt, verschwinden mit dem Chat und nach 14 Tagen (wie die Hilfsskripte); was das Modell daraus macht, speichert es im Arbeitsordner. Die Nachricht an das Modell nennt die Pfade. Vorhandene Dateien werden nie überschrieben, ein gleicher Name bekommt « (2)».
 
-Qwen3.8 Flash Next versteht Bilder, und die ASK-Webseite schickt sie mit. Die App schickt Bilder deshalb zusätzlich als `image_url` (data-URL) in der Nachricht, wie Open WebUI. Damit der Verlauf nicht mit jedem Schritt wächst, gehen nur die Bilder der letzten zwei Eingaben mit Bildern mit; ältere stehen nur noch als Pfad im Text. Bilder über 2048 Pixel werden für das Modell verkleinert, die Datei in `eingang/` bleibt im Original. Gibt ASK beim Modell `capabilities.vision: false` an oder lehnt es eine Anfrage mit Bild ab, wiederholt die App sie ohne Bilder und schickt künftig nur Pfade.
+Qwen3.8 Flash Next versteht Bilder, und die ASK-Webseite schickt sie mit. Die App schickt Bilder deshalb zusätzlich als `image_url` (data-URL) in der Nachricht, wie Open WebUI. Damit der Verlauf nicht mit jedem Schritt wächst, gehen nur die Bilder der letzten zwei Eingaben mit Bildern mit; ältere stehen nur noch als Pfad im Text. Bilder über 2048 Pixel werden für das Modell verkleinert, die gespeicherte Datei bleibt im Original. Gibt ASK beim Modell `capabilities.vision: false` an oder lehnt es eine Anfrage mit Bild ab, wiederholt die App sie ohne Bilder und schickt künftig nur Pfade.
 
 Nicht gewählt: Dateien über die Datei-Schnittstelle von Open WebUI hochladen. Die Inhalte gingen dann zusätzlich in die Wissensverarbeitung von ASK, und das Modell könnte die Datei im Ordner nicht bearbeiten.
+
+## E24 Direkt im Ordner arbeiten, mit Sicherung und «Rückgängig»
+
+Bisher legte das Modell Ergebnisse in `ausgabe/` ab und überschrieb Dateien der Person nie; Änderungen an einem Dokument ergaben eine Kopie in `ausgabe/`. Das schützte Originale, passte aber schlecht zu Projekten (eine Website von GitHub, ein Programm), in denen Dateien an ihrem Platz geändert werden sollen. Claude Code arbeitet direkt im Ordner und verlässt sich auf Rückfragen, Git und Checkpoints. Die ASK-App fragt nicht vor jeder Änderung, und Lernende haben kein Git; ihre Checkpoints erfassten zudem nur Änderungen über die eigenen Werkzeuge, Word- und Excel-Dateien ändert das Modell aber über Python-Skripte.
+
+Deshalb arbeitet das Modell jetzt direkt im Ordner (neue Dateien dort, wo sie hingehören; vorhandene Dateien unter demselben Namen ändern), und die App sichert vor jedem Auftrag den ganzen Ordner (`snapshot.js`):
+
+- Jede Dateifassung liegt einmal in `.ask/sicherung/objekte/` (Name = SHA-1 des Inhalts), ein Stand ist eine Liste Pfad → Prüfsumme. Dateien mit gleicher Grösse und Änderungszeit wie im letzten Stand werden nicht neu gelesen; ein Auftrag kostet so Platz nur für die Dateien, die sich seither geändert haben.
+- Nach dem Auftrag vergleicht die App den Ordner mit dem Stand davor und zeigt «Dateien: 1 geändert · 2 neu» mit «Rückgängig». Rückgängig setzt geänderte und gelöschte Dateien zurück und löscht neu angelegte, nach einer Rückfrage mit der Liste der Dateien. Vorher sichert die App den jetzigen Stand, damit nichts unwiderruflich verloren geht. Das Modell bekommt einen Hinweis im Verlauf.
+- Den Knopf gibt es nur beim letzten Auftrag mit Änderungen, weil das Zurücksetzen eines älteren Auftrags auch alle späteren Änderungen zurücksetzen würde.
+- Nicht gesichert: `.ask`, `.git`, `node_modules`, `__pycache__`, `.venv`, Office-Sperrdateien (`~$…`), Dateien über 100 MB und Dateien, die gerade exklusiv geöffnet sind (Hinweis im Chat). Ordner mit mehr als 5000 Dateien sichert die App nicht. Stände älter als 14 Tage und nicht mehr gebrauchte Fassungen werden beim Öffnen des Ordners gelöscht.
+
+Dazu kommen Projektnotizen in `.ask/projekt.md` (wie `CLAUDE.md`): Die App hängt sie an den Systemprompt jedes Chats im Ordner (höchstens 6000 Zeichen), das Modell pflegt sie, die Person kann sie über das Ordner-Menü bearbeiten. So weiss ein neuer Chat, wie das Projekt aufgebaut ist, ohne alles neu zu lesen.
+
+Nicht gewählt: Sicherung nur der Dateien, die `write_file` und `edit_file` ändern (erfasst keine Skripte), und eine Kopie des ganzen Ordners pro Auftrag (zu viel Platz).

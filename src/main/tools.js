@@ -57,7 +57,7 @@ const zeilen = (n) => `${n} ${n === 1 ? 'Zeile' : 'Zeilen'}`;
 const outputText = (json) => (json.output || []).map((o) => o.data ?? '').join('').replace(/\r\n/g, '\n');
 
 // Programme mit Fenster sperren Dateien und warten auf Eingaben, die niemand macht (Word hielt so
-// Dokumente in ausgabe/ fest). Erkannt werden sie als eigener Befehl, auch nach &, | oder «start».
+// Dokumente fest). Erkannt werden sie als eigener Befehl, auch nach &, | oder «start».
 const WINDOWED = new Set(['start', 'winword', 'excel', 'powerpnt', 'outlook', 'msaccess', 'notepad', 'mspaint', 'explorer',
   'msedge', 'chrome', 'firefox']);
 
@@ -177,7 +177,7 @@ const TOOLS = [
     name: 'write_file',
     label: 'Schreiben',
     describe: (a) => a.path,
-    description: 'Schreibt eine Textdatei im Arbeitsordner (legt Ordner an, überschreibt vorhandene Dateien). Fertige Ergebnisse gehören nach ausgabe/.',
+    description: 'Schreibt eine Textdatei im Arbeitsordner (legt Ordner an, überschreibt vorhandene Dateien).',
     parameters: {
       type: 'object',
       properties: {

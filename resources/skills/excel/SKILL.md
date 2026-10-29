@@ -12,7 +12,7 @@ Werkzeuge: pandas zum Einlesen und Rechnen, openpyxl zum Formatieren. Immer zuer
 - Rohdaten und Auswertung auf getrennte Blätter: «Daten» und «Auswertung».
 - Kopfzeile fett mit Hintergrund, Kopfzeile fixieren, Autofilter, sinnvolle Spaltenbreiten, Zahlenformate.
 - Summen und Mittelwerte als Excel-Formel (`=SUMME` heisst in openpyxl `=SUM`), damit sie nachvollziehbar sind. Die Werte zusätzlich in Python berechnen und zur Kontrolle ausgeben, denn Excel rechnet Formeln erst beim Öffnen.
-- Speichern unter `ausgabe/`. Dateien der Person nie überschreiben. Eigene Ergebnisse in `ausgabe/` bei Änderungswünschen unter demselben Namen neu speichern, keine `_V2`.
+- Neue Dateien im Arbeitsordner speichern, dort wo sie hingehören, mit sprechendem Namen. Vorhandene Dateien direkt ändern und unter demselben Namen speichern, keine Kopien wie `_V2`. Die App sichert den Ordner vor jedem Auftrag, die Person kann ihn rückgängig machen.
 - Soll eine vorhandene Excel-Datei geändert werden: nicht mit pandas neu schreiben, sondern mit openpyxl öffnen und nur die verlangten Zellen ändern (siehe «Vorhandene Datei bearbeiten»).
 
 ## Gerüst
@@ -37,7 +37,7 @@ print(df.head()); print(df.dtypes)
 auswertung = df.groupby("Kategorie", as_index=False)["Betrag"].sum()
 print(auswertung)                                   # Kontrollwerte
 
-ziel = "ausgabe/Auswertung.xlsx"
+ziel = "Auswertung.xlsx"
 with pd.ExcelWriter(ziel, engine="openpyxl") as w:
     df.to_excel(w, sheet_name="Daten", index=False)
     auswertung.to_excel(w, sheet_name="Auswertung", index=False)
@@ -82,8 +82,8 @@ import sys; sys.path.insert(0, ".ask/skills")
 from openpyxl import load_workbook
 from bearbeiten import excel_risiken
 
-quelle = "budget.xlsx"             # Datei der Person; eigene Datei: "ausgabe/budget.xlsx"
-ziel = "ausgabe/budget.xlsx"
+quelle = "budget.xlsx"
+ziel = quelle                      # direkt ändern
 print("Risiken:", excel_risiken(quelle) or "keine")
 wb = load_workbook(quelle)         # nicht data_only=True: sonst werden Formeln durch Werte ersetzt
 ws = wb["Budget"] if "Budget" in wb.sheetnames else wb.active
@@ -107,5 +107,5 @@ print("gespeichert")
 - Datumsangaben: `pd.to_datetime(df[s], dayfirst=True, errors="coerce")`.
 
 ## Prüfen
-`python .ask/skills/pruefen.py ausgabe/Auswertung.xlsx`
+`python .ask/skills/pruefen.py Auswertung.xlsx`
 Zeigt Blätter, Grösse, Formeln, Fehlerwerte und die ersten Zeilen. Mit `--pdf` zusätzlich Umwandlung durch Excel (falls installiert).

@@ -7,14 +7,14 @@ description: PDF-Dateien mit reportlab erstellen und mit pypdf lesen, zusammenf�
 Werkzeuge: reportlab (erstellen), pypdf (lesen, zusammenfügen, teilen). Immer zuerst ein Skript schreiben (z. B. `.ask/skripte/merkblatt.py`), dann mit `python .ask/skripte/merkblatt.py` ausführen.
 
 ## Welcher Weg?
-- Dokument mit viel Text und Struktur, das auch als Word gebraucht wird: zuerst Word-Datei nach `.ask/skills/word/SKILL.md` bauen, dann mit `python .ask/skills/pruefen.py ausgabe/datei.docx --pdf` umwandeln lassen. Das PDF liegt danach in `.ask/pdf/`; nach `ausgabe/` kopieren.
+- Dokument mit viel Text und Struktur, das auch als Word gebraucht wird: zuerst Word-Datei nach `.ask/skills/word/SKILL.md` bauen, dann mit `python .ask/skills/pruefen.py datei.docx --pdf` umwandeln lassen. Das PDF liegt danach in `.ask/pdf/`; neben die Word-Datei kopieren.
 - Reines PDF (Merkblatt, Bericht, Tabelle): reportlab mit Platypus wie im Gerüst.
 - Bestehende PDFs lesen oder kombinieren: pypdf.
 
 ## Regeln
 - Schrift Arial einbinden, damit Umlaute und Sonderzeichen sicher richtig erscheinen.
 - Ränder 2 cm, Titel, Zwischentitel, Absätze und Tabellen über Stile, nicht von Hand positionieren.
-- Speichern unter `ausgabe/`. Dateien der Person nie überschreiben. Eigene Ergebnisse in `ausgabe/` bei Änderungswünschen unter demselben Namen neu erzeugen, keine `_V2`.
+- Neue Dateien im Arbeitsordner speichern, dort wo sie hingehören, mit sprechendem Namen. Vorhandene Dateien direkt ändern und unter demselben Namen speichern, keine Kopien wie `_V2`. Die App sichert den Ordner vor jedem Auftrag, die Person kann ihn rückgängig machen.
 
 ## Gerüst (reportlab)
 ```python
@@ -54,7 +54,7 @@ tabelle.setStyle(TableStyle([
 ]))
 inhalt.append(tabelle)
 
-doc = SimpleDocTemplate("ausgabe/Merkblatt.pdf", pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm,
+doc = SimpleDocTemplate("Merkblatt.pdf", pagesize=A4, leftMargin=2 * cm, rightMargin=2 * cm,
                         topMargin=2 * cm, bottomMargin=2 * cm, title="Merkblatt Passwörter")
 doc.build(inhalt, onFirstPage=fusszeile, onLaterPages=fusszeile)
 print("gespeichert")
@@ -68,17 +68,19 @@ schreiber = PdfWriter()
 for datei in ["teil1.pdf", "teil2.pdf"]:
     for seite in PdfReader(datei).pages:
         schreiber.add_page(seite)
-schreiber.write("ausgabe/Zusammengefuegt.pdf")
+schreiber.write("Zusammengefuegt.pdf")
 ```
 
 ## Vorhandene Datei bearbeiten
 Den Text eines PDFs kann man nicht sauber ändern; ein PDF ist ein fertiges Druckbild. Möglich mit pypdf: Seiten entfernen, umstellen, drehen, zusammenfügen und Formularfelder ausfüllen.
 ```python
+import io
 from pypdf import PdfReader, PdfWriter
 
-quelle = "unterlagen.pdf"          # Datei der Person; eigene Datei: "ausgabe/unterlagen.pdf"
-ziel = "ausgabe/unterlagen.pdf"
-leser = PdfReader(quelle)
+quelle = "unterlagen.pdf"
+ziel = quelle                      # direkt ändern
+with open(quelle, "rb") as f:
+    leser = PdfReader(io.BytesIO(f.read()))   # ganz einlesen, damit dieselbe Datei überschrieben werden kann
 print(len(leser.pages), "Seiten")
 schreiber = PdfWriter()
 for nummer, seite in enumerate(leser.pages, start=1):
@@ -95,5 +97,5 @@ print("gespeichert")
 - Hast du das PDF selbst mit reportlab erstellt: das Skript in `.ask/skripte/` anpassen und neu ausführen.
 
 ## Prüfen
-`python .ask/skills/pruefen.py ausgabe/Merkblatt.pdf`
+`python .ask/skills/pruefen.py Merkblatt.pdf`
 Zeigt Seitenzahl, Seitengrösse und den Text jeder Seite. Fehlt Text, ist etwas schiefgelaufen.
