@@ -66,6 +66,24 @@ async function coworker(ctx, check, shell, shoot, folder) {
 
   const img = await run('python -c "import matplotlib.pyplot as p; p.bar([1,2],[3,4]); p.savefig(\'diagramm.png\')"');
   check('Diagramm mit matplotlib', img.ok, img.output);
+  const { nativeImage } = require('electron');
+  const vctx = { visual: ctx.agent.visual, folder, chat: 'test', canSee: true };
+  const inked = (rel) => { // Grösse und Anteil nicht weisser Pixel
+    const im = nativeImage.createFromPath(path.join(folder, rel)); const s = im.getSize(); const bm = im.toBitmap(); let n = 0;
+    for (let i = 0; i < bm.length; i += 16) if (bm[i] < 200 || bm[i + 1] < 200 || bm[i + 2] < 200) n++;
+    return { width: s.width, height: s.height, ink: n / (bm.length / 16) }; };
+  const vdoc = await runTool(terminal, 'view_file', { path: 'Anleitung.docx' }, vctx);
+  const d0 = vdoc.images?.[0] ? inked(vdoc.images[0]) : {};
+  check('view_file: Word-Seite als Bild (Office → PDF → pdf.js)', vdoc.ok && vdoc.images.length >= 1 && d0.width === 1240 && d0.height > 1700 && d0.ink > 0.002 && d0.ink < 0.5,
+    `${vdoc.output} ${JSON.stringify(d0)}`);
+  const vppt = await runTool(terminal, 'view_file', { path: 'Praesentation.pptx', seiten: '2' }, vctx);
+  const p0 = vppt.images?.[0] ? inked(vppt.images[0]) : {};
+  check('view_file: Folie 2 als Bild im Querformat', vppt.ok && vppt.images.length === 1 && /Folien 2 von 2/.test(vppt.summary) && p0.width === 1240 && p0.height < 800 && p0.ink > 0.002,
+    `${vppt.output} ${JSON.stringify(p0)}`);
+  const vpng = await runTool(terminal, 'view_file', { path: 'diagramm.png' }, vctx);
+  check('view_file: Diagramm', vpng.ok && vpng.images.length === 1 && inked(vpng.images[0]).ink > 0.01, vpng.output);
+  const vbad = await runTool(terminal, 'view_file', { path: '../ausserhalb.png' }, vctx);
+  check('view_file: nur Dateien im Arbeitsordner', !vbad.ok, vbad.output);
   fs.copyFileSync(path.join(pdfDir, fs.readdirSync(pdfDir).find((n) => n.endsWith('.pdf') && !n.includes('-'))),
     path.join(folder, 'Anleitung.pdf'));
   await until('Bild unter «Zuletzt geändert»', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("diagramm.png"))'), 10000);
@@ -158,6 +176,7 @@ await compact(ctx, check, shell, shoot);
   await githubFlow(ctx, check, shell, shoot);
   await attachFlow(ctx, check, shell, shoot);
   await undoFlow(ctx, check, shell, shoot);
+  await visualFlow(ctx, check, shell, shoot);
 
   // Sperren gelten auch für die Werkzeuge der App
   const outside = path.join(path.dirname(folder), 'ausserhalb-chat.txt');
@@ -319,6 +338,49 @@ async function attachFlow(ctx, check, shell, shoot) {
   await getJson(`${mockUrl}/__mock/vision/an`);
 }
 
+// Ansehen: das Modell sieht ein Bild und testet eine HTML-Seite im unsichtbaren Browser
+async function visualFlow(ctx, check, shell, shoot) {
+  const { agent, settings } = ctx;
+  const { nativeImage } = require('electron');
+  const mockUrl = process.env.ASK_TEST_ASK_URL;
+  const folder = settings.get('folder');
+  agent.noImages = false; // attachFlow liess ASK Bilder ablehnen; wie nach einem Neustart der App
+  const red = nativeImage.createFromBitmap(Buffer.alloc(60 * 40 * 4, Buffer.from([0, 0, 200, 255])), { width: 60, height: 40 });
+  fs.writeFileSync(path.join(folder, 'grafik.png'), red.toPNG());
+  fs.writeFileSync(path.join(folder, 'spiel.html'), `<!doctype html><html><head><meta charset="utf-8"><title>Testspiel</title>
+    <style>body{margin:0;background:#c00;color:#fff;font:32px sans-serif;height:100vh}</style></head>
+    <body><button id="start">Start</button><p id="s">Bereit</p><script>
+    document.getElementById('start').onclick = () => { document.getElementById('s').textContent = 'Gestartet'; };
+    addEventListener('keydown', (e) => { if (e.key === 'ArrowRight') document.getElementById('s').textContent += ' Rechts'; });
+    console.error('absichtlicher Testfehler');
+    </script></body></html>`);
+
+  await order(shell, agent, 'Bitte ansehen test');
+  const viewed = agent.chat.messages.filter((m) => m.role === 'tool').pop();
+  check('view_file: Bild für das Modell gespeichert', viewed.ok && viewed.images?.length === 1 && fs.existsSync(path.join(folder, viewed.images[0]))
+    && viewed.images[0].startsWith(`.ask/arbeit/${agent.chat.id}/ansicht/`), JSON.stringify(viewed));
+  let log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
+  check('Bild geht als eigene Nachricht ans Modell', log.lastImages === 1 && log.lastUser.startsWith('[Ansicht] Bilder zu view_file(grafik.png)'), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
+  await until('Vorschaubild in der Werkzeugzeile', () => shell('(() => { const i = [...document.querySelectorAll(".msg.tool .shots img")].pop(); return !!i && i.naturalWidth === 60; })()'), 5000).catch(() => {});
+  check('Werkzeugzeile «Ansehen» zeigt das Bild', await shell(`(() => { const t = [...document.querySelectorAll('.msg.tool')].pop();
+    return t.querySelector('.call').textContent.startsWith('Ansehen(grafik.png') && t.querySelector('.shots img').naturalWidth === 60; })()`));
+  check('Ansicht nicht als Eingabe im Chat', agent.transcript().every((i) => !String(i.content || '').startsWith('[Ansicht]')));
+
+  await order(shell, agent, 'Bitte spiel testen');
+  const tested = agent.chat.messages.filter((m) => m.role === 'tool').pop();
+  check('browser_test: Konsole, Klick und Taste', tested.ok && tested.content.includes('Fehler: absichtlicher Testfehler') && tested.content.includes('Gestartet Rechts')
+    && tested.content.includes('«Testspiel»'), tested.content);
+  const shot = tested.images?.[0] ? nativeImage.createFromPath(path.join(folder, tested.images[0])) : null;
+  const size = shot?.getSize() || {};
+  const px = shot ? shot.toBitmap() : Buffer.alloc(0);
+  const at = (x, y) => { const i = (y * size.width + x) * 4; return [px[i + 2], px[i + 1], px[i]]; }; // BGRA
+  const [r, g, b] = shot ? at(1000, 600) : [0, 0, 0];
+  check('Bildschirmfoto 1280 × 800 zeigt die Seite', size.width === 1280 && size.height === 800 && r > 150 && g < 60 && b < 60, JSON.stringify({ size, rgb: [r, g, b] }));
+  log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
+  check('Bildschirmfoto geht ans Modell', log.lastImages === 1 && log.lastUser.startsWith('[Ansicht] Bilder zu browser_test(spiel.html'), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
+  await shoot('14-ansehen');
+}
+
 // Rückgängig: Auftrag ändert und legt an, Knopf setzt den Ordner zurück, das Modell erfährt es
 async function undoFlow(ctx, check, shell, shoot) {
   const { agent, settings } = ctx;
@@ -375,7 +437,16 @@ async function githubFlow(ctx, check, shell, shoot) {
   check('Ordner mit dem Repository verbunden', JSON.parse(fs.readFileSync(path.join(folder, '.ask', 'github.json'), 'utf8')).repo === 'lea-test/testprojekt');
 
   fs.writeFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'Inhalt des Berichts, ergänzt');
+  process.env.ASK_TEST_REMEMBER = '1'; // Häkchen «Für dieses Repository nicht mehr fragen»
   await order(shell, agent, 'Bitte auf github hochladen');
+  delete process.env.ASK_TEST_REMEMBER;
+  check('Häkchen: Repository ohne Rückfrage gemerkt', JSON.stringify(settings.get('githubTrusted')) === '["lea-test/testprojekt"]', JSON.stringify(settings.get('githubTrusted')));
+  await shell(`(() => { const i = document.getElementById('input'); i.value = '/github'; i.dispatchEvent(new Event('input')); document.getElementById('send-btn').click(); })()`);
+  await until('Liste ohne Rückfrage', () => shell('document.getElementById("github-body").textContent.includes("lea-test/testprojekt wieder fragen")'), 5000).catch(() => {});
+  await shell('[...document.querySelectorAll("#github-body .trusted button")][0].click()').catch(() => {});
+  await until('wieder fragen', () => (settings.get('githubTrusted') || []).length === 0, 5000).catch(() => {});
+  check('«wieder fragen» im GitHub-Dialog', (settings.get('githubTrusted') || []).length === 0);
+  await shell('document.getElementById("github-close").click()');
   check('Änderung als Commit hochgeladen', (await onGitHub('ausgabe/bericht.txt')).text === 'Inhalt des Berichts, ergänzt');
 
   await getJson(`${mockUrl}/__mock/github/aendern?repo=lea-test/testprojekt&path=notizen.txt&text=${encodeURIComponent('aus einer anderen Sitzung')}`);

@@ -356,15 +356,19 @@ TOOLS.push(
     name: 'github_push',
     label: 'GitHub',
     describe: (a) => `hochladen «${a.nachricht || ''}»`,
-    description: 'Lädt die Änderungen im Arbeitsordner als Commit auf das verbundene GitHub-Repository hoch (ohne .ask). Die Person bestätigt vorher.',
+    description: 'Lädt die Änderungen im Arbeitsordner als Commit auf das verbundene GitHub-Repository hoch (ohne .ask). Die Person bestätigt vorher, ausser sie hat das für dieses Repository abgeschaltet.',
     parameters: { type: 'object', properties: { nachricht: { type: 'string', description: 'Kurze Commit-Nachricht, was sich geändert hat' } }, required: ['nachricht'] },
     run: githubTool(async (gh, folder, a, ctx) => {
       const s = await gh.status(folder);
       if (!s.linked) return { ok: false, output: 'Der Ordner ist mit keinem Repository verbunden (github_create oder github_clone).', summary: 'kein Repository' };
       const changes = [...s.changed, ...s.added, ...s.deleted];
       if (changes.length === 0) return { ok: true, output: 'Nichts hochzuladen: keine Änderungen seit dem letzten Abgleich.', summary: 'nichts zu tun' };
-      if (!(await ctx.confirm(`${changes.length} Änderungen auf GitHub hochladen?`, `Repository: ${s.repo}\nNachricht: ${a.nachricht}\n\n${list(changes, 20)}`))) {
-        return { ok: false, output: 'Die Person hat das Hochladen abgelehnt.', summary: 'abgelehnt' };
+      // Rückfrage, ausser die Person hat für dieses Repository «nicht mehr fragen» gewählt
+      if (!ctx.githubTrust?.has(s.repo)) {
+        const answer = await ctx.confirm(`${changes.length} Änderungen auf GitHub hochladen?`, `Repository: ${s.repo}\nNachricht: ${a.nachricht}\n\n${list(changes, 20)}`,
+          { checkbox: 'Für dieses Repository nicht mehr fragen' });
+        if (!(answer?.ok ?? answer)) return { ok: false, output: 'Die Person hat das Hochladen abgelehnt.', summary: 'abgelehnt' };
+        if (answer?.checked) ctx.githubTrust?.add(s.repo);
       }
       const r = await gh.push(folder, a.nachricht);
       return { ok: true, output: `Hochgeladen: ${r.uploaded} Dateien, ${r.deleted.length} gelöscht. ${r.url}`, summary: `${r.uploaded} hochgeladen${r.deleted.length ? `, ${r.deleted.length} gelöscht` : ''} · ${s.repo}` };
@@ -392,6 +396,73 @@ TOOLS.push(
       }
       const r = await gh.create(folder, String(a.name).trim(), { privat, beschreibung: a.beschreibung || '' });
       return { ok: true, output: `Angelegt: ${r.repo} (${r.private ? 'privat' : 'öffentlich'}), ${r.uploaded} Dateien hochgeladen. ${r.url}`, summary: `${r.repo} · ${r.uploaded} Dateien` };
+    }),
+  },
+);
+
+// Ansehen (src/main/visual.js): läuft im Hauptprozess; die Bilder schickt agent.js dem Modell als
+// eigene Nachricht, denn Werkzeugergebnisse dürfen nur Text sein.
+function visualTool(fn) {
+  return async (terminal, args, ctx) => {
+    if (!ctx.visual || !ctx.folder) throw new Error('Ansehen ist hier nicht verfügbar.');
+    return fn(ctx.visual, ctx.folder, args, ctx);
+  };
+}
+
+TOOLS.push(
+  {
+    name: 'view_file',
+    label: 'Ansehen',
+    describe: (a) => `${a.path}${a.seiten ? `, Seiten ${a.seiten}` : ''}`,
+    description: 'Zeigt dir eine Datei so, wie sie aussieht, als Bild: Bilder, PDF, Word, Excel und PowerPoint (Seiten bzw. Folien; Standard die ersten 3, höchstens 6 pro Aufruf). '
+      + 'Nach dem Erstellen oder einer grösseren Änderung einmal ansehen, Fehler beheben, höchstens einmal erneut ansehen.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Pfad relativ zum Arbeitsordner' },
+        seiten: { type: 'string', description: 'Seiten oder Folien, z. B. «1-3» oder «2, 5»' },
+      },
+      required: ['path'],
+    },
+    run: visualTool(async (v, folder, a, ctx) => {
+      if (!ctx.canSee) return { ok: false, output: 'Das Modell in ASK kann keine Bilder ansehen. Prüfe stattdessen mit pruefen.py.', summary: 'Bilder nicht möglich' };
+      return v.view(folder, a.path, { seiten: a.seiten, chat: ctx.chat });
+    }),
+  },
+  {
+    name: 'browser_test',
+    label: 'Browser',
+    describe: (a) => `${a.path}${Array.isArray(a.aktionen) && a.aktionen.length ? `, ${a.aktionen.length} Aktionen` : ''}`,
+    description: 'Öffnet eine HTML-Datei (Webseite, Spiel) in einem unsichtbaren Browser mit 1280 × 800 Pixeln, führt auf Wunsch Klicks und Tasten aus '
+      + 'und liefert Fehler und Warnungen der Konsole, den sichtbaren Text und ein Bildschirmfoto. Damit prüfst du Webseiten und Spiele selbst.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'HTML-Datei relativ zum Arbeitsordner' },
+        warten: { type: 'number', description: 'Millisekunden nach dem Laden warten (Standard 1000)' },
+        aktionen: {
+          type: 'array',
+          description: 'Nacheinander ausführen, z. B. [{"klick": "#start"}, {"taste": "ArrowRight", "dauer": 500}, {"warten": 1000}]',
+          items: {
+            type: 'object',
+            properties: {
+              klick: { type: 'string', description: 'CSS-Selektor des Elements, das angeklickt wird' },
+              x: { type: 'number', description: 'Klick auf Pixel-Position (mit y), z. B. in ein Canvas' },
+              y: { type: 'number' },
+              taste: { type: 'string', description: 'Taste: ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, Enter, Escape oder ein Zeichen' },
+              dauer: { type: 'number', description: 'So lange die Taste halten (ms)' },
+              text: { type: 'string', description: 'Text ins fokussierte Feld tippen' },
+              warten: { type: 'number', description: 'So lange warten (ms, höchstens 5000)' },
+            },
+          },
+        },
+      },
+      required: ['path'],
+    },
+    run: visualTool(async (v, folder, a, ctx) => {
+      const r = await v.browse(folder, a.path, { aktionen: a.aktionen, warten: a.warten, chat: ctx.chat });
+      if (!ctx.canSee) r.output = r.output.replace('Das Bildschirmfoto folgt in der nächsten Nachricht.', 'Das Bildschirmfoto bekommst du nicht: das Modell in ASK kann keine Bilder ansehen.');
+      return r;
     }),
   },
 );

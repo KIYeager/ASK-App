@@ -1,0 +1,2 @@
+pdf.js 3.11.174 (pdfjs-dist, Apache-2.0, https://github.com/mozilla/pdf.js).
+Nur zum Zeichnen von PDF-Seiten als Bild für das Werkzeug view_file (src/main/visual.js).

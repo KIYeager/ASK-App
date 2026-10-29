@@ -63,7 +63,7 @@ function textChunks(text, reasoning = '') {
 
 // Antwort des Modells aus dem bisherigen Verlauf
 function script(messages) {
-  const lastUser = messages.map((m, i) => (m.role === 'user' && !textOf(m.content).startsWith('<tool_response>') ? i : -1))
+  const lastUser = messages.map((m, i) => (m.role === 'user' && !/^(<tool_response>|\[Ansicht\])/.test(textOf(m.content)) ? i : -1))
     .filter((i) => i >= 0).pop();
   const text = textOf(messages[lastUser]?.content).toLowerCase();
   const after = messages.slice(lastUser + 1);
@@ -94,6 +94,14 @@ function script(messages) {
     return textChunks('Geholt.');
   }
   if (text.includes('bild an')) return textChunks('Ich sehe das Bild.');
+  if (text.includes('ansehen test')) {
+    if (results === 0) return toolCallChunks([{ name: 'view_file', args: { path: 'grafik.png' } }]);
+    return textChunks('Angesehen.');
+  }
+  if (text.includes('spiel testen')) {
+    if (results === 0) return toolCallChunks([{ name: 'browser_test', args: { path: 'spiel.html', aktionen: [{ klick: '#start' }, { taste: 'ArrowRight' }] } }]);
+    return textChunks('Getestet.');
+  }
   if (text.includes('ändere den bericht')) {
     if (results === 0) {
       return toolCallChunks([{ name: 'write_file', args: { path: 'ausgabe/bericht.txt', content: 'Vom Modell geändert' } },
@@ -199,7 +207,7 @@ http.createServer((req, res) => {
         effort: data.reasoning_effort, think: data.think, enableThinking: data.chat_template_kwargs?.enable_thinking, tools: (data.tools || []).map((t) => t.function.name),
         system: data.messages[0]?.content || '', roles: data.messages.map((m) => m.role),
         toolIds: data.messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id),
-        images: imagesIn(data.messages), lastUser: textOf(data.messages.filter((m) => m.role === 'user').pop()?.content) });
+        images: imagesIn(data.messages), lastImages: imagesIn(data.messages.slice(-1)), lastUser: textOf(data.messages.filter((m) => m.role === 'user').pop()?.content) });
       if (data.stream_options && !usageAccepted) return json(res, 400, { detail: 'Unrecognized request argument: stream_options' });
       if (data.reasoning_effort !== undefined && !thinkAccepted) return json(res, 400, { detail: 'Unrecognized request argument: reasoning_effort' });
       if (imagesIn(data.messages) && !visionAccepted) return json(res, 400, { detail: 'image input is not supported by this model' });

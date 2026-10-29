@@ -288,6 +288,10 @@ async function showGithub() {
       body.append(p('Dieser Ordner ist mit keinem Repository verbunden. Sag dem Modell zum Beispiel «Hol das Repository besitzer/name» oder «Leg das Projekt auf GitHub an».'));
     }
     body.append(p(el('span', { class: 'muted small' }, 'Im Chat: «lade die Änderungen auf GitHub hoch», «hol die neuesten Änderungen von GitHub».')));
+    if (s.trusted?.length) {
+      body.append(p('Hochladen ohne Rückfrage:'), el('ul', { class: 'trusted' }, ...s.trusted.map((repo) => el('li', {}, `${repo} `,
+        el('button', { class: 'link-btn', onclick: async () => { await api.githubUntrust(repo); showGithub(); } }, 'wieder fragen')))));
+    }
   } else if (s.message) {
     body.append(p(`GitHub meldet: ${s.message}`));
   }
@@ -649,7 +653,14 @@ function toolProgress(row, output) {
   live.textContent = output;
 }
 
-function toolResult(row, { ok, summary, output, tasks, name }) {
+// Bilder, die das Modell mit view_file oder browser_test angesehen hat
+function shotList(images) {
+  const fileUrl = (p) => `askfile://datei/${p.split('/').map(encodeURIComponent).join('/')}`;
+  return el('div', { class: 'shots' }, ...images.map((p) => el('img', { src: fileUrl(p), alt: '', title: 'Klicken für die Vorschau',
+    onclick: (e) => { e.stopPropagation(); showPreview({ path: p, name: baseName(p) }); } })));
+}
+
+function toolResult(row, { ok, summary, output, tasks, name, images }) {
   const short = shortSummary(name, ok, summary, output);
   if (row.group) {
     row.item.ok = ok !== false;
@@ -662,6 +673,7 @@ function toolResult(row, { ok, summary, output, tasks, name }) {
   row.node.classList.toggle('bad', ok === false);
   row.summary.textContent = short;
   if (tasks && tasks.length) row.result.querySelector('.res').append(todoList(tasks));
+  if (images && images.length) row.result.querySelector('.res').append(shotList(images));
   row.details.querySelector('pre.out')?.remove();
   if (output && !(tasks && tasks.length)) row.details.append(detailBlock(output, name === 'edit_file'));
 }

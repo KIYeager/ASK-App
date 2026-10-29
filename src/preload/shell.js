@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('ask', {
   githubStatus: () => ipcRenderer.invoke('github:status'),
   githubConnect: (token) => ipcRenderer.invoke('github:connect', token),
   githubDisconnect: () => ipcRenderer.invoke('github:disconnect'),
+  githubUntrust: (repo) => ipcRenderer.invoke('github:untrust', repo),
   chatNew: (folder) => ipcRenderer.invoke('chat:new', folder),
   chatGroups: () => ipcRenderer.invoke('chat:groups'),
   chatOpen: (folder, id) => ipcRenderer.invoke('chat:open', folder, id),

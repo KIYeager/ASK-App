@@ -32,6 +32,7 @@ function goalPrompt(goal) {
 }
 const KEEP_FULL_TOOL_RESULTS = 8; // ältere Werkzeugergebnisse gehen gekürzt an das Modell
 const IMAGE_TURNS = 2; // Bilder aus so vielen der letzten Eingaben gehen an das Modell
+const VIEW_TURNS = 2; // ebenso aus so vielen der letzten Ansichten (view_file, browser_test)
 const CHAT_DIR = path.join('.ask', 'chats');
 const NEW = 'neu'; // openLatest: leeren Chat beginnen
 const { WORK_DIRS } = require('./cleanup'); // unter .ask, je ein Unterordner pro Chat
@@ -40,7 +41,7 @@ const newId = () => `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '
 
 // Steckt das Modell in einer Schleife? Betrachtet nur den laufenden Auftrag (seit der letzten Eingabe).
 function loopReason(messages) {
-  const start = messages.map((m) => m.role).lastIndexOf('user');
+  const start = messages.map((m) => (m.role === 'user' && m.note !== 'view' ? 'user' : '')).lastIndexOf('user');
   const calls = [];
   const results = [];
   for (const m of messages.slice(start + 1)) {
@@ -79,15 +80,16 @@ function userText(m) {
 function apiMessages(system, messages, textMode = false, imageUrl = null) {
   const toolIndexes = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
   const recent = new Set(toolIndexes.slice(-KEEP_FULL_TOOL_RESULTS));
-  const withImages = imageUrl ? new Set(messages.map((m, i) => (m.role === 'user' && m.attachments?.some((a) => a.image) ? i : -1))
-    .filter((i) => i >= 0).slice(-IMAGE_TURNS)) : new Set();
+  // Bilder: Anhänge der letzten IMAGE_TURNS Eingaben, Ansichten (view_file, browser_test) der letzten VIEW_TURNS
+  const withImage = (view) => messages.map((m, i) => (m.role === 'user' && (m.note === 'view') === view && m.attachments?.some((a) => a.image) ? i : -1))
+    .filter((i) => i >= 0);
+  const withImages = imageUrl ? new Set([...withImage(false).slice(-IMAGE_TURNS), ...withImage(true).slice(-VIEW_TURNS)]) : new Set();
   const out = [{ role: 'system', content: system }];
   for (const [i, m] of messages.entries()) {
     if (m.role === 'user') {
       const urls = withImages.has(i) ? m.attachments.filter((a) => a.image).map(imageUrl).filter(Boolean) : [];
-      out.push({ role: 'user', content: urls.length
-        ? [{ type: 'text', text: userText(m) }, ...urls.map((url) => ({ type: 'image_url', image_url: { url } }))]
-        : userText(m) });
+      const text = m.note === 'view' ? (urls.length ? m.content : `${m.content}: nicht mehr mitgeschickt.`) : userText(m);
+      out.push({ role: 'user', content: urls.length ? [{ type: 'text', text }, ...urls.map((url) => ({ type: 'image_url', image_url: { url } }))] : text });
     }
     else if (m.role === 'assistant') {
       if (m.textMode) out.push({ role: 'assistant', content: m.raw || m.content || '' });
@@ -109,8 +111,10 @@ function apiMessages(system, messages, textMode = false, imageUrl = null) {
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, confirm, getImageUrl, getVision, getSnapshots }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, confirm, getImageUrl, getVision, getSnapshots }) {
     super();
+    this.githubTrust = githubTrust || null;
+    this.visual = visual || null; // view_file und browser_test (visual.js)
     this.getSnapshots = getSnapshots || (() => null); // Sicherung des Arbeitsordners (snapshot.js)
     this.lastSkipped = '';
     this.github = github;
@@ -311,7 +315,7 @@ class Agent extends EventEmitter {
     let sentImages = false;
     const request = () => {
       const system = this.getSystemPrompt(this.chat.id) + (goal ? goalPrompt(goal) : '') + (this.textMode ? textModePrompt(specs) : '');
-      const imageUrl = this.getImageUrl && !this.noImages && this.getVision() !== false ? this.getImageUrl : null;
+      const imageUrl = this.canSee() ? this.getImageUrl : null;
       const messages = apiMessages(system, this.chat.messages, this.textMode, imageUrl);
       sentImages = messages.some((m) => Array.isArray(m.content));
       this.event({ type: 'assistant-start', webSearch });
@@ -370,6 +374,8 @@ class Agent extends EventEmitter {
       return true;
     }
 
+    const seen = []; // Bilder aus view_file und browser_test, gehen danach als Nachricht an das Modell
+    const canSee = this.canSee();
     for (const call of toolCalls) {
       if (signal.aborted) {
         this.push({ role: 'tool', tool_call_id: call.id, content: 'Von der Person abgebrochen.', textMode });
@@ -383,15 +389,31 @@ class Agent extends EventEmitter {
           signal,
           onProgress: (output) => this.event({ type: 'tool-progress', id: call.id, output: clip(output, 4000) }),
           github: this.github,
+          githubTrust: this.githubTrust,
+          visual: this.visual,
+          canSee,
+          chat: this.chat.id,
           folder: this.getFolder(),
           confirm: this.confirm,
         });
+      const images = result.images || [];
       this.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: result.output, ok: result.ok,
-        summary: result.summary, display: clip(result.display ?? result.output, 6000), tasks: result.tasks, textMode, ms: Date.now() - started });
+        summary: result.summary, display: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, textMode, ms: Date.now() - started });
       this.event({ type: 'tool-end', id: call.id, ok: result.ok, summary: result.summary,
-        output: clip(result.display ?? result.output, 6000), tasks: result.tasks, ms: Date.now() - started });
+        output: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, ms: Date.now() - started });
+      if (canSee && images.length) seen.push({ call: `${call.function.name}(${this.describeCall(call).detail})`, images });
+    }
+    if (seen.length && !signal.aborted) {
+      this.push({ role: 'user', auto: true, note: 'view', time: Date.now(),
+        content: `[Ansicht] Bilder zu ${seen.map((s) => s.call).join(', ')}`,
+        attachments: seen.flatMap((s) => s.images).map((p) => ({ path: p, name: path.basename(p), image: true })) });
     }
     return false;
+  }
+
+  // Darf das Modell Bilder bekommen? (ASK meldet Bildfähigkeit nicht ab und hat keine abgelehnt)
+  canSee() {
+    return !!this.getImageUrl && !this.noImages && this.getVision() !== false;
   }
 
   async backup(snapshots, message) {
@@ -472,12 +494,12 @@ class Agent extends EventEmitter {
 
   // Für die Anzeige eines gespeicherten Chats.
   transcript() {
-    return this.chat.messages.map((m) => {
+    return this.chat.messages.filter((m) => m.note !== 'view').map((m) => {
       if (m.role === 'assistant') {
         return { role: 'assistant', content: m.content, reasoning: m.reasoning || '', stats: m.stats || null, sources: m.sources || [], time: m.time,
           calls: (m.tool_calls || []).map((c) => ({ id: c.id, name: c.function.name, ...this.describeCall(c) })) };
       }
-      if (m.role === 'tool') return { role: 'tool', id: m.tool_call_id, ok: m.ok !== false, summary: m.summary || '', output: m.display ?? m.content, tasks: m.tasks };
+      if (m.role === 'tool') return { role: 'tool', id: m.tool_call_id, ok: m.ok !== false, summary: m.summary || '', output: m.display ?? m.content, tasks: m.tasks, images: m.images || [] };
       if (m.note === 'undo') return { role: 'undo', text: m.summary };
       return { role: m.auto ? 'auto' : m.role, content: m.content, time: m.time, attachments: m.attachments || [],
         snapshot: m.snapshot || null, changes: m.changes || null, undone: !!m.undone };

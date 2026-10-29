@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage, nativeImage } = require('electron');
+const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage, nativeImage, BrowserWindow } = require('electron');
 const settings = require('./settings');
 const paths = require('./paths');
 const { checkFolder } = require('./folders');
@@ -16,6 +16,7 @@ const { cleanupOldVersions } = require('./portable');
 const { GitHub } = require('./github');
 const { saveAttachments, imageUrl, nativeResize } = require('./attachments');
 const { Snapshots } = require('./snapshot');
+const { Visual } = require('./visual');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -52,16 +53,31 @@ const github = new GitHub({
   fetchImpl: (url, options) => net.fetch(url, options), // Netzwerk von Chromium, nutzt den Proxy von Windows
 });
 
-// Rückfrage vor Aktionen nach aussen (GitHub anlegen, hochladen). In automatischen Tests: ja.
-async function confirm(message, detail) {
-  if (testMode && process.env.ASK_TEST_AUTOCONFIRM === '1') return true;
-  if (!appWindow) return false;
-  const res = await dialog.showMessageBox(appWindow.win, { type: 'question', buttons: ['Ja', 'Nein'], defaultId: 0, cancelId: 1, message, detail });
-  return res.response === 0;
+// Rückfrage vor Aktionen nach aussen (GitHub anlegen, hochladen). Mit options.checkbox ein Häkchen im
+// Dialog; dann { ok, checked } statt true/false. In automatischen Tests: ja (Häkchen mit ASK_TEST_REMEMBER).
+async function confirm(message, detail, options = {}) {
+  const answer = (ok, checked) => (options.checkbox ? { ok, checked } : ok);
+  if (testMode && process.env.ASK_TEST_AUTOCONFIRM === '1') return answer(true, process.env.ASK_TEST_REMEMBER === '1');
+  if (!appWindow) return answer(false, false);
+  const res = await dialog.showMessageBox(appWindow.win, { type: 'question', buttons: ['Ja', 'Nein'], defaultId: 0, cancelId: 1, message, detail,
+    ...(options.checkbox ? { checkboxLabel: options.checkbox, checkboxChecked: false } : {}) });
+  return answer(res.response === 0, res.response === 0 && !!res.checkboxChecked);
 }
+
+// Repositories, in die ohne Rückfrage hochgeladen wird (Häkchen im Dialog, zurücksetzen im GitHub-Dialog)
+const githubTrust = {
+  list: () => (Array.isArray(settings.get('githubTrusted')) ? settings.get('githubTrusted') : []),
+  has: (repo) => githubTrust.list().some((r) => r.toLowerCase() === String(repo).toLowerCase()),
+  add: (repo) => { if (!githubTrust.has(repo)) settings.set({ githubTrusted: [...githubTrust.list(), String(repo)] }); },
+  remove: (repo) => settings.set({ githubTrusted: githubTrust.list().filter((r) => r.toLowerCase() !== String(repo).toLowerCase()) }),
+};
+
+const visual = new Visual({ electron: { BrowserWindow, nativeImage }, convertToPdf, renderPage: path.join(__dirname, 'render', 'pdf.html') });
 
 const agent = new Agent({
   github,
+  githubTrust,
+  visual,
   confirm,
   ask,
   terminal,
@@ -356,7 +372,7 @@ function setupIpc() {
     try {
       const folder = settings.get('folder');
       const s = folder ? await github.status(folder) : { linked: false, connected: github.connected(), login: github.connected() ? await github.whoami() : '' };
-      return { ok: true, ...s };
+      return { ok: true, ...s, trusted: githubTrust.list() };
     } catch (err) {
       return { ok: false, connected: github.connected(), message: err.message };
     }
@@ -369,6 +385,7 @@ function setupIpc() {
     }
   });
   ipcMain.handle('github:disconnect', () => github.disconnect());
+  ipcMain.handle('github:untrust', (_e, repo) => githubTrust.remove(repo));
   ipcMain.handle('chat:new', (_e, folder) => openChat(folder || settings.get('folder'), NEW));
   ipcMain.handle('chat:groups', () => chatGroups());
   ipcMain.handle('chat:open', (_e, folder, id) => openChat(folder, id));
@@ -492,7 +509,11 @@ app.whenReady().then(() => {
       }
     });
   }
-  appWindow.win.on('closed', () => { appWindow = null; });
+  appWindow.win.on('closed', () => {
+    appWindow = null;
+    visual.closeRenderer(); // unsichtbare Fenster halten die App sonst offen
+    app.quit();
+  });
   if (singleInstance) cleanupOldVersions();
   if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) {
     require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, ask, agent, workspace, settings, openFolder, pushState });
@@ -504,6 +525,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   quitting = true;
   agent.stop();
+  visual.closeRenderer();
   workspace.close();
   terminal.stop().finally(() => app.quit());
 });
