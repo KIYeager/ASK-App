@@ -4,6 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const paths = require('./paths');
+const { cleanupWorkDirs, hideFolder } = require('./cleanup');
 
 const ASK_DIR = '.ask';
 const OUTPUT_DIR = 'ausgabe';
@@ -79,6 +80,8 @@ class Workspace extends EventEmitter {
     this.root = folder;
     fs.mkdirSync(path.join(folder, ASK_DIR), { recursive: true });
     fs.mkdirSync(path.join(folder, OUTPUT_DIR), { recursive: true });
+    hideFolder(path.join(folder, ASK_DIR));
+    setTimeout(() => cleanupWorkDirs(folder), 2000); // nicht beim Öffnen bremsen
     fs.rmSync(path.join(folder, ASK_DIR, 'auftraege'), { recursive: true, force: true });
     this.syncSkills();
     try {
@@ -116,7 +119,7 @@ class Workspace extends EventEmitter {
   }
 
   onChange(name) {
-    if (name.startsWith(path.join(ASK_DIR, 'skills'))) return;
+    if (['skills', 'chats', 'skripte', 'arbeit'].some((sub) => name.startsWith(path.join(ASK_DIR, sub)))) return;
     if (/^\.ask[\\/]auftraege[\\/][0-9a-f]{6,32}\.json$/i.test(name)) {
       const file = path.join(this.root, name);
       if (fs.existsSync(file)) this.emit('auftrag', file);

@@ -1,58 +1,28 @@
-// Nachbildung der Open-WebUI-Endpunkte, die ASK Desktop braucht. Nur für Tests.
-// Aufruf: node mock-ask.js <port> [frei|gesperrt]
+// Nachbildung der Open-WebUI-Endpunkte, die ASK braucht. Nur für Tests.
+// Aufruf: node mock-ask.js <port> [angemeldet|abgemeldet]
+// Das «Modell» spielt feste Abläufe und streamt sie wie Open WebUI (SSE im OpenAI-Format):
+//   Standard:  Befehl ausführen → Aufgaben und Datei schreiben → Schlusstext mit Denktext
+//   «textmodus»: Werkzeugaufruf als <tool_call> im Text
+//   «langsam»: langer Befehl, zum Stoppen
+// /__mock/tools/aus lässt Anfragen mit «tools» mit HTTP 400 scheitern, /__mock/usage/aus solche mit
+// «stream_options». Sonst kommen am Ende des Stroms Tokenzahlen (usage), wenn sie verlangt sind.
 const http = require('node:http');
 
 const port = Number(process.argv[2] || 18900);
-let permitted = (process.argv[3] || 'frei') === 'frei';
+const mode = process.argv[3] || 'angemeldet';
 const TOKEN = 'test-token';
-const userSettings = { ui: { terminalServers: [{ url: 'http://127.0.0.1:9', key: 'alt', name: 'Eigenes', enabled: true }] } };
 const log = [];
-let pageResults = {};
+const chatLog = [];
+let toolsAccepted = true;
+let usageAccepted = true;
+let thinkAccepted = true;
 
-// Die Seite verhält sich vereinfacht wie Open WebUI: Sie liest die eingerichteten Terminals und
-// ruft beim ausgewählten Terminal openapi.json, /system und /files/cwd mit dem gespeicherten Key ab.
 const page = `<!doctype html><html><head><meta charset="utf-8"><title>Mock ASK</title></head>
-<body style="font-family:Segoe UI;padding:20px"><h1>Mock ASK</h1><pre id="out">…</pre><script>
-localStorage.token = localStorage.token || '${TOKEN}';
-window.__results = {};
-// Wie Open WebUI: Werkzeuge des Terminals nur einmal beim Laden der Seite holen.
-let firstLoad = 'kein Terminal eingerichtet';
-const firstLoadDone = (async () => {
-  const s = await (await fetch('/api/v1/users/user/settings', { headers: { Authorization: 'Bearer ' + localStorage.token } })).json();
-  const t = (s.ui.terminalServers || []).find((x) => x.url === localStorage.selectedTerminalId && x.enabled);
-  if (!t) return;
-  try { firstLoad = (await fetch(t.url + '/openapi.json', { headers: { Authorization: 'Bearer ' + t.key } })).status; }
-  catch (e) { firstLoad = 'FEHLER ' + e.message; }
-})();
-async function poll() {
-  await firstLoadDone;
-  try {
-    const s = await (await fetch('/api/v1/users/user/settings', { headers: { Authorization: 'Bearer ' + localStorage.token } })).json();
-    const sel = localStorage.selectedTerminalId;
-    const t = (s.ui.terminalServers || []).find((x) => x.url === sel && x.enabled);
-    const r = { selected: sel || null, configured: !!t, firstLoad };
-    if (t) {
-      const h = { Authorization: 'Bearer ' + t.key };
-      for (const p of ['/openapi.json', '/system', '/files/cwd']) {
-        try {
-          const res = await fetch(t.url + p, { headers: h });
-          r[p] = res.status;
-          if (p === '/system' && res.ok) r.systemText = (await res.json()).prompt;
-        } catch (e) { r[p] = 'FEHLER ' + e.message; }
-      }
-      try {
-        const res = await fetch(t.url + '/execute?wait=10', { method: 'POST', headers: { ...h, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: 'echo hallo aus ASK' }) });
-        r.execute = res.status + ' ' + JSON.stringify((await res.json()).output).slice(0, 120);
-      } catch (e) { r.execute = 'FEHLER ' + e.message; }
-    }
-    window.__results = r;
-    document.getElementById('out').textContent = JSON.stringify(r, null, 2);
-    fetch('/__mock/results', { method: 'POST', body: JSON.stringify(r) });
-  } catch (e) { document.getElementById('out').textContent = 'Fehler ' + e; }
-  setTimeout(poll, 2000);
-}
-poll();
+<body style="font-family:Segoe UI;padding:20px"><h1>Mock ASK</h1>
+<button id="login" style="font-size:18px;padding:8px 16px">Anmelden</button>
+<script>
+if (${JSON.stringify(mode)} === 'angemeldet') localStorage.token = localStorage.token || '${TOKEN}';
+document.getElementById('login').onclick = () => { localStorage.token = '${TOKEN}'; location.href = '/'; };
 </script></body></html>`;
 
 function json(res, status, body) {
@@ -60,44 +30,142 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const chunk = (delta, finish = null) => ({ id: 'mock', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: finish }] });
+
+function toolCallChunks(calls) {
+  const out = [];
+  calls.forEach((c, index) => {
+    const args = JSON.stringify(c.args);
+    const half = Math.ceil(args.length / 2);
+    out.push(chunk({ tool_calls: [{ index, id: `call_${index}_${Date.now()}`, type: 'function', function: { name: c.name, arguments: '' } }] }));
+    out.push(chunk({ tool_calls: [{ index, function: { arguments: args.slice(0, half) } }] }));
+    out.push(chunk({ tool_calls: [{ index, function: { arguments: args.slice(half) } }] }));
+  });
+  out.push(chunk({}, 'tool_calls'));
+  return out;
+}
+
+function textChunks(text, reasoning = '') {
+  const out = [];
+  if (reasoning) out.push(chunk({ reasoning_content: reasoning }));
+  for (let i = 0; i < text.length; i += 7) out.push(chunk({ content: text.slice(i, i + 7) }));
+  out.push(chunk({}, 'stop'));
+  return out;
+}
+
+// Antwort des Modells aus dem bisherigen Verlauf
+function script(messages) {
+  const lastUser = messages.map((m, i) => (m.role === 'user' && !String(m.content).startsWith('<tool_response>') ? i : -1))
+    .filter((i) => i >= 0).pop();
+  const text = String(messages[lastUser]?.content || '').toLowerCase();
+  const after = messages.slice(lastUser + 1);
+  const results = after.filter((m) => m.role === 'tool' || String(m.content).startsWith('<tool_response>')).length;
+  if (text.includes('textmodus')) {
+    if (results === 0) return textChunks('Ich führe den Befehl aus.\n<tool_call>\n{"name": "run_command", "arguments": {"command": "echo textmodus ok"}}\n</tool_call>');
+    return textChunks('Textmodus fertig.');
+  }
+  if (text.includes('ziel ist noch nicht erreicht')) {
+    if (results === 0) return toolCallChunks([{ name: 'goal_done', args: { zusammenfassung: 'Bericht steht.' } }]);
+    return textChunks('Ziel erledigt.');
+  }
+  if (text.includes('zielbericht')) return textChunks('Ich fange an:');
+  if (text.includes('viele schritte')) {
+    if (results < 5) return toolCallChunks([{ name: 'run_command', args: { command: `echo schritt ${results + 1}` } }]);
+    return textChunks('Viele erledigt.');
+  }
+  if (text.includes('schleife')) return toolCallChunks([{ name: 'run_command', args: { command: 'echo immer gleich' } }]);
+  if (text.includes('lies')) {
+    if (results === 0) {
+      return toolCallChunks([{ name: 'read_file', args: { path: 'ausgabe/bericht.txt' } }, { name: 'read_file', args: { path: '.ask/skills/word/SKILL.md' } },
+        { name: 'list_files', args: { path: '.' } }]);
+    }
+    return textChunks('Gelesen.');
+  }
+  if (text.includes('websuche')) {
+    if (results === 0) return toolCallChunks([{ name: 'run_command', args: { command: 'echo nach der Suche' } }]);
+    return textChunks('Laut der Proxmox-Webseite ist **Proxmox VE 8.3** aktuell.\n\n```bash\npvesh get /version\n```');
+  }
+  if (text.includes('langsam')) {
+    if (results === 0) return toolCallChunks([{ name: 'run_command', args: { command: 'ping -n 40 127.0.0.1' } }]);
+    return textChunks('Der Befehl ist fertig.');
+  }
+  if (results === 0) return toolCallChunks([{ name: 'run_command', args: { command: 'echo hallo aus ASK' } }]);
+  if (results === 1) {
+    return toolCallChunks([
+      { name: 'update_tasks', args: { auftrag: 'Testauftrag', aufgaben: [{ titel: 'Befehl testen', status: 'erledigt' }, { titel: 'Bericht schreiben', status: 'in_arbeit' }, { titel: 'Prüfen', status: 'offen' }] } },
+      { name: 'write_file', args: { path: 'ausgabe/bericht.txt', content: 'Inhalt des Berichts' } },
+    ]);
+  }
+  return textChunks('<think>Alles erledigt.</think>Fertig. Die Datei liegt in `ausgabe/bericht.txt`.\n\n- Befehl getestet\n- **Bericht** geschrieben', 'Ich prüfe die Ergebnisse.');
+}
+
 http.createServer((req, res) => {
   log.push(`${req.method} ${req.url}`);
   const authed = req.headers.authorization === `Bearer ${TOKEN}`;
-  if (req.url === '/' || req.url.startsWith('/?')) {
+  const url = req.url.split('?')[0];
+  if (url === '/' || url === '/auth') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(page);
   }
-  if (req.url === '/api/config') {
-    return json(res, 200, { version: '0.12.3', features: { enable_tool_servers: true, enable_direct_integrations: true } });
+  if (url === '/api/config') return json(res, 200, { version: '0.12.3', features: authed ? { enable_web_search: true } : {} });
+  if (url === '/__mock/log') return json(res, 200, log);
+  if (url === '/__mock/chatlog') return json(res, 200, chatLog);
+  if (url.startsWith('/__mock/tools/')) {
+    toolsAccepted = url.endsWith('/an');
+    return json(res, 200, { toolsAccepted });
   }
-  if (req.url === '/__mock/settings') return json(res, 200, userSettings);
-  if (req.url === '/__mock/results' && req.method === 'POST') {
-    let body = '';
-    req.on('data', (c) => { body += c; });
-    req.on('end', () => { pageResults = JSON.parse(body || '{}'); json(res, 200, {}); });
-    return undefined;
+  if (url.startsWith('/__mock/think/')) {
+    thinkAccepted = url.endsWith('/an');
+    return json(res, 200, { thinkAccepted });
   }
-  if (req.url === '/__mock/results') return json(res, 200, pageResults);
-  if (req.url === '/__mock/reset') { pageResults = {}; return json(res, 200, {}); }
-  if (req.url === '/__mock/log') return json(res, 200, log);
-  if (req.url.startsWith('/__mock/permit/')) {
-    permitted = req.url.endsWith('/ja');
-    return json(res, 200, { permitted });
+  if (url.startsWith('/__mock/usage/')) {
+    usageAccepted = url.endsWith('/an');
+    return json(res, 200, { usageAccepted });
   }
   if (!authed) return json(res, 401, { detail: 'Not authenticated' });
-  if (req.url === '/api/v1/auths/') {
-    return json(res, 200, { role: 'user', permissions: { features: { direct_tool_servers: permitted } } });
+  if (url === '/api/v1/auths/') {
+    return json(res, 200, { name: 'Lea Test', email: 'lea@example.ch', role: 'user', permissions: { features: { web_search: true } } });
   }
-  if (req.url === '/api/v1/users/user/settings') return json(res, 200, userSettings);
-  if (req.url === '/api/v1/users/user/settings/update' && req.method === 'POST') {
+  if (url === '/api/models') {
+    // Nach der Anmeldung langsam antworten, damit der Test die Phase «Anmeldung wird geprüft» sieht
+    if (mode === 'abgemeldet') {
+      setTimeout(() => json(res, 200, { data: [{ id: 'qwen-test', name: 'Qwen Test' }] }), 1500);
+      return undefined;
+    }
+    return json(res, 200, { data: [{ id: 'qwen-test', name: 'Qwen Test' }, { id: 'versteckt', name: 'Versteckt', info: { meta: { hidden: true } } }] });
+  }
+  if (url === '/api/chat/completions' && req.method === 'POST') {
     let body = '';
     req.on('data', (c) => { body += c; });
-    req.on('end', () => {
-      const update = JSON.parse(body);
-      Object.assign(userSettings.ui, update.ui || {});
-      json(res, 200, userSettings);
+    req.on('end', async () => {
+      const data = JSON.parse(body);
+      chatLog.push({ model: data.model, stream: data.stream, usage: !!data.stream_options?.include_usage, web: !!data.features?.web_search,
+        effort: data.reasoning_effort, think: data.think, enableThinking: data.chat_template_kwargs?.enable_thinking, tools: (data.tools || []).map((t) => t.function.name),
+        system: data.messages[0]?.content || '', roles: data.messages.map((m) => m.role),
+        toolIds: data.messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id) });
+      if (data.stream_options && !usageAccepted) return json(res, 400, { detail: 'Unrecognized request argument: stream_options' });
+      if (data.reasoning_effort !== undefined && !thinkAccepted) return json(res, 400, { detail: 'Unrecognized request argument: reasoning_effort' });
+      if (data.tools && !toolsAccepted) return json(res, 400, { detail: 'tools are not supported by this model' });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+      const chunks = script(data.messages);
+      if (data.features?.web_search) {
+        // Wie Open WebUI: Quellen der Websuche als eigenes Ereignis vor der Antwort
+        res.write(`data: ${JSON.stringify({ sources: [{ source: { type: 'web_search', name: 'proxmox 8', urls: ['https://www.proxmox.com/de/news', 'https://pve.proxmox.com/wiki/Roadmap'] },
+          document: ['Proxmox VE 8.3 ist erschienen.', 'Roadmap'], metadata: [{ source: 'https://www.proxmox.com/de/news', title: 'Proxmox News' },
+            { source: 'https://pve.proxmox.com/wiki/Roadmap', title: 'Roadmap – Proxmox VE' }] }] })}\n\n`);
+      }
+      for (const c of chunks) {
+        res.write(`data: ${JSON.stringify(c)}\n\n`);
+        await wait(15);
+      }
+      if (data.stream_options?.include_usage) {
+        const usage = { prompt_tokens: Math.round(body.length / 4), completion_tokens: chunks.length * 5, total_tokens: 0 };
+        res.write(`data: ${JSON.stringify({ id: 'mock', choices: [], usage })}\n\n`);
+      }
+      res.end('data: [DONE]\n\n');
     });
     return undefined;
   }
   return json(res, 404, { detail: 'not found' });
-}).listen(port, '127.0.0.1', () => console.log(`Mock-ASK auf http://127.0.0.1:${port}`));
+}).listen(port, '127.0.0.1', () => console.log(`Mock-ASK auf http://127.0.0.1:${port} (${mode})`));

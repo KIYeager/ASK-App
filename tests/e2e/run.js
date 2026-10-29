@@ -1,5 +1,5 @@
 // Startet Mock-ASK und die App im Entwicklungsmodus mit einem Testszenario.
-// Aufruf: node tests/e2e/run.js <verbinden|gesperrt|erststart> <testordner-basis>
+// Aufruf: node tests/e2e/run.js <chat|anmelden|erststart|coworker> <testordner-basis>
 // Benötigt ASK_BUILD_DIR (mit gebautem Python) und optional ASK_RUNTIME_DIR.
 const fs = require('node:fs');
 const os = require('node:os');
@@ -7,12 +7,12 @@ const path = require('node:path');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
 
-const scenario = process.argv[2] || 'verbinden';
+const scenario = process.argv[2] || 'chat';
 const base = process.argv[3] || path.join(os.homedir(), 'ASK-Test-e2e');
 const root = path.join(__dirname, '..', '..');
 const electron = require(path.join(root, 'node_modules', 'electron'));
 const mockPort = 18900 + Math.floor(Math.random() * 90);
-const askUrl = scenario === 'oeffentlich' ? 'https://example.com' : `http://127.0.0.1:${mockPort}`;
+const askUrl = `http://127.0.0.1:${mockPort}`;
 
 const userData = path.join(base, `userdata-${scenario}`);
 const workdir = path.join(base, `ordner-${scenario}`);
@@ -20,12 +20,13 @@ const report = path.join(base, `bericht-${scenario}.json`);
 const shots = path.join(base, 'bilder');
 fs.rmSync(userData, { recursive: true, force: true });
 fs.mkdirSync(userData, { recursive: true });
+for (const dir of [workdir, `${workdir}-zwei`]) fs.rmSync(dir, { recursive: true, force: true });
 fs.mkdirSync(workdir, { recursive: true });
 fs.rmSync(report, { force: true });
 
 if (scenario !== 'erststart') {
   fs.writeFileSync(path.join(userData, 'einstellungen.json'), JSON.stringify({
-    askUrl, folder: workdir, recent: [workdir], warningAccepted: true, sidebarOpen: true, autoConnect: true, port: 0,
+    askUrl, folder: workdir, recent: [workdir], warningAccepted: true, sidebarOpen: true, port: 0,
   }));
 }
 
@@ -38,7 +39,7 @@ function portOpen(port) {
 }
 
 const mock = spawn(process.execPath, [path.join(__dirname, 'mock-ask.js'), String(mockPort),
-  scenario === 'gesperrt' ? 'gesperrt' : 'frei'], { stdio: 'inherit' });
+  scenario === 'anmelden' ? 'abgemeldet' : 'angemeldet'], { stdio: 'inherit' });
 
 const app = spawn(electron, [root], {
   stdio: ['ignore', 'pipe', 'pipe'],

@@ -1,10 +1,10 @@
 ---
 name: excel
-description: Excel-Dateien (.xlsx) und CSV-Auswertungen mit pandas und openpyxl erstellen und prüfen. Lesen, bevor eine .xlsx-Datei entsteht.
+description: Excel-Dateien (.xlsx) und CSV-Auswertungen mit pandas und openpyxl erstellen, vorhandene bearbeiten und prüfen. Lesen, bevor eine .xlsx-Datei entsteht oder geändert wird.
 ---
-# Excel-Datei erstellen
+# Excel-Datei erstellen oder bearbeiten
 
-Werkzeuge: pandas zum Einlesen und Rechnen, openpyxl zum Formatieren. Immer zuerst ein Skript schreiben (z. B. `auswertung.py`), dann `python auswertung.py` ausführen.
+Werkzeuge: pandas zum Einlesen und Rechnen, openpyxl zum Formatieren. Immer zuerst ein Skript schreiben (z. B. `.ask/skripte/auswertung.py`), dann `python .ask/skripte/auswertung.py` ausführen.
 
 ## Regeln
 - CSV robust einlesen (Schweizer Dateien haben oft `;` und Windows-Kodierung), siehe Gerüst.
@@ -12,7 +12,8 @@ Werkzeuge: pandas zum Einlesen und Rechnen, openpyxl zum Formatieren. Immer zuer
 - Rohdaten und Auswertung auf getrennte Blätter: «Daten» und «Auswertung».
 - Kopfzeile fett mit Hintergrund, Kopfzeile fixieren, Autofilter, sinnvolle Spaltenbreiten, Zahlenformate.
 - Summen und Mittelwerte als Excel-Formel (`=SUMME` heisst in openpyxl `=SUM`), damit sie nachvollziehbar sind. Die Werte zusätzlich in Python berechnen und zur Kontrolle ausgeben, denn Excel rechnet Formeln erst beim Öffnen.
-- Speichern unter `ausgabe/`, nie eine bestehende Datei überschreiben.
+- Speichern unter `ausgabe/`. Dateien der Person nie überschreiben. Eigene Ergebnisse in `ausgabe/` bei Änderungswünschen unter demselben Namen neu speichern, keine `_V2`.
+- Soll eine vorhandene Excel-Datei geändert werden: nicht mit pandas neu schreiben, sondern mit openpyxl öffnen und nur die verlangten Zellen ändern (siehe «Vorhandene Datei bearbeiten»).
 
 ## Gerüst
 ```python
@@ -73,6 +74,32 @@ print("gespeichert")
 
 ## Zahlenformate
 `"#,##0.00"` Betrag, `"0.0%"` Prozent (Wert 0.25 = 25 %), `"DD.MM.YYYY"` Datum, `"0"` ganze Zahl.
+
+## Vorhandene Datei bearbeiten
+Zuerst mit `read_file` lesen und mit `excel_risiken` prüfen, was beim Speichern verloren ginge. Meldet die Funktion etwas mit «gehen verloren», vorher die Person fragen.
+```python
+import sys; sys.path.insert(0, ".ask/skills")
+from openpyxl import load_workbook
+from bearbeiten import excel_risiken
+
+quelle = "budget.xlsx"             # Datei der Person; eigene Datei: "ausgabe/budget.xlsx"
+ziel = "ausgabe/budget.xlsx"
+print("Risiken:", excel_risiken(quelle) or "keine")
+wb = load_workbook(quelle)         # nicht data_only=True: sonst werden Formeln durch Werte ersetzt
+ws = wb["Budget"] if "Budget" in wb.sheetnames else wb.active
+print(ws.title, ws.dimensions)
+for zeile in ws.iter_rows(min_row=1, max_row=5, values_only=True):
+    print(zeile)
+ws["B3"] = 450                     # einzelne Zellen ändern, Formeln und Formate bleiben
+neue = ws.max_row + 1
+ws.cell(row=neue, column=1, value="Reserve")
+ws.cell(row=neue, column=2, value=100).number_format = ws.cell(row=neue - 1, column=2).number_format
+wb.save(ziel)
+print("gespeichert")
+```
+- Nicht `df.to_excel(...)` auf eine vorhandene Datei: das schreibt das Blatt neu, Formatierung und Formeln sind weg.
+- Formeln, die sich auf geänderte Bereiche beziehen (z. B. `=SUM(B2:B6)`), nach dem Einfügen von Zeilen anpassen.
+- `.xlsm` mit Makros: `load_workbook(quelle, keep_vba=True)` und wieder als `.xlsm` speichern.
 
 ## Typische Fehler
 - Spaltennamen raten: zuerst `print(df.columns.tolist())`.

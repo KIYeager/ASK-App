@@ -78,6 +78,16 @@ async function shell(expression) {
   return result;
 }
 
+// Neuer Chat, Auftrag an das Mock-Modell; es führt «echo hallo aus ASK» aus und meldet «Fertig».
+async function chatRoundtrip() {
+  await shell('window.ask.chatNew()');
+  await until('leerer Chat', () => shell('document.querySelectorAll("#messages .msg").length === 0'), 10000);
+  await until('bereit', () => shell('!document.getElementById("send-btn").disabled'), 60000);
+  await shell('window.ask.chatSend("Bitte teste die Werkzeuge")');
+  return until('Antwort im Chat', () => shell(`[...document.querySelectorAll('.msg.tool .result')].some((r) => r.textContent.includes('hallo aus ASK'))
+    && [...document.querySelectorAll('.msg.assistant .md')].some((m) => m.textContent.startsWith('Fertig'))`), 60000).catch(() => false);
+}
+
 function processes(name) {
   return ps(`Get-CimInstance Win32_Process -Filter "Name='${name}'" | ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.ExecutablePath)" }`)
     .split(/\r?\n/).filter(Boolean).map((l) => {
@@ -188,7 +198,7 @@ async function main() {
   fs.mkdirSync(workdir, { recursive: true });
   fs.writeFileSync(settingsFile, JSON.stringify({ askUrl: mockUrl, folder: workdir, recent: [workdir],
     warningAccepted: true, sidebarOpen: true, autoConnect: true, port: 0 }));
-  const mock = spawn(process.execPath, [path.join(__dirname, 'mock-ask.js'), String(mockPort), 'frei'], { stdio: 'ignore' });
+  const mock = spawn(process.execPath, [path.join(__dirname, 'mock-ask.js'), String(mockPort), 'angemeldet'], { stdio: 'ignore' });
   fs.rmSync(appDir, { recursive: true, force: true });
   fs.rmSync(`${appDir}.neu`, { recursive: true, force: true });
 
@@ -205,11 +215,8 @@ async function main() {
     check('Kein Ordner .neu übrig', !fs.existsSync(`${appDir}.neu`));
     check('Python läuft aus dem Zwischenspeicher', pythonIn(appDir).length >= 2);
     check('Health-Check', (await get(`http://127.0.0.1:${first.port}/health`)).status === 200);
-    await until('Mit ASK verbunden', () => shell('document.getElementById("ask-text").textContent').then((t) => t === 'Mit ASK verbunden'), 60000);
-    const results = await until('Ergebnisse', () => get(`${mockUrl}/__mock/results`).then((r) => {
-      const j = JSON.parse(r.body); return j.execute ? j : null;
-    }));
-    check('Mit (Mock-)ASK verbunden, Befehl im Terminal ausgeführt', String(results.execute).includes('hallo aus ASK'));
+    await until('Bei ASK angemeldet', () => shell('document.getElementById("ask-text").textContent').then((t) => t === 'ASK: Lea Test'), 60000);
+    check('Bei (Mock-)ASK angemeldet; Auftrag im Chat führt Befehl im Terminal aus', await chatRoundtrip());
     const extractedAt = created(appDir);
     await closeApp();
     check('Nach Schliessen: keine Python-Prozesse mehr', pythonIn(appDir).length === 0);

@@ -3,7 +3,8 @@
 Aufruf:  python .ask/skills/pruefen.py <datei> [--pdf]
 --pdf:   Word-, Excel- oder PowerPoint-Datei von der App mit Office in PDF umwandeln lassen
          und das PDF ebenfalls prüfen (nur wenn Office auf dem Laptop installiert ist).
-Exitcode 0 = keine Fehler, 1 = Fehler gefunden oder Datei nicht lesbar.
+Exitcode 0 = keine Fehler, 1 = Fehler gefunden oder Datei nicht lesbar,
+2 = Datei in Ordnung, aber die verlangte PDF-Prüfung war nicht möglich.
 """
 import json
 import os
@@ -35,9 +36,20 @@ def pruefe_docx(pfad):
     from docx import Document
     doc = Document(pfad)
     absaetze = doc.paragraphs
-    print(f"Absätze: {len(absaetze)}, Tabellen: {len(doc.tables)}, Abschnitte: {len(doc.sections)}")
+    # Abschnitte direkt im XML zählen: python-docx sieht Abschnittswechsel in Inhaltssteuerelementen
+    # (z. B. im Deckblatt der TF-Bern-Vorlage) nicht und liefert dann zu wenige doc.sections.
+    with zipfile.ZipFile(pfad) as z:
+        xml = z.read("word/document.xml").decode("utf-8", "ignore")
+        teile = [n for n in z.namelist() if re.match(r"word/_rels/(header|footer)\d*\.xml\.rels$", n)]
+        kopf_bilder = sum(z.read(n).decode("utf-8", "ignore").count("/image\"") for n in teile)
+    abschnitte = len(re.findall(r"<w:sectPr[ >]", xml))
+    print(f"Absätze: {len(absaetze)}, Tabellen: {len(doc.tables)}, Abschnitte: {abschnitte}")
+    if abschnitte > len(doc.sections):
+        warn(f"{abschnitte - len(doc.sections)} Abschnittswechsel stecken in Inhaltssteuerelementen (z. B. Deckblatt). "
+             "doc.sections und section.header erreichen diese Abschnitte nicht; ihre Kopf- und Fusszeilen über "
+             "doc.element.body.iter(qn('w:sectPr')) und die Beziehungen suchen.")
     bilder = sum(1 for r in doc.part.rels.values() if "image" in r.reltype)
-    print(f"Bilder: {bilder}")
+    print(f"Bilder: {bilder} im Text, {kopf_bilder} in Kopf- und Fusszeilen")
     s = doc.sections[0]
     if s.page_width:
         print(f"Seite: {s.page_width.cm:.1f} × {s.page_height.cm:.1f} cm, Ränder links/rechts "
@@ -109,8 +121,13 @@ def pruefe_xlsx(pfad):
             print(f"  Formeln: {formeln}")
         for nr, zeile in enumerate(ws.iter_rows(min_row=1, max_row=min(ws.max_row, 5), values_only=True), 1):
             print(f"  Zeile {nr}: {kurz(' | '.join('' if v is None else str(v) for v in zeile), 160)}")
-        if ws.max_row > 1 and ws.cell(1, 1).font is not None and not ws.cell(1, 1).font.bold:
-            warn(f"Blatt «{ws.title}»: Kopfzeile ist nicht fett.")
+        # Kopfzeile ist die erste nicht leere Zeile (Vorlagen beginnen oft mit Titel- oder Leerzeilen)
+        kopf = next((zeile for zeile in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 30))
+                     if any(z.value not in (None, "") for z in zeile)), None)
+        if kopf and ws.max_row > kopf[0].row:
+            erste = next(z for z in kopf if z.value not in (None, ""))
+            if erste.font is not None and not erste.font.bold:
+                warn(f"Blatt «{ws.title}»: Kopfzeile (Zeile {erste.row}) ist nicht fett.")
     if formeln_ohne_wert:
         print(f"Hinweis: {formeln_ohne_wert} Formeln haben noch keinen berechneten Wert. Excel berechnet sie beim "
               "Öffnen. Kontrollwerte in Python ausrechnen oder mit --pdf von Excel berechnen lassen.")
@@ -252,11 +269,21 @@ def als_pdf(pfad):
         if nok.exists():
             grund = nok.read_text(encoding="utf-8").strip()
             nok.unlink(missing_ok=True)
-            warn(f"PDF-Umwandlung nicht möglich: {grund}")
+            pdf_fehlt(grund)
             return None
         time.sleep(0.5)
-    warn("PDF-Umwandlung: keine Antwort der App (läuft ASK Desktop?).")
+    pdf_fehlt("keine Antwort der App")
     return None
+
+
+pdf_nicht_geprueft = []
+
+
+def pdf_fehlt(grund):
+    pdf_nicht_geprueft.append(grund)
+    warn(f"PDF-Prüfung NICHT durchgeführt ({grund}). Seitenzahl, Seitenumbrüche und Inhaltsverzeichnis sind "
+         "nicht geprüft. Nicht wiederholen und nicht selbst Word starten: am Schluss der Person sagen, dass sie "
+         "das Dokument in Word ansehen soll.")
 
 
 def main():
@@ -293,7 +320,8 @@ def main():
         print(f"WARNUNG: {w}")
     if not fehler and not warnungen:
         print("Keine Auffälligkeiten.")
-    return 1 if fehler else 0
+    # 2: Datei in Ordnung, aber die verlangte PDF-Prüfung fehlt (nicht mit «bestanden» verwechseln)
+    return 1 if fehler else 2 if pdf_nicht_geprueft else 0
 
 
 if __name__ == "__main__":

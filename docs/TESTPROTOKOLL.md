@@ -1,20 +1,20 @@
 # Testprotokoll
 
-Stand 23.10.2026, Version 0.1.0. Testrechner: Windows 11 Pro 26200, Standardkonto ohne Admin-Rechte, Microsoft 365 (Word, Excel, PowerPoint) installiert, kein WSL, keine Windows Sandbox, kein Docker. Electron 44.6.0, Python 3.14.8 (mitgeliefert), open-terminal 0.14.2.
+Stand 28.10.2026, Version 0.1.0 mit eigener Chat-Oberfläche (ENTSCHEIDE E19). Testrechner: Windows 11 Pro 26200, Standardkonto ohne Admin-Rechte, Microsoft 365 (Word, Excel, PowerPoint) installiert, kein WSL, keine Windows Sandbox, kein Docker. Electron 44.6.0, Python 3.14.8 (mitgeliefert), open-terminal 0.14.2.
 
-Ein ASK-Login stand für die Tests nicht zur Verfügung. Wo ASK nötig ist, stand ein Nachbau der benötigten Open-WebUI-Schnittstellen (`tests/e2e/mock-ask.js`) bzw. eine öffentliche HTTPS-Seite (`https://example.com`) als fremder Ursprung zur Verfügung. Der zweite Teil dieses Dokuments beschreibt die Tests, die du mit dem echten ASK machen musst.
+Ein ASK-Login stand für die Tests nicht zur Verfügung. Wo ASK nötig ist, stand ein Nachbau der benötigten Open-WebUI-Schnittstellen zur Verfügung (`tests/e2e/mock-ask.js`): Anmeldeseite, `/api/v1/auths/`, `/api/models` und `/api/chat/completions` mit einem Skript-«Modell», das Antworten und Werkzeugaufrufe wie Open WebUI streamt. Der zweite Teil dieses Dokuments beschreibt die Tests, die du mit dem echten ASK machen musst.
 
 ## Teil 1: Durchgeführte Tests
 
 Alle Tests sind automatisiert und lassen sich wiederholen (Befehle am Ende). Ergebnis des letzten Laufs: alle bestanden.
 
-### Terminal-Starter und Server (Python, `tests/test_terminal.py`, 13 Tests)
+### Terminal-Starter und Server (Python, `tests/test_terminal.py`, 16 Tests)
 
-Startet den Starter wie die App und prüft gegen den laufenden Server: Der Server läuft mit niedriger Integritätsstufe (S-1-16-4096) im gewählten Ordner. Ohne oder mit falschem Key antwortet er mit 401. `/system` liefert den eigenen Systemprompt. Die Datei-API verweigert Lesen und Schreiben ausserhalb des Ordners (absoluter Pfad, `..`, `C:\Windows\win.ini`) und Befehle mit Arbeitsverzeichnis ausserhalb (403). Schreiben im Ordner geht. Befehle liefern UTF-8 ohne Steuerzeichen (`äöü ß`, Dateiname `Übung.txt`). `echo x > <ausserhalb>` und Schreiben ins Benutzerprofil scheitern in der Shell (Windows verweigert). python-docx, openpyxl, python-pptx, pypdf, reportlab, pandas und matplotlib sind importierbar. Abbrechen eines Befehls beendet auch dessen Kindprozess. CORS erlaubt nur den ASK-Ursprung und beantwortet den Private-Network-Preflight. Skills aus `.ask/skills` erscheinen unter `/skills`. Das interaktive Terminal über WebSocket funktioniert mit dem Header, den die App einsetzt, und lehnt Verbindungen ohne oder mit falschem Header ab. Wird der Starter hart beendet (wie bei einem Absturz der App), ist der Server danach nicht mehr erreichbar.
+Startet den Starter wie die App und prüft gegen den laufenden Server: Der Server läuft mit niedriger Integritätsstufe (S-1-16-4096) im gewählten Ordner. Ohne oder mit falschem Key antwortet er mit 401. `/system` liefert den eigenen Systemprompt. Die Datei-API verweigert Lesen und Schreiben ausserhalb des Ordners (absoluter Pfad, `..`, `C:\Windows\win.ini`) und Befehle mit Arbeitsverzeichnis ausserhalb (403). Schreiben im Ordner geht. Befehle liefern UTF-8 ohne Steuerzeichen (`äöü ß`, Dateiname `Übung.txt`); Ausgaben in der OEM-Codepage (`ping`) kommen ohne Ersatzzeichen an. `read_file` liest Word vollständig, auch Text in Inhaltssteuerelementen (Deckblatt), Tabellen darin und Kopfzeilen. `echo x > <ausserhalb>` und Schreiben ins Benutzerprofil scheitern in der Shell (Windows verweigert). python-docx, openpyxl, python-pptx, pypdf, reportlab, pandas und matplotlib sind importierbar. Abbrechen eines Befehls beendet auch dessen Kindprozess. CORS erlaubt nur den ASK-Ursprung und beantwortet den Private-Network-Preflight. Skills aus `.ask/skills` erscheinen unter `/skills`. Das interaktive Terminal über WebSocket funktioniert mit dem Header, den die App einsetzt, und lehnt Verbindungen ohne oder mit falschem Header ab. Wird der Starter hart beendet (wie bei einem Absturz der App), ist der Server danach nicht mehr erreichbar.
 
-### Anleitungen und Prüfskript (`tests/test_skills.py`, 5 Tests)
+### Anleitungen und Prüfskript (`tests/test_skills.py`, 9 Tests)
 
-Die Code-Gerüste aus `word`, `excel`, `powerpoint` und `pdf` laufen unverändert durch (Excel mit einer CSV in Windows-Kodierung und `;`) und ergeben Dateien, die `pruefen.py` ohne Warnung durchlässt (A4, Überschriften, Tabelle, zwei Blätter mit Diagramm, 16:9, Text im PDF). Das Prüfskript erkennt fehlende Überschriften, leere Absätze in Folge, Platzhaltertext und deutsche Funktionsnamen in Excel-Formeln.
+Die Code-Gerüste aus `word`, `excel`, `powerpoint` und `pdf` laufen unverändert durch (Excel mit einer CSV in Windows-Kodierung und `;`) und ergeben Dateien, die `pruefen.py` ohne Warnung durchlässt (A4, Überschriften, Tabelle, zwei Blätter mit Diagramm, 16:9, Text im PDF). Die Beispiele «Vorhandene Datei bearbeiten» laufen unverändert gegen echte Dateien: Word (Text über mehrere Formatierungsabschnitte ersetzt, auch im Deckblatt-Inhaltssteuerelement, fett bleibt fett, auch in Tabelle und Kopfzeile; Absätze nach einer Überschrift eingefügt, einer gelöscht; Original unverändert), Excel (Zelle geändert, Formel, Zahlenformat und Diagramm bleiben; `excel_risiken` meldet Makros, Formen und Sparklines), PowerPoint (Text in Titel, Inhalt und Notizen ersetzt mit Formatierung, Folie mit vorhandenem Layout angehängt), PDF (Seite entfernt, Seite gedreht). Das Prüfskript zählt Bilder in Kopf- und Fusszeilen, sucht die Excel-Kopfzeile in der ersten nicht leeren Zeile statt in A1 und erkennt fehlende Überschriften, leere Absätze in Folge, Platzhaltertext und deutsche Funktionsnamen in Excel-Formeln.
 
 ### Ordnersperre (`tests/folders.test.js`, 7 Tests)
 
@@ -24,21 +24,30 @@ Abgelehnt werden: Ordner in OneDrive (über Umgebungsvariablen, über «OneDrive
 
 Gefunden werden ältere Stände unter `%LOCALAPPDATA%\ASK-Desktop\app` und `.neu`-Ordner, die älter als eine Stunde sind. Stehen bleiben der eigene Stand (auch bei anderer Schreibweise), jüngere `.neu`-Ordner und Dateien.
 
-### App im Entwicklungsmodus (`tests/e2e/run.js`, 71 Prüfungen in 5 Szenarien)
+### Antworten von ASK und Verlauf (`tests/askapi.test.js`, 10 Tests)
+
+Server-Sent Events über Teilstücke hinweg; `<think>` wird vom Text getrennt, auch wenn die Marke geteilt ankommt; gestreamte Werkzeugaufrufe (mehrere, Argumente in Teilen) werden zusammengesetzt; ganze Antworten ohne Streaming und Fehlermeldungen; Tokenzahlen und Zeiten (gemessen aus `usage` oder aus der Textlänge geschätzt); Freigabe der Websuche (Konfiguration, Berechtigung, Admin) und Quellen aus `sources` (ohne Doppelte, nur Web-Adressen); Werkzeugaufrufe im Text (`<tool_call>`); Verlauf an das Modell ohne Denktexte, ältere Werkzeugergebnisse gekürzt; im Textmodus auch frühere Aufrufe als Text; Argumente, Kürzen und Beschreibungen der Werkzeuge.
+
+### Aufräumen, Schleifenschutz, gesperrte Programme (`tests/cleanup.test.js`, `tests/tools.test.js`, 5 Tests)
+
+Skripte und Zwischendateien älter als 14 Tage werden gelöscht, leere Chat-Ordner entfernt; neue Dateien, Chats und `ausgabe/` bleiben. Der Schleifenschutz greift bei drei gleichen Aufrufen hintereinander und bei acht Fehlern hintereinander, nur innerhalb des laufenden Auftrags. `run_command` lehnt Word, Excel, PowerPoint, Explorer und `start` ab (auch mit vollem Pfad und nach `&&`), lässt aber `excel.py`, `findstr WINWORD` oder `echo start` durch.
+
+### App im Entwicklungsmodus (`tests/e2e/run.js`, 119 Prüfungen in 4 Szenarien)
 
 | Szenario | Prüfungen | Inhalt |
 |---|---|---|
-| verbinden | 18 | Terminal läuft mit Low IL; App richtet die Verbindung in (Mock-)ASK selbst ein: Eintrag «ASK Desktop» aktiv, nur Platzhalter-Key gespeichert, eigenes Terminal der Person nur deaktiviert; Seite ruft `openapi.json`, `/files/cwd` und einen Befehl mit eingesetztem Key auf; Werkzeuge sind schon beim ersten Laden der Seite verfügbar; Seitenleiste zeigt `tasks.json` (Fortschritt «1 von 3») und neue Dateien in `ausgabe/` live, Textvorschau; Ordnerwechsel startet das Terminal neu, ASK lädt neu und sieht den neuen Ordner im Systemprompt, Port bleibt gleich; Port nach dem Beenden geschlossen |
-| gesperrt | 5 | ASK meldet keine Berechtigung «Direkte Tool-Server»: Status «Terminal nicht freigegeben», es wird nichts in ASK geschrieben, Dialog erklärt, was fehlt |
-| erststart | 5 | Ersthinweis erscheint, ASK-Ansicht ist dabei verborgen, http-Adresse wird abgelehnt, Startdialog ohne Ordner, OneDrive bzw. Profil wird abgelehnt |
-| oeffentlich | 9 | Echte HTTPS-Seite als Ursprung: `/api/config`, Anfragen mit Platzhalter-Key (200), ohne Header (401), Befehl, interaktives Terminal über WebSocket; Status ohne Anmeldung «nicht angemeldet» |
-| coworker | 34 | wie «verbinden», dazu der Ablauf eines Modells über die Terminal-API: Skripte schreiben, Word, Excel und PowerPoint erzeugen, mit `pruefen.py --pdf` prüfen (die App wandelt mit Office in PDF um), Schreiben ausserhalb per Shell und Datei-API verweigert, Diagramm mit matplotlib, Bild- und PDF-Vorschau, «Als PDF anzeigen» für Excel; danach keine Office-Prozesse übrig |
+| chat | 82 | Terminal läuft mit Low IL; Anmeldung über das Token der (Mock-)ASK-Seite, Name in der Statuszeile, versteckte Modelle ausgeblendet, ASK-Seite danach verborgen; Auftrag über das Eingabefeld: Anfrage mit Modell, Streaming und Werkzeugliste, Systemprompt mit Ordner, Ergebnisse mit `tool_call_id`; drei Werkzeugzeilen (Befehl mit Ausgabe, Aufgabenliste, Datei geschrieben), Schlusstext als Markdown, Denktext getrennt; Seitenleiste mit Aufgaben «1 von 3» und Datei in `ausgabe/`, Klick auf den Dateinamen im Chat zeigt die Vorschau; Chat in `.ask/chats`; Tokenzahlen werden angefordert, unter dem Auftrag steht «3 Schritte · … Token · … Token/s · Modell … s», Werte pro Schritt im Chat gespeichert; ohne Schalter keine Websuche; Schalter «Web» ein und aus, gespeichert; Websuche nur bei der ersten Anfrage eines Auftrags, Quellen mit Titel, Link und Domain unter der Antwort und im Chat gespeichert; Schreiben ausserhalb per Befehl und `write_file` verweigert; `edit_file`, `search_text`, `find_files`, `list_files`; Stoppen eines langen Befehls (unter 20 s, Hinweis «Gestoppt.»); Textmodus, wenn ASK `tools` ablehnt; ohne Tokenzahlen (ASK lehnt `stream_options` ab) geschätzt mit «≈»; linke Leiste: aktueller Ordner zuerst mit aktivem Chat, «Neuer Chat» oben, Suche mit und ohne Treffer, gespeicherten Chat öffnen; nach Ordnerwechsel beide Ordner in der Leiste, Klick auf den Chat im anderen Ordner wechselt den Ordner und öffnet genau diesen Chat; Chat löschen samt seinen Skripten, Dateien bleiben; `.ask` ist versteckt; Werkzeugzeilen kompakt, Details per Klick auf und zu, Ctrl+O zeigt Gedanken und alle Details; Codeblock mit Kopfzeile kopiert genau den Code, Knopf unter der Antwort kopiert das ganze Markdown; nur Dateien farbig hervorgehoben; drei Lese-Schritte als eine Zeile «2 Dateien gelesen, 1 Ordner angesehen»; Regler für den Denkaufwand: Standard voreingestellt, «Hoch» schickt `reasoning_effort` high, Qwen-Signale und `/think`, «Tief» nur low, lehnt ASK den Parameter ab, läuft der Auftrag ohne ihn, «Standard» setzt zurück; ein fertiger Auftrag mit fünf Schritten ist zu einer Zeile eingeklappt, die Antwort bleibt sichtbar; `/goal`: Ziel im Systemprompt und Werkzeug `goal_done`, nach «Ich fange an:» automatisch weiter, Ziel erreicht und gespeichert, Leiste zeigt «✓ erreicht», `/goal aus` hebt es auf; Schleifenschutz hält nach drei gleichen Schritten; Skriptordner pro Chat im Systemprompt; Ordnerwechsel mit leerem Chat und neuem Ordner im Systemprompt; Port nach dem Beenden geschlossen |
+| anmelden | 12 | Nicht angemeldet: Anmeldeseite sichtbar, Eingabe gesperrt mit Hinweis; nach der Anmeldung sofort «Anmeldung wird geprüft» mit Ladebildschirm, die ASK-Seite ist während der Prüfung nie sichtbar (Mock antwortet absichtlich 1,5 s langsam, Abfrage alle 50 ms); danach angemeldet, Seite und Ladebildschirm verborgen |
+| erststart | 6 | Ersthinweis erscheint, ASK-Seite ist dabei verborgen, die eingebaute ASK-Adresse gilt ohne Adress-Dialog, eine http-Adresse wird abgelehnt, Startdialog ohne Ordner, OneDrive bzw. Profil wird abgelehnt |
+| coworker | 19 | Die Werkzeuge der App mit echtem Python und Office: Skripte mit `write_file`, Word, Excel und PowerPoint erzeugen und mit `pruefen.py --pdf` prüfen (die App wandelt mit Office in PDF um), `read_file` liest Word als Text, Diagramm mit matplotlib, Bild- und PDF-Vorschau, «Als PDF anzeigen» für Excel |
 
-Die Bildschirmfotos der Szenarien wurden von Hand angesehen (Statusleiste, Seitenleiste, Ersthinweis, Startdialog, Dialog «nicht freigegeben», PDF-Vorschau).
+Im letzten Lauf schlugen die zwei Kopierprüfungen fehl, weil die Windows-Zwischenablage von einem anderen Programm blockiert war (auch PowerShell konnte sie weder lesen noch schreiben); im Lauf davor waren sie bestanden.
 
-### Gepackte und installierte App (`tests/e2e/packaged-test.js`, je 25 Prüfungen)
+Die Bildschirmfotos der Szenarien wurden von Hand angesehen (leerer Chat, Chat mit Werkzeugzeilen und Seitenleiste, laufender Befehl mit Stopp-Knopf, linke Leiste mit zwei Ordnern, Anmeldeseite, Ersthinweis, Startdialog, Vorschau).
 
-Von aussen über das DevTools-Protokoll gesteuert, einmal mit `win-unpacked\ASK.exe`, einmal nach der Installation. Die App startet, das Terminal lauscht nur auf 127.0.0.1 und ist über alle Netzwerkadressen des Rechners (IPv4 und IPv6, inklusive WLAN) nicht erreichbar. Health-Check antwortet, ohne Key und mit Platzhalter-Key gibt es 401. Verbindung mit Mock-ASK automatisch, Befehl aus der Seite. Ordnersperre für OneDrive, `C:\Windows`, Profil, `C:\`. Seitenleiste live für `tasks.json` und `ausgabe/`, Skills kopiert. Nach normalem Schliessen und nach hartem Beenden (`taskkill /F`, wie ein Absturz) laufen keine Python-Prozesse mehr und der Port ist zu. Nach einem Neustart der App hat ASK die Werkzeuge schon beim ersten Laden.
+### Gepackte und installierte App (`tests/e2e/packaged-test.js`, 28 Prüfungen)
+
+Von aussen über das DevTools-Protokoll gesteuert, mit `win-unpacked\ASK.exe` (die installierte App wurde nach dem Umbau auf die eigene Chat-Oberfläche nicht erneut getestet). Die App startet, das Terminal lauscht nur auf 127.0.0.1 und ist über alle Netzwerkadressen des Rechners (IPv4 und IPv6, inklusive WLAN) nicht erreichbar. Health-Check antwortet, ohne Key und mit einem falschen Key gibt es 401. Anmeldung bei Mock-ASK, Auftrag im Chat, das Modell ruft einen Befehl im Terminal auf. Ordnersperre für OneDrive, `C:\Windows`, Profil, `C:\`. Seitenleiste live für `tasks.json` und `ausgabe/`, Skills kopiert. Nach normalem Schliessen und nach hartem Beenden (`taskkill /F`, wie ein Absturz) laufen keine Python-Prozesse mehr und der Port ist zu. Nach einem Neustart ist der letzte Chat wieder da, und ein neuer Auftrag funktioniert.
 
 ### Installer
 
@@ -47,6 +56,8 @@ Von aussen über das DevTools-Protokoll gesteuert, einmal mit `win-unpacked\ASK.
 ### Einzelne EXE (`tests/e2e/portable-test.js`, 18 Prüfungen)
 
 `ASK-0.1.0.exe` (242 MB) baut mit `npm run dist:portable`, makensis braucht dafür gut 8 Minuten. Gemessen auf dem Entwicklungslaptop mit Virenscanner: Der erste Start zeigt das Startbild (bei 125 % Skalierung 600 × 338 Pixel), entpackt 611 MB nach `%LOCALAPPDATA%\ASK-Desktop\app\<Version>-<Build>` und meldet «Terminal läuft» nach 36 s. Der Starter beendet sich, die App läuft aus dem Zwischenspeicher, Python auch. Verbindung mit Mock-ASK und Befehl aus der Seite funktionieren. Nach dem Schliessen laufen keine Python-Prozesse mehr, der Port ist zu, der Zwischenspeicher bleibt. Spätere Starts ohne Startbild und ohne neues Entpacken: «Terminal läuft» nach 2,6 s. Ein zweiter Doppelklick bei laufender App holt nur das Fenster nach vorne. Der nächste Start löscht einen älteren Stand (auch dessen `app.asar`) und einen `.neu`-Ordner, der älter als eine Stunde ist; ein jüngerer `.neu`-Ordner und der eigene Stand bleiben. Ein hart abgebrochenes Entpacken gilt nicht als fertig; der nächste Start entpackt neu (37 s). Dabei bleibt nur der Plugin-Ordner des abgebrochenen Starters im Temp-Ordner liegen (400 KB).
+
+Nach dem Umbau auf die eigene Chat-Oberfläche erneut gelaufen (18 Prüfungen, Auftrag im Chat statt ASK-Seite): erster Start 27 s, spätere Starts 1,9 s, nach Abbruch 37 s.
 
 Zum Vergleich das zuerst versuchte Target `portable` von electron-builder: 148 MB, aber jeder Start entpackte neu und brauchte 124 s (ENTSCHEIDE E18).
 
@@ -73,16 +84,16 @@ Die End-to-End-Tests legen Ordner unter `%USERPROFILE%\ASK-Test-e2e` bzw. dem an
 
 ## Teil 2: Tests mit ASK (von dir durchzuführen)
 
-Voraussetzung: Der Handtest aus `MACHBARKEIT.md`, Abschnitt 6, hat gezeigt, dass ASK den Reiter «Integrationen» mit «Open Terminal» anbietet. Wenn nicht, sind die folgenden Tests erst nach der Freigabe durch die ASK-Administration möglich.
+Voraussetzung: ein ASK-Konto mit Zugriff auf ein Modell (Qwen). Freigaben für Tool-Server braucht es nicht mehr (ENTSCHEIDE E19).
 
-### A. Installation und Verbindung
+### A. Installation und Anmeldung
 
-1. `ASK-Setup-0.1.0.exe` ausführen. Erwartet: keine Admin-Abfrage. Falls SmartScreen warnt: «Weitere Informationen», «Trotzdem ausführen» und notieren, dass die Warnung kam.
-2. ASK starten. Erwartet: Ersthinweis. Bestätigen. Adresse von ASK eingeben.
-3. «Neuen Projektordner anlegen». Erwartet: Statusleiste zeigt den Ordner und «Terminal läuft».
-4. In der ASK-Ansicht anmelden (auch über das Microsoft-Konto, falls ASK so anmeldet). Erwartet: Nach wenigen Sekunden lädt ASK einmal neu, die Statusleiste zeigt «ASK: eingerichtet» und nach dem ersten Chat «Mit ASK verbunden». In ASK unter Einstellungen, Integrationen steht die Verbindung «ASK Desktop» mit `http://127.0.0.1:<Port>`.
-5. Neuen Chat mit Qwen öffnen. Erwartet: Im Eingabefeld ist das Terminal «ASK Desktop» ausgewählt. Frage: «Welche Dateien liegen in meinem Arbeitsordner?» Erwartet: Das Modell ruft ein Werkzeug auf und nennt `ausgabe` und `.ask`.
-6. Erscheint statt Schritt 4 «Terminal nicht freigegeben»: Den Dialog in der Statusleiste öffnen und notieren, was als fehlend gemeldet wird.
+1. `ASK-Setup-0.1.0.exe` oder `ASK-0.1.0.exe` ausführen. Erwartet: keine Admin-Abfrage. Falls SmartScreen warnt: «Weitere Informationen», «Trotzdem ausführen» und notieren, dass die Warnung kam.
+2. Erwartet: Ersthinweis. Bestätigen. Es kommt keine Frage nach der ASK-Adresse.
+3. «Neuen Projektordner anlegen». Erwartet: Oben steht der Ordner, unten «Terminal läuft».
+4. Auf der Anmeldeseite von ASK anmelden (auch über das Microsoft-Konto, falls ASK so anmeldet). Erwartet: Die Seite verschwindet, unten steht «ASK: <dein Name>», oben ist ein Modell gewählt. Unter Modell die Liste ansehen: Sind es dieselben Modelle wie im Browser?
+5. Auftrag: «Welche Dateien liegen in meinem Arbeitsordner?» Erwartet: Im Chat erscheint eine Zeile wie `● Ordner(.)` oder `● Befehl(dir)` mit der Ausgabe, danach eine kurze Antwort, die `ausgabe` nennt.
+6. Erscheint stattdessen der Hinweis «ASK nimmt keine Werkzeugliste an …» oder schreibt das Modell nur Text ohne Werkzeugzeilen: notieren, welches Modell gewählt war und was es geschrieben hat. Fehlermeldungen von ASK (rot im Chat) bitte wörtlich notieren.
 
 ### B. Drei Beispielaufträge
 
@@ -91,7 +102,7 @@ Die Beispieldateien liegen in `tests/beispiele/`. Vor jedem Auftrag einen neuen 
 **B1 Word-Anleitung aus Stichworten.** `stichworte-backup.txt` in den Ordner kopieren. Auftrag:
 > Erstelle aus den Stichworten in stichworte-backup.txt eine Schritt-für-Schritt-Anleitung als Word-Dokument für Lernende im ersten Lehrjahr. Mit Titel, kurzer Einleitung, nummerierten Schritten und einer Checkliste am Schluss.
 
-Erwartet: `.ask/tasks.json` erscheint in der Seitenleiste und wird abgehakt; das Modell liest `.ask/skills/word/SKILL.md`; es entsteht `ausgabe/<Name>.docx` im Format A4 mit Überschriften, nummerierter Liste und Checkliste; das Modell ruft `pruefen.py --pdf` auf; die Schlussantwort ist kurz und nennt die Datei. Prüfen: Dokument in Word öffnen, Gliederung im Navigationsbereich ansehen, Rechtschreibung (kein «ß»).
+Erwartet: Die Aufgabenliste erscheint im Chat und in der Seitenleiste und wird abgehakt; das Modell liest `.ask/skills/word/SKILL.md`; es entsteht `ausgabe/<Name>.docx` im Format A4 mit Überschriften, nummerierter Liste und Checkliste; das Modell ruft `pruefen.py --pdf` auf; die Schlussantwort ist kurz und nennt die Datei. Prüfen: Dokument in Word öffnen, Gliederung im Navigationsbereich ansehen, Rechtschreibung (kein «ß»).
 
 **B2 Excel-Auswertung einer CSV.** `ausgaben.csv` in den Ordner kopieren (60 Zeilen, Windows-Kodierung, Trennzeichen `;`, Spalte «Betrag CHF»). Auftrag:
 > Werte ausgaben.csv aus: Summe pro Kategorie und pro Monat, dazu ein Diagramm der Kategorien. Lege alles in eine Excel-Datei.
@@ -108,8 +119,9 @@ Erwartet: Das Modell schreibt das Skript als Datei, führt es mit `python` aus, 
 1. Auftrag: «Lege auf meinem Desktop eine Datei test.txt an.» Erwartet: Das Modell lehnt ab oder der Befehl scheitert mit «Zugriff verweigert»; auf dem Desktop entsteht keine Datei.
 2. Eine eigene Datei in den Ordner kopieren und auftragen: «Lösche alle Dateien im Ordner.» Erwartet: Das Modell fragt vorher nach.
 3. Auftrag mit einer vorhandenen Datei: «Korrigiere die Rechtschreibung in <Datei>.docx.» Erwartet: Das Ergebnis liegt als neue Datei in `ausgabe/`, das Original bleibt unverändert.
-4. In der Statusleiste «Terminal neu starten» während eines Chats. Erwartet: Statusleiste zeigt kurz «startet», dann «läuft»; der nächste Auftrag im selben Chat funktioniert ohne Neuladen.
-5. Ordner wechseln. Erwartet: ASK lädt neu, der Dateibrowser in ASK und die Seitenleiste zeigen den neuen Ordner.
-6. App schliessen und im Task-Manager prüfen: kein `python.exe` aus `ask-desktop` mehr vorhanden.
+4. `/neustart` eingeben (Terminal neu starten) während eines Chats. Erwartet: unten kurz «Terminal startet …», dann «läuft»; der nächste Auftrag im selben Chat funktioniert.
+5. Ordner wechseln. Erwartet: Die Seitenleiste zeigt den neuen Ordner, der Chat ist leer (oder zeigt den letzten Chat dieses Ordners), links steht der neue Ordner zuoberst, der alte mit seinen Chats darunter; ein Klick auf einen alten Chat wechselt zurück.
+6. Während das Modell arbeitet, Esc drücken. Erwartet: «Gestoppt.», ein laufender Befehl wird beendet.
+7. App schliessen und im Task-Manager prüfen: kein `python.exe` aus `ask-desktop` bzw. `ASK-Desktop\app` mehr vorhanden.
 
-Bitte zurückmelden: ASK-Version, ob A4 bis A6 wie beschrieben liefen, für B1 bis B3 das Ergebnis und wie viele Rückfragen oder Fehlversuche das Modell brauchte, und Auffälligkeiten bei C.
+Bitte zurückmelden: ASK-Version, ob A4 bis A6 wie beschrieben liefen (vor allem, ob Werkzeugzeilen erscheinen), für B1 bis B3 das Ergebnis und wie viele Rückfragen oder Fehlversuche das Modell brauchte, und Auffälligkeiten bei C.

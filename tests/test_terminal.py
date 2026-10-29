@@ -126,6 +126,25 @@ class TerminalTest(unittest.TestCase):
     def output(self, body):
         return "".join(entry.get("data", "") for entry in body.get("output", []))
 
+    def test_read_docx_with_content_controls(self):
+        # Deckblatt der TF-Bern-Vorlage: Text in <w:sdt>; dazu Kopfzeile und Tabelle
+        from docx import Document
+        from docx.oxml import parse_xml
+        doc = Document()
+        doc.sections[0].header.paragraphs[0].text = "Kopf mit Logo"
+        sdt = parse_xml(
+            '<w:sdt xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:sdtContent>'
+            '<w:p><w:r><w:t>Deckblatt Titel</w:t></w:r></w:p>'
+            '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name: Kayu</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+            '</w:sdtContent></w:sdt>')
+        doc.element.body.insert(0, sdt)
+        doc.add_paragraph("Haupttext")
+        doc.save(os.path.join(self.workdir, "vorlage.docx"))
+        status, body, _ = self.request("GET", "/files/read?path=vorlage.docx")
+        self.assertEqual(status, 200, body)
+        for text in ("Deckblatt Titel", "Name: Kayu", "Haupttext", "Kopf mit Logo"):
+            self.assertIn(text, body["content"])
+
     def test_execute_utf8_and_cwd(self):
         status, body, _ = self.request("POST", "/execute", {"command": 'python -c "print(\'äöü ß\')" & cd & dir /b'})
         self.assertEqual(status, 200, body)
@@ -135,6 +154,20 @@ class TerminalTest(unittest.TestCase):
         self.assertIn("Übung.txt", text)
         self.assertIn(os.path.basename(self.workdir), text)
         self.assertNotIn("\x1b[", text)
+
+    def test_execute_oem_output(self):
+        # ping schreibt in der OEM-Codepage (deutsches Windows: «Ping wird ausgeführt für …»)
+        status, body, _ = self.request("POST", "/execute?wait=30", {"command": "ping -n 1 127.0.0.1"})
+        self.assertEqual(status, 200, body)
+        text = self.output(body)
+        self.assertNotIn("�", text)
+        self.assertIn("127.0.0.1", text)
+
+    def test_decode_output(self):
+        sys.path.insert(0, os.path.join(ROOT, "python"))
+        from ask_terminal.server import decode_output
+        self.assertEqual(decode_output("ü".encode("utf-8"), "cp850"), "ü")
+        self.assertEqual(decode_output("ausgeführt".encode("cp850"), "cp850"), "ausgeführt")
 
     def test_shell_cannot_write_outside(self):
         target = os.path.join(self.outside, "shell.txt")

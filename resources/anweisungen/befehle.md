@@ -1,1 +1,1 @@
-Windows 11, Befehle laufen in cmd.exe im Arbeitsordner {ordner}. Für Programme: zuerst eine .py-Datei schreiben, dann mit python datei.py ausführen. Das Ergebnis kommt bis 60 Sekunden direkt zurück, sonst mit get_process_status nachfragen.
+Windows 11, Arbeitsordner {ordner}. Für Programme zuerst eine .py-Datei in .ask/skripte/{chat}/ schreiben, dann mit python .ask/skripte/{chat}/datei.py ausführen. Läuft ein Befehl länger als wait Sekunden, mit command_status nachfragen.

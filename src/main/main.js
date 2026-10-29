@@ -1,4 +1,4 @@
-// ASK Desktop: Open WebUI der TF Bern mit lokalem Arbeitsordner und Terminal.
+// ASK Desktop: eigene Chat-Oberfläche für ASK (Open WebUI der TF Bern) mit lokalem Arbeitsordner.
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -7,7 +7,8 @@ const settings = require('./settings');
 const paths = require('./paths');
 const { checkFolder } = require('./folders');
 const { Terminal } = require('./terminal');
-const { Connection, PLACEHOLDER_KEY } = require('./connect');
+const { AskSession, THINKING_LEVELS } = require('./askapi');
+const { Agent, NEW } = require('./agent');
 const { Workspace } = require('./workspace');
 const { AppWindow } = require('./window');
 const { convertToPdf } = require('./office');
@@ -16,6 +17,8 @@ const { cleanupOldVersions } = require('./portable');
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
 if (!app.isPackaged && process.env.ASK_TEST_USER_DATA) app.setPath('userData', process.env.ASK_TEST_USER_DATA);
+// Nur für Tests: Windows zeichnet verdeckte Fenster sonst nicht neu, Bildschirmfotos wären veraltet.
+if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 protocol.registerSchemesAsPrivileged([
   { scheme: 'askfile', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ]);
@@ -26,8 +29,30 @@ if (!singleInstance) {
 }
 
 const terminal = new Terminal();
-const connection = new Connection();
+const ask = new AskSession();
 const workspace = new Workspace();
+const agent = new Agent({
+  ask,
+  terminal,
+  getFolder: () => (terminal.state === 'läuft' ? terminal.folder : settings.get('folder')),
+  getModel: () => currentModel(),
+  getSystemPrompt: (chat) => readInstruction('systemprompt.md', settings.get('folder'), chat) + thinkingSwitch(),
+  getCommandHint: (chat) => readInstruction('befehle.md', settings.get('folder'), chat),
+  getWebSearch: () => !!ask.webSearch && settings.get('webSearch'),
+  getThinking: () => thinkingLevel(),
+});
+
+// Denkaufwand aus den Einstellungen; ältere Werte des früheren Schalters werden übernommen.
+function thinkingLevel() {
+  const value = settings.get('thinking');
+  const old = { normal: 'standard', gruendlich: 'hoch', aus: 'tief' }[value];
+  return old || (THINKING_LEVELS.includes(value) ? value : 'standard');
+}
+
+// Qwen-Schalter für hohen Denkaufwand am Ende des Systemprompts (siehe THINKING_PARAMS in askapi.js)
+function thinkingSwitch() {
+  return ['hoch', 'maximal'].includes(thinkingLevel()) ? '\n\n/think' : '';
+}
 let appWindow = null;
 let quitting = false;
 
@@ -36,10 +61,10 @@ const TEXT_EXT = new Set(['.txt', '.md', '.csv', '.json', '.py', '.js', '.html',
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const OFFICE_EXT = new Set(['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.odt', '.ods', '.odp']);
 
-function readInstruction(name, folder) {
+function readInstruction(name, folder, chat = 'allgemein') {
   try {
     const text = fs.readFileSync(path.join(paths.instructionsDir(), name), 'utf8');
-    return text.replaceAll('{ordner}', folder).replaceAll('{ordnername}', path.basename(folder));
+    return text.replaceAll('{ordner}', folder).replaceAll('{ordnername}', path.basename(folder)).replaceAll('{chat}', chat);
   } catch {
     return '';
   }
@@ -53,15 +78,48 @@ function state() {
     recent: s.recent,
     warningAccepted: s.warningAccepted,
     sidebarOpen: s.sidebarOpen,
-    autoConnect: s.autoConnect,
+    chatbarOpen: s.chatbarOpen,
     terminal: terminal.snapshot(),
-    ask: connection.status,
-    placeholderKey: PLACEHOLDER_KEY,
+    ask: ask.status,
+    models: ask.models,
+    model: currentModel(),
+    webSearch: !!s.webSearch,
+    thinking: thinkingLevel(),
+    webSearchAvailable: !!ask.webSearch,
+    chat: agent.state(),
   };
+}
+
+function currentModel() {
+  const wanted = settings.get('model');
+  if (ask.models.some((m) => m.id === wanted)) return wanted;
+  return ask.models[0]?.id || wanted || '';
 }
 
 function pushState() {
   appWindow?.send('state', state());
+}
+
+const sameFolder = (a, b) => !!a && !!b && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+
+// Linke Leiste: Chats der zuletzt verwendeten Ordner, der aktuelle zuerst.
+function chatGroups() {
+  const { folder, recent } = settings.load();
+  const folders = [folder, ...recent.filter((f) => !sameFolder(f, folder))].filter((f) => f && fs.existsSync(f));
+  return folders.map((f) => ({ folder: f, name: path.basename(f), current: sameFolder(f, folder), chats: agent.list(f) }));
+}
+
+// Chat (id oder NEW) in einem Ordner öffnen; bei anderem Ordner zuerst wechseln.
+let pendingChat = null;
+async function openChat(folder, id) {
+  if (agent.running) return { ok: false, reason: 'Das Modell arbeitet noch. Zuerst stoppen.' };
+  if (sameFolder(folder, settings.get('folder')) && terminal.state === 'läuft') {
+    return { ok: id === NEW ? agent.newChat() : agent.open(id) };
+  }
+  pendingChat = id;
+  const res = await openFolder(folder);
+  if (!res.ok) pendingChat = null;
+  return res;
 }
 
 async function openFolder(folder) {
@@ -185,18 +243,53 @@ function setupIpc() {
     }
     if (parsed.protocol !== 'https:') return { ok: false, reason: 'Die Adresse muss mit https:// beginnen.' };
     settings.set({ askUrl: parsed.origin + parsed.pathname.replace(/\/$/, '') });
-    if (askLoaded) appWindow.loadAsk(settings.get('askUrl'));
-    else if (!settings.get('folder')) loadAskOnce();
+    loadAsk();
     startTerminal();
     pushState();
     return { ok: true };
   });
-  ipcMain.handle('ask:connect', () => connection.check(true));
+  ipcMain.handle('ask:connect', () => ask.check(true));
+  ipcMain.handle('ask:logout', () => ask.logout());
+  ipcMain.handle('ask:models', async () => {
+    try { await ask.loadModels(); } catch { /* Status zeigt den Fehler */ }
+    pushState();
+    return ask.models;
+  });
+  ipcMain.handle('thinking:set', (_e, level) => {
+    settings.set({ thinking: THINKING_LEVELS.includes(level) ? level : 'standard' });
+    pushState();
+  });
+  ipcMain.handle('web:set', (_e, on) => {
+    settings.set({ webSearch: !!on });
+    pushState();
+  });
+  ipcMain.handle('model:set', (_e, id) => {
+    settings.set({ model: String(id) });
+    pushState();
+  });
+  ipcMain.handle('chat:send', (_e, text) => { agent.send(text); });
+  ipcMain.handle('chat:stop', () => agent.stop());
+  ipcMain.handle('chat:goal', (_e, text) => agent.setGoal(text));
+  ipcMain.handle('chat:new', (_e, folder) => openChat(folder || settings.get('folder'), NEW));
+  ipcMain.handle('chat:groups', () => chatGroups());
+  ipcMain.handle('chat:open', (_e, folder, id) => openChat(folder, id));
+  ipcMain.handle('chat:delete', async (_e, folder, id, title) => {
+    const res = await dialog.showMessageBox(appWindow.win, {
+      type: 'question', buttons: ['Löschen', 'Abbrechen'], defaultId: 1, cancelId: 1,
+      message: 'Chat löschen?', detail: `«${title}» wird aus ${folder} entfernt. Die Dateien im Ordner bleiben.`,
+    });
+    return res.response === 0 && agent.remove(folder, id);
+  });
+  ipcMain.handle('chat:transcript', () => ({ ...agent.state(), items: agent.transcript() }));
   ipcMain.handle('ask:reload', () => {
     const wc = appWindow.view.webContents;
     const url = settings.get('askUrl');
     if (url && !wc.getURL().startsWith(new URL(url).origin)) wc.loadURL(url);
     else wc.reload();
+  });
+  ipcMain.handle('ui:chatbar', (_e, open) => {
+    settings.set({ chatbarOpen: !!open });
+    pushState();
   });
   ipcMain.handle('ui:sidebar', (_e, open) => {
     settings.set({ sidebarOpen: !!open });
@@ -205,6 +298,9 @@ function setupIpc() {
   ipcMain.on('ui:ask-bounds', (_e, bounds) => appWindow.setAskBounds(bounds));
   ipcMain.on('ui:ask-visible', (_e, visible) => appWindow.setAskVisible(visible));
   ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
+  ipcMain.handle('link:open', (_e, url) => {
+    if (/^https?:\/\//i.test(String(url))) shell.openExternal(String(url));
+  });
   ipcMain.handle('workspace:files', () => workspace.files());
   ipcMain.handle('workspace:tasks', () => workspace.tasks());
   ipcMain.handle('file:preview', (_e, rel) => {
@@ -243,34 +339,32 @@ function setupProtocol() {
   });
 }
 
-// ASK holt Werkzeuge und Systemprompt des Terminals nur beim Laden der Seite. Darum wird ASK erst
-// geladen, wenn das Terminal läuft, und nach einem Ordnerwechsel neu geladen (der Pfad steht im Prompt).
-let askLoadedFolder = null;
-let askLoaded = false;
-
-function loadAskOnce() {
-  if (askLoaded || !settings.get('askUrl') || !appWindow) return;
-  askLoaded = true;
-  appWindow.loadAsk(settings.get('askUrl'));
+// Die ASK-Seite dient nur noch der Anmeldung; die App liest danach das Token (askapi.js).
+function loadAsk() {
+  const url = settings.get('askUrl');
+  if (!url || !appWindow) return;
+  ask.setBase(url);
+  appWindow.loadAsk(url);
 }
 
+let chatFolder = null;
+
 function wireEvents() {
-  terminal.on('port', (port) => {
-    settings.set({ port });
-    appWindow.setTerminal(port, terminal.key);
-  });
+  terminal.on('port', (port) => settings.set({ port }));
   terminal.on('state', (snap) => {
-    if (snap.state === 'läuft') {
-      connection.setTerminal(terminal.url(), settings.get('autoConnect'));
-      if (!askLoaded) loadAskOnce();
-      else if (askLoadedFolder !== null && askLoadedFolder !== snap.folder) appWindow.view.webContents.reload();
-      askLoadedFolder = snap.folder;
-    } else if (snap.state === 'fehler') {
-      loadAskOnce();
+    if (snap.state === 'läuft' && snap.folder !== chatFolder) {
+      chatFolder = snap.folder;
+      agent.openLatest(pendingChat);
+      pendingChat = null;
     }
     pushState();
   });
-  connection.on('status', () => pushState());
+  ask.on('status', () => pushState());
+  agent.on('event', (ev) => appWindow?.send('chat:event', ev));
+  agent.on('changed', () => {
+    appWindow?.send('chat:changed', agent.state());
+    pushState();
+  });
   workspace.on('auftrag', (file) => handleOrder(file));
   workspace.on('files', (files) => appWindow?.send('files', files));
   workspace.on('tasks', (tasks) => appWindow?.send('tasks', tasks));
@@ -286,26 +380,23 @@ app.on('second-instance', () => {
 app.whenReady().then(() => {
   setupProtocol();
   setupIpc();
-  appWindow = new AppWindow({ onAskRequest: () => connection.markSeen() });
-  connection.attach(appWindow.view, () => appWindow.askOrigin);
+  appWindow = new AppWindow();
+  ask.attach(appWindow.view);
   wireEvents();
+  loadAsk();
   const s = settings.load();
   if (s.folder && s.askUrl) {
     openFolder(s.folder).then((res) => {
       if (!res.ok) {
         settings.set({ folder: '' });
-        loadAskOnce();
         pushState();
       }
     });
-    setTimeout(loadAskOnce, 20000); // falls das Terminal gar nicht startet
-  } else {
-    loadAskOnce();
   }
   appWindow.win.on('closed', () => { appWindow = null; });
   if (singleInstance) cleanupOldVersions();
   if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) {
-    require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, connection, workspace, settings, openFolder, pushState });
+    require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, ask, agent, workspace, settings, openFolder, pushState });
   }
 });
 
@@ -313,6 +404,7 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
+  agent.stop();
   workspace.close();
   terminal.stop().finally(() => app.quit());
 });

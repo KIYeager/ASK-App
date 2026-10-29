@@ -13,7 +13,10 @@ const defaults = {
   port: 0,
   warningAccepted: false,
   sidebarOpen: true,
-  autoConnect: true,
+  chatbarOpen: true,
+  model: '',
+  webSearch: false,
+  thinking: 'standard',
 };
 
 let data = null;

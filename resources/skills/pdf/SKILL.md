@@ -4,7 +4,7 @@ description: PDF-Dateien mit reportlab erstellen und mit pypdf lesen, zusammenf�
 ---
 # PDF erstellen oder bearbeiten
 
-Werkzeuge: reportlab (erstellen), pypdf (lesen, zusammenfügen, teilen). Immer zuerst ein Skript schreiben, dann mit `python skript.py` ausführen.
+Werkzeuge: reportlab (erstellen), pypdf (lesen, zusammenfügen, teilen). Immer zuerst ein Skript schreiben (z. B. `.ask/skripte/merkblatt.py`), dann mit `python .ask/skripte/merkblatt.py` ausführen.
 
 ## Welcher Weg?
 - Dokument mit viel Text und Struktur, das auch als Word gebraucht wird: zuerst Word-Datei nach `.ask/skills/word/SKILL.md` bauen, dann mit `python .ask/skills/pruefen.py ausgabe/datei.docx --pdf` umwandeln lassen. Das PDF liegt danach in `.ask/pdf/`; nach `ausgabe/` kopieren.
@@ -14,7 +14,7 @@ Werkzeuge: reportlab (erstellen), pypdf (lesen, zusammenfügen, teilen). Immer z
 ## Regeln
 - Schrift Arial einbinden, damit Umlaute und Sonderzeichen sicher richtig erscheinen.
 - Ränder 2 cm, Titel, Zwischentitel, Absätze und Tabellen über Stile, nicht von Hand positionieren.
-- Speichern unter `ausgabe/`, nie eine bestehende Datei überschreiben.
+- Speichern unter `ausgabe/`. Dateien der Person nie überschreiben. Eigene Ergebnisse in `ausgabe/` bei Änderungswünschen unter demselben Namen neu erzeugen, keine `_V2`.
 
 ## Gerüst (reportlab)
 ```python
@@ -70,6 +70,29 @@ for datei in ["teil1.pdf", "teil2.pdf"]:
         schreiber.add_page(seite)
 schreiber.write("ausgabe/Zusammengefuegt.pdf")
 ```
+
+## Vorhandene Datei bearbeiten
+Den Text eines PDFs kann man nicht sauber ändern; ein PDF ist ein fertiges Druckbild. Möglich mit pypdf: Seiten entfernen, umstellen, drehen, zusammenfügen und Formularfelder ausfüllen.
+```python
+from pypdf import PdfReader, PdfWriter
+
+quelle = "unterlagen.pdf"          # Datei der Person; eigene Datei: "ausgabe/unterlagen.pdf"
+ziel = "ausgabe/unterlagen.pdf"
+leser = PdfReader(quelle)
+print(len(leser.pages), "Seiten")
+schreiber = PdfWriter()
+for nummer, seite in enumerate(leser.pages, start=1):
+    if nummer == 2:                # Seite 2 weglassen
+        continue
+    if nummer == 3:
+        seite.rotate(90)           # Seite 3 drehen
+    schreiber.add_page(seite)
+schreiber.write(ziel)
+print("gespeichert")
+```
+- Formular ausfüllen: `felder = leser.get_fields()` zeigt die Feldnamen; dann `schreiber.append(leser)` und `schreiber.update_page_form_field_values(schreiber.pages[0], {"Name": "Lea Muster"}, auto_regenerate=False)`.
+- Soll sich Text ändern: Gibt es die Vorlage als Word-Datei, diese nach `.ask/skills/word/SKILL.md` bearbeiten und neu in PDF umwandeln. Sonst den Inhalt mit `read_file` lesen und das PDF neu erstellen; der Person sagen, dass Layout und Schrift dabei vom Original abweichen.
+- Hast du das PDF selbst mit reportlab erstellt: das Skript in `.ask/skripte/` anpassen und neu ausführen.
 
 ## Prüfen
 `python .ask/skills/pruefen.py ausgabe/Merkblatt.pdf`

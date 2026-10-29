@@ -10,6 +10,8 @@ Korrektur während der Arbeit: Zuerst lag die Junction im Projekt und `npm insta
 
 ## E2 Anweisungen über den Systemprompt von open-terminal
 
+*Abgelöst durch E19: Die App schickt den Systemprompt selbst mit jeder Anfrage.*
+
 Siehe MACHBARKEIT, Abschnitt 2. `/system` wirkt ab Open WebUI 0.8.11 und steht in der Systemnachricht; `AGENTS.md` wirkt für persönliche Terminals unter Windows erst ab 0.12.0. Die App schreibt deshalb keine `AGENTS.md` in den Arbeitsordner. Eine vorhandene `AGENTS.md` der Lernenden bleibt unangetastet und wirkt zusätzlich.
 
 ## E3 Skills als Kopie in `.ask/skills/`
@@ -17,6 +19,8 @@ Siehe MACHBARKEIT, Abschnitt 2. `/system` wirkt ab Open WebUI 0.8.11 und steht i
 Die Anleitungen werden beim Öffnen eines Ordners nach `<ordner>/.ask/skills/` kopiert (nur wenn sich die Version geändert hat). Das Modell findet sie so mit kurzen relativen Pfaden, und neuere ASK-Versionen sehen sie über `/skills` als echte Skills. `.ask/` ist ohnehin der Ordner der App (`tasks.json`).
 
 ## E4 Echter API-Key nur im Hauptprozess, Platzhalter in ASK
+
+*Teilweise abgelöst durch E19: Der Key bleibt im Hauptprozess, in ASK steht gar nichts mehr.*
 
 In den ASK-Einstellungen steht als Key nur `ask-desktop`. Der echte Key wird bei jedem Start neu erzeugt, über eine Pipe an das Startskript gegeben und von Electron in die Anfragen der ASK-Ansicht eingesetzt. Er liegt damit weder auf der Festplatte noch in ASK, in der Prozessliste oder in der Umgebung der Befehle. Ein Browser ausserhalb der App kennt den Key nicht und kommt nicht an das Terminal.
 
@@ -33,6 +37,8 @@ Kann der gewählte Ordner nicht mit Low gekennzeichnet werden (z. B. FAT-USB-Sti
 Die ConPTY-Ausgabe enthält Steuersequenzen und hat im Test Ausgaben verschluckt. Für `POST /execute` nutzt die App den Pipe-Runner von open-terminal mit UTF-8. Das interaktive Terminal in ASK bleibt bei ConPTY, weil es dort um Bedienung durch Menschen geht.
 
 ## E8 Keine Umgehung fehlender ASK-Freigaben
+
+*Gegenstandslos seit E19: Die App trägt nichts mehr in ASK ein. Siehe dort zur Absprache mit der ASK-Administration.*
 
 Das Backend von Open WebUI würde `terminalServers` auch ohne Berechtigung speichern. Die App schreibt die Verbindung nur, wenn ASK die Berechtigung «Direkte Tool-Server» und «Direkte Integrationen» meldet (Admins haben immer Zugriff). Sonst erklärt sie, was fehlt.
 
@@ -66,6 +72,8 @@ Word, Excel und PowerPoint lassen sich aus einem Low-Prozess nicht per COM steue
 
 ## E16 ASK erst laden, wenn das Terminal läuft
 
+*Gegenstandslos seit E19: Die ASK-Seite dient nur noch der Anmeldung.*
+
 Open WebUI holt Werkzeuge (`/openapi.json`) und Systemprompt (`/system`) eines persönlichen Terminals nur beim Laden der Seite. Lädt ASK schneller als das Terminal startet, fehlen dem Modell die Werkzeuge bis zum nächsten Neuladen. Die App lädt ASK deshalb erst, wenn das Terminal läuft (höchstens 20 s Wartezeit, bei einem Fehler sofort). Nach einem Ordnerwechsel lädt sie ASK neu, weil der Ordnerpfad im Systemprompt steht. Ein Neustart des Terminals im selben Ordner braucht kein Neuladen: Port und Platzhalter-Key bleiben gleich.
 
 ## E17 Installer pro Nutzer mit einem Klick
@@ -75,3 +83,23 @@ NSIS mit `oneClick`, `perMachine: false` und `allowElevation: false`: Installati
 ## E18 Einzelne EXE mit Zwischenspeicher zusätzlich
 
 Neben dem Installer baut `npm run dist:portable` eine einzelne `ASK-<Version>.exe`. Das Target `portable` von electron-builder wurde verworfen: Es entpackt bei jedem Start rund 650 MB in den Temp-Ordner, erst nach `7z-out`, dann als Kopie (Start im Test 124 s), und `useZip` scheitert an der festen 4-Minuten-Grenze für makensis. Stattdessen packt `scripts/build-portable.js` den Ordner `win-unpacked` mit einem eigenen Starter (`scripts/starter.nsi`, zlib, ohne Prüfsumme) und ruft makensis ohne Zeitgrenze auf. Der Starter entpackt beim ersten Start mit Startbild nach `%LOCALAPPDATA%\ASK-Desktop\app\<Version>-<Build>`, über einen Ordner `.neu`, der erst nach vollständigem Entpacken umbenannt wird. Spätere Starts rufen `ASK.exe` direkt auf. Ein Mutex verhindert, dass zwei Doppelklicke gleichzeitig entpacken. Die App löscht beim Start mit der Einzelinstanz-Sperre ältere Stände und `.neu`-Ordner, die älter als eine Stunde sind (`src/main/portable.js`, mit `original-fs`, weil das fs von Electron `app.asar` als Ordner behandelt).
+
+## E19 Eigene Chat-Oberfläche statt eingebetteter ASK-Seite
+
+Die App zeigt ASK nicht mehr als Webseite mit eingetragenem Terminal, sondern hat einen eigenen Chat im Stil eines Terminal-Agenten. Die ASK-Seite dient nur noch der Anmeldung (auch über das Microsoft-Konto); danach liest die App `localStorage.token` aus der Seite und schickt die Aufträge mit diesem Token an `/api/chat/completions` (gestreamt, mit `tools`). Die Werkzeuge (`run_command`, `command_status`, `read_file`, `write_file`, `edit_file`, `list_files`, `find_files`, `search_text`, `update_tasks`) führt der Hauptprozess über open-terminal aus, mit dem echten Key; Low Integrity, Ordnersperre und Job-Objekt bleiben wie bisher (E6, E13). Lange Befehle liefern ihre Ausgabe laufend, Stoppen beendet den Prozessbaum.
+
+Gründe: eine Oberfläche, die man selbst gestalten kann; Werkzeugaufrufe sichtbar und verständlich; keine Abhängigkeit von den ASK-Freigaben «Direkte Integrationen» und «Direkte Tool-Server», vom Laden der Werkzeuge beim Seitenaufbau (E16) und von der Open-WebUI-Version (ab 0.8.11). Folgen: Chats liegen im Arbeitsordner (`.ask/chats`), nicht in ASK; Funktionen der ASK-Webseite wie Datei-Upload oder Wissensdatenbanken gibt es in der App nicht.
+
+Weil ASK die Werkzeugliste nicht unbedingt an das Modell weitergibt, hat die App einen Textmodus: Lehnt ASK `tools` mit HTTP 400 ab oder schreibt das Modell `<tool_call>{…}</tool_call>` in den Text (Format von Qwen), beschreibt die App die Werkzeuge im Systemprompt, wertet die Aufrufe aus dem Text aus und schickt Ergebnisse als `<tool_response>`. Ältere Werkzeugergebnisse gehen gekürzt an das Modell, damit lange Aufträge in das Kontextfenster passen.
+
+Offen: Die ASK-Administration sollte wissen, dass die App das Modell über die Schnittstelle anspricht und Befehle auf den Laptops ausführt. Das Recht dazu hat jedes Konto, das ASK im Browser benutzen kann; ob die Schule diese Nutzung will, ist eine Absprache, keine technische Sperre.
+
+## E20 Office wandelt nur Kopien um
+
+Rückmeldung aus einem echten Auftrag: Eine Datei in `ausgabe/` liess sich nach einer PDF-Prüfung nicht mehr überschreiben, und die Umwandlung brach mit `RPC_E_DISCONNECTED` ab. Office öffnete bisher das Original; hängt oder stürzt Office dabei ab, kann die Datei gesperrt bleiben. Die App kopiert die Datei deshalb vor jeder Umwandlung in den Temp-Ordner, entfernt aus der Kopie einen Verweis auf eine externe Word-Vorlage (`attachedTemplate`, sonst sucht Word sie im Netz oder schickt Anmeldedaten an einen fremden Rechner), aktualisiert Inhaltsverzeichnisse und versucht es bei einem Verbindungsabbruch einmal neu. Zusätzlich lehnt `run_command` Programme mit Fenster ab; das Modell hatte Word selbst gestartet. Andere Verweise nach aussen (verknüpfte Felder, externe Bilder) werden weiterhin abgelehnt.
+
+## E21 Weniger Schritte, Ziel-Modus
+
+Ein Modell, das «jede Datei prüfen und jeden Fehler beheben» soll, schreibt sich bei Simulationen eigene Prüf-, Diagnose- und Kalibrierskripte und braucht Dutzende Schritte. Der Systemprompt verlangt deshalb gezieltes Prüfen (Office mit `pruefen.py`, Python durch Ausführen, HTML/JavaScript prüft die Person im Browser) und Dateien in einem Zug. In der Anzeige klappt ein fertiger Auftrag seine Schritte zu einer Zeile zusammen. Statt einer festen Schrittgrenze gibt es einen Schleifenschutz.
+
+`/goal` setzt ein Ziel, das im Chat gespeichert wird. Das Modell bekommt es im Systemprompt und ein Werkzeug `goal_done`; hört es auf, ohne `goal_done` aufzurufen, schickt die App eine Aufforderung weiterzuarbeiten, höchstens zweimal ohne Arbeitsschritt dazwischen. So endet ein Auftrag nicht mehr nach einer blossen Ankündigung, und ein Modell, das auf eine Antwort wartet, läuft nicht endlos weiter.

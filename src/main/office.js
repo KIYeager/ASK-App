@@ -4,8 +4,13 @@
 // Auftrag in .ask/auftraege/ ab; die App (normale Stufe) prüft die Datei und wandelt sie um.
 // Abgelehnt werden Dateien mit Makros, ActiveX, OLE-Objekten, externen Verweisen oder
 // verknüpften Feldern. Office öffnet die Datei schreibgeschützt mit deaktivierten Makros.
+// Office bekommt immer eine Kopie im Temp-Ordner: Hängt oder stürzt es ab, bleibt die Datei im
+// Arbeitsordner nicht gesperrt. Aus der Kopie wird ein Verweis auf eine externe Word-Vorlage
+// entfernt (sonst sucht Word sie im Netz, hängt oder schickt Anmeldedaten an fremde Rechner).
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 
 const TIMEOUT_MS = 120000;
@@ -19,6 +24,24 @@ function Melde($o) { [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress)); 
 function Lies($eintrag) { $r = New-Object IO.StreamReader($eintrag.Open()); try { $r.ReadToEnd() } finally { $r.Close() } }
 try {
   Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $ext = [IO.Path]::GetExtension($Quelle).ToLower()
+  if ($ext -eq '.docx') {
+    # Verweis auf eine externe Vorlage (attachedTemplate) aus der Kopie entfernen
+    $zip = [IO.Compression.ZipFile]::Open($Quelle, 'Update')
+    try {
+      foreach ($name in @('word/_rels/settings.xml.rels', 'word/settings.xml')) {
+        $e = $zip.GetEntry($name)
+        if (-not $e) { continue }
+        $text = Lies $e
+        $neu = $text -replace '<Relationship [^>]*attachedTemplate[^>]*/>', '' -replace '<w:attachedTemplate [^>]*/>', ''
+        if ($neu -ne $text) {
+          $e.Delete()
+          $w = New-Object IO.StreamWriter(($zip.CreateEntry($name)).Open(), (New-Object Text.UTF8Encoding $false))
+          try { $w.Write($neu) } finally { $w.Close() }
+        }
+      }
+    } finally { $zip.Dispose() }
+  }
   $zip = [IO.Compression.ZipFile]::OpenRead($Quelle)
   try {
     foreach ($e in $zip.Entries) {
@@ -36,7 +59,6 @@ try {
     }
   } finally { $zip.Dispose() }
 
-  $ext = [IO.Path]::GetExtension($Quelle).ToLower()
   $name = @{ '.docx' = 'WINWORD'; '.xlsx' = 'EXCEL'; '.pptx' = 'POWERPNT' }[$ext]
   $progId = @{ '.docx' = 'Word.Application'; '.xlsx' = 'Excel.Application'; '.pptx' = 'PowerPoint.Application' }[$ext]
   $vorher = @(Get-Process $name -ErrorAction SilentlyContinue | ForEach-Object Id)
@@ -50,6 +72,8 @@ try {
     $sichtbar = $app.Visible
     $app.DisplayAlerts = 0
     $doc = $app.Documents.Open($Quelle, $false, $true, $false)
+    # Inhaltsverzeichnisse füllt Word sonst erst beim Öffnen durch die Person
+    try { foreach ($toc in @($doc.TablesOfContents)) { $toc.Update() } } catch { }
     $doc.ExportAsFixedFormat($Ziel, 17)
     $doc.Close(0)
     if (-not $sichtbar -and $app.Documents.Count -eq 0) { $app.Quit() }
@@ -120,12 +144,34 @@ function runConversion(source, target) {
   });
 }
 
+// Office verliert manchmal die Verbindung (RPC_E_DISCONNECTED); dann einmal mit neuer Instanz versuchen.
+const DISCONNECTED = /RPC|getrennt|disconnected|0x80010108|0x800706BA|0x800706BE/i;
+
+// Umwandlung einer Kopie im Temp-Ordner; das Original im Arbeitsordner öffnet Office nie.
+async function convertCopy(source, target) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `ask-pdf-${crypto.randomBytes(3).toString('hex')}-`));
+  try {
+    const copy = path.join(dir, path.basename(source));
+    fs.copyFileSync(source, copy);
+    let res = await runConversion(copy, target);
+    if (res.fehler && DISCONNECTED.test(res.fehler)) {
+      fs.copyFileSync(source, copy);
+      res = await runConversion(copy, target);
+    }
+    return res;
+  } catch (err) {
+    return { fehler: `Datei konnte nicht kopiert werden: ${err.message}` };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+  }
+}
+
 // Wandelt eine Datei des Arbeitsordners um. Ziel: .ask/pdf/<name>.pdf. Aufträge laufen nacheinander.
 function convertToPdf(root, source) {
   const ext = path.extname(source).toLowerCase();
   if (!EXTENSIONS.has(ext)) return Promise.resolve({ fehler: 'Nur .docx, .xlsx und .pptx werden umgewandelt.' });
   const target = path.join(root, '.ask', 'pdf', `${path.basename(source, ext)}${ext === '.docx' ? '' : ext.replace('.', '-')}.pdf`);
-  const job = queue.then(() => runConversion(source, target)).then((res) => (res.ok ? { ok: true, target } : res));
+  const job = queue.then(() => convertCopy(source, target)).then((res) => (res.ok ? { ok: true, target } : res));
   queue = job.catch(() => {});
   return job;
 }

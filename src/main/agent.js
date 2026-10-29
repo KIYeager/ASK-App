@@ -1,0 +1,384 @@
+// Arbeitsschleife (ENTSCHEIDE E19): Auftrag an das Modell in ASK, Werkzeugaufrufe lokal ausführen,
+// Ergebnisse zurückgeben, bis das Modell ohne Werkzeug antwortet. Chats liegen im Arbeitsordner
+// unter .ask/chats/<id>.json, damit sie zum Projekt gehören.
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { EventEmitter } = require('node:events');
+const { toolSpecs, runTool, describe, clip } = require('./tools');
+const { parseTextToolCalls } = require('./askapi');
+
+// Keine feste Schrittgrenze für normale Aufträge; der Schleifenschutz (loopReason) hält ein
+// festgefahrenes Modell an. MAX_STEPS ist nur die Notbremse.
+const MAX_STEPS = 500;
+const SAME_CALL_LIMIT = 3; // derselbe Aufruf so oft hintereinander
+const FAIL_LIMIT = 8; // so viele fehlgeschlagene Werkzeugaufrufe hintereinander
+const GOAL_IDLE_LIMIT = 2; // Ziel-Modus: so oft ohne Arbeitsschritt anstossen
+const GOAL_NUDGE = 'Das Ziel ist noch nicht erreicht. Arbeite selbständig weiter. Ist es erreicht, rufe goal_done auf. '
+  + 'Brauchst du wirklich eine Antwort der Person, stell die Frage kurz.';
+const GOAL_TOOL = {
+  type: 'function',
+  function: {
+    name: 'goal_done',
+    description: 'Meldet, dass das Ziel dieses Chats vollständig erreicht ist. Erst aufrufen, wenn alles erledigt und geprüft ist.',
+    parameters: { type: 'object', properties: { zusammenfassung: { type: 'string', description: 'Was erreicht wurde, ein bis zwei Sätze' } }, required: ['zusammenfassung'] },
+  },
+};
+
+function goalPrompt(goal) {
+  return `\n\nZiel dieses Chats (von der Person mit /goal gesetzt): ${goal.text}\n`
+    + 'Arbeite selbständig und ohne Rückfragen weiter, bis das Ziel vollständig erreicht und geprüft ist. '
+    + 'Kündige Arbeit nicht nur an, sondern führe sie mit den Werkzeugen aus. Ist das Ziel erreicht, rufe goal_done auf.';
+}
+const KEEP_FULL_TOOL_RESULTS = 8; // ältere Werkzeugergebnisse gehen gekürzt an das Modell
+const CHAT_DIR = path.join('.ask', 'chats');
+const NEW = 'neu'; // openLatest: leeren Chat beginnen
+const { WORK_DIRS } = require('./cleanup'); // unter .ask, je ein Unterordner pro Chat
+
+const newId = () => `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${crypto.randomBytes(3).toString('hex')}`;
+
+// Steckt das Modell in einer Schleife? Betrachtet nur den laufenden Auftrag (seit der letzten Eingabe).
+function loopReason(messages) {
+  const start = messages.map((m) => m.role).lastIndexOf('user');
+  const calls = [];
+  const results = [];
+  for (const m of messages.slice(start + 1)) {
+    if (m.role === 'assistant') for (const c of m.tool_calls || []) calls.push(`${c.function.name} ${c.function.arguments}`);
+    if (m.role === 'tool') results.push(m.ok !== false);
+  }
+  const last = calls.slice(-SAME_CALL_LIMIT);
+  if (last.length === SAME_CALL_LIMIT && last.every((c) => c === last[0])) {
+    return `Das Modell hat ${SAME_CALL_LIMIT}-mal hintereinander genau denselben Schritt ausgeführt (${last[0].split(' ')[0]}).`;
+  }
+  const fails = results.slice(-FAIL_LIMIT);
+  if (fails.length === FAIL_LIMIT && fails.every((ok) => !ok)) {
+    return `${FAIL_LIMIT} Werkzeugaufrufe hintereinander sind fehlgeschlagen.`;
+  }
+  return '';
+}
+
+// Werkzeuge im Systemprompt, falls ASK den Parameter «tools» nicht weitergibt (Textmodus).
+function textModePrompt(specs) {
+  const list = specs.map((s) => JSON.stringify(s.function)).join('\n');
+  return `\n\n# Werkzeuge\nDu kannst diese Werkzeuge aufrufen:\n<tools>\n${list}\n</tools>\n`
+    + 'Für einen Aufruf schreibst du genau:\n<tool_call>\n{"name": "<werkzeug>", "arguments": {...}}\n</tool_call>\n'
+    + 'Danach wartest du auf das Ergebnis in <tool_response>.';
+}
+
+// Verlauf für die Anfrage: ohne Denktexte, alte Ergebnisse gekürzt, im Textmodus ohne tool-Rollen
+// (auch für frühere Schritte, die noch mit Werkzeugliste liefen).
+function apiMessages(system, messages, textMode = false) {
+  const toolIndexes = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
+  const recent = new Set(toolIndexes.slice(-KEEP_FULL_TOOL_RESULTS));
+  const out = [{ role: 'system', content: system }];
+  for (const [i, m] of messages.entries()) {
+    if (m.role === 'user') out.push({ role: 'user', content: m.content });
+    else if (m.role === 'assistant') {
+      if (m.textMode) out.push({ role: 'assistant', content: m.raw || m.content || '' });
+      else if (textMode && m.tool_calls?.length) {
+        const calls = m.tool_calls.map((c) => `<tool_call>\n{"name": ${JSON.stringify(c.function.name)}, "arguments": ${c.function.arguments || '{}'}}\n</tool_call>`);
+        out.push({ role: 'assistant', content: [m.content, ...calls].filter(Boolean).join('\n') });
+      } else {
+        const msg = { role: 'assistant', content: m.content || '' };
+        if (m.tool_calls?.length) msg.tool_calls = m.tool_calls;
+        out.push(msg);
+      }
+    } else if (m.role === 'tool') {
+      const content = recent.has(i) ? m.content : clip(m.content, 1500);
+      if (m.textMode || textMode) out.push({ role: 'user', content: `<tool_response>\n${content}\n</tool_response>` });
+      else out.push({ role: 'tool', tool_call_id: m.tool_call_id, content });
+    }
+  }
+  return out;
+}
+
+class Agent extends EventEmitter {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking }) {
+    super();
+    this.ask = ask;
+    this.terminal = terminal;
+    this.getFolder = getFolder;
+    this.getModel = getModel;
+    this.getSystemPrompt = getSystemPrompt;
+    this.getCommandHint = getCommandHint;
+    this.getWebSearch = getWebSearch;
+    this.getThinking = getThinking || (() => 'normal');
+    this.textMode = false;
+    this.running = false;
+    this.controller = null;
+    this.chat = this.blank();
+  }
+
+  blank() {
+    return { id: newId(), title: '', created: Date.now(), updated: Date.now(), messages: [] };
+  }
+
+  event(payload) {
+    this.emit('event', payload);
+  }
+
+  state() {
+    return { id: this.chat.id, title: this.chat.title, running: this.running, textMode: this.textMode, goal: this.chat.goal || null };
+  }
+
+  // /goal: Ziel des Chats. Das Modell arbeitet weiter, bis es goal_done aufruft (siehe send).
+  setGoal(text) {
+    text = String(text || '').trim();
+    this.chat.goal = text ? { text, done: false, since: Date.now() } : null;
+    this.save();
+    this.emit('changed');
+  }
+
+  chatDir() {
+    const folder = this.getFolder();
+    return folder ? path.join(folder, CHAT_DIR) : '';
+  }
+
+  save() {
+    const dir = this.chatDir();
+    if (!dir || this.chat.messages.length === 0) return;
+    this.chat.updated = Date.now();
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${this.chat.id}.json`), JSON.stringify(this.chat));
+    } catch {
+      // Ordner nicht beschreibbar: Chat bleibt nur im Speicher
+    }
+  }
+
+  // Chats eines Ordners (Standard: aktueller Ordner), neueste zuerst. Zusammenfassungen werden pro
+  // Datei zwischengespeichert, solange sie sich nicht ändert; Chats mit Spielen können gross sein.
+  list(folder = this.getFolder()) {
+    const dir = folder ? path.join(folder, CHAT_DIR) : '';
+    if (!dir || !fs.existsSync(dir)) return [];
+    this.summaries = this.summaries || new Map();
+    return fs.readdirSync(dir).filter((n) => n.endsWith('.json')).map((n) => {
+      const file = path.join(dir, n);
+      try {
+        const mtime = fs.statSync(file).mtimeMs;
+        const cached = this.summaries.get(file);
+        if (cached && cached.mtime === mtime) return cached.summary;
+        const c = JSON.parse(fs.readFileSync(file, 'utf8'));
+        const summary = { id: c.id, title: c.title || '(ohne Titel)', updated: c.updated, count: c.messages.filter((m) => m.role === 'user').length };
+        this.summaries.set(file, { mtime, summary });
+        return summary;
+      } catch {
+        return null;
+      }
+    }).filter(Boolean).sort((a, b) => b.updated - a.updated);
+  }
+
+  newChat() {
+    if (this.running) return false;
+    this.chat = this.blank();
+    this.emit('changed');
+    return true;
+  }
+
+  // Beim Ordnerwechsel: gewünschten Chat (id oder NEW) oder sonst den letzten Chat des Ordners öffnen.
+  openLatest(wanted = null) {
+    if (this.running) this.stop();
+    if (wanted && wanted !== NEW && this.open(wanted)) return;
+    const latest = wanted === NEW ? null : this.list()[0];
+    if (!latest || !this.open(latest.id)) {
+      this.chat = this.blank();
+      this.emit('changed');
+    }
+  }
+
+  // Löscht einen gespeicherten Chat. Ist es der offene, beginnt ein neuer.
+  remove(folder, id) {
+    if (!/^[\w-]+$/.test(id)) return false;
+    const current = id === this.chat.id && path.resolve(folder).toLowerCase() === path.resolve(this.getFolder() || '').toLowerCase();
+    if (current && this.running) return false;
+    try {
+      fs.rmSync(path.join(folder, CHAT_DIR, `${id}.json`));
+    } catch {
+      return false;
+    }
+    // Skripte und Zwischendateien dieses Chats gehören mit dazu
+    for (const sub of WORK_DIRS) fs.rmSync(path.join(folder, '.ask', sub, id), { recursive: true, force: true });
+    if (current) this.newChat();
+    return true;
+  }
+
+  open(id) {
+    if (this.running || !/^[\w-]+$/.test(id)) return false;
+    try {
+      this.chat = JSON.parse(fs.readFileSync(path.join(this.chatDir(), `${id}.json`), 'utf8'));
+      this.emit('changed');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  stop() {
+    if (this.controller) this.controller.abort();
+  }
+
+  push(message) {
+    this.chat.messages.push(message);
+  }
+
+  async send(text) {
+    text = String(text || '').trim();
+    if (!text || this.running) return;
+    if (!this.chat.title) this.chat.title = text.replace(/\s+/g, ' ').slice(0, 80);
+    this.push({ role: 'user', content: text, time: Date.now() });
+    this.event({ type: 'user', text });
+    this.running = true;
+    this.controller = new AbortController();
+    const { signal } = this.controller;
+    this.emit('changed');
+    try {
+      let idle = 0; // Anstösse ohne Arbeitsschritt hintereinander (Ziel-Modus)
+      for (let step = 0; step < MAX_STEPS; step++) {
+        if (signal.aborted) break;
+        // Websuche nur bei der ersten Anfrage eines Auftrags, sonst sucht ASK bei jedem Werkzeugschritt neu.
+        const done = await this.step(signal, step === 0 && !!this.getWebSearch?.());
+        this.save();
+        if (done) {
+          // Ziel-Modus: aufgehört, ohne das Ziel als erreicht zu melden? Dann anstossen, höchstens
+          // zweimal ohne Arbeitsschritt dazwischen; danach wartet das Modell offenbar auf die Person.
+          const goal = this.chat.goal;
+          if (!goal || goal.done || signal.aborted) break;
+          if (idle >= GOAL_IDLE_LIMIT) {
+            this.event({ type: 'notice', text: 'Das Modell arbeitet nicht weiter am Ziel und wartet offenbar auf dich. Antworte oder schreib «weiter».' });
+            break;
+          }
+          idle++;
+          this.push({ role: 'user', content: GOAL_NUDGE, auto: true, time: Date.now() });
+          this.event({ type: 'user', text: GOAL_NUDGE, auto: true });
+          continue;
+        }
+        idle = 0;
+        const loop = loopReason(this.chat.messages);
+        if (loop) {
+          this.event({ type: 'notice', text: `Angehalten: ${loop} Schreib, wie es weitergehen soll, oder «weiter».` });
+          break;
+        }
+        if (step === MAX_STEPS - 1) this.event({ type: 'notice', text: `Nach ${MAX_STEPS} Schritten angehalten. Schreib «weiter», um fortzufahren.` });
+      }
+    } catch (err) {
+      if (!signal.aborted && err.name !== 'AbortError') this.event({ type: 'error', text: err.message });
+    } finally {
+      if (signal.aborted) this.event({ type: 'notice', text: 'Gestoppt.' });
+      this.running = false;
+      this.controller = null;
+      this.save();
+      this.event({ type: 'done' });
+      this.emit('changed');
+    }
+  }
+
+  // Eine Antwort des Modells und die verlangten Werkzeuge. true, wenn das Modell fertig ist.
+  async step(signal, webSearch = false) {
+    const model = this.getModel();
+    if (!model) throw new Error('Kein Modell gewählt.');
+    const goal = this.chat.goal && !this.chat.goal.done ? this.chat.goal : null;
+    const specs = [...toolSpecs(this.getCommandHint(this.chat.id)), ...(goal ? [GOAL_TOOL] : [])];
+    const request = () => {
+      const system = this.getSystemPrompt(this.chat.id) + (goal ? goalPrompt(goal) : '') + (this.textMode ? textModePrompt(specs) : '');
+      this.event({ type: 'assistant-start', webSearch });
+      return this.ask.chat({
+        model,
+        messages: apiMessages(system, this.chat.messages, this.textMode),
+        tools: this.textMode ? null : specs,
+        webSearch,
+        thinking: this.getThinking(),
+        signal,
+        onDelta: (kind, text) => this.event({ type: kind, text }),
+      });
+    };
+    let completion;
+    try {
+      completion = await request();
+    } catch (err) {
+      // Manche Server lehnen «tools» ab: dann Werkzeuge im Text beschreiben.
+      if (!this.textMode && err.status === 400 && /tool/i.test(err.message)) {
+        this.textMode = true;
+        this.event({ type: 'notice', text: 'ASK nimmt keine Werkzeugliste an, die App beschreibt die Werkzeuge im Text.' });
+        completion = await request();
+      } else {
+        throw err;
+      }
+    }
+
+    let { content } = completion;
+    let calls = completion.calls;
+    let textMode = false;
+    if (calls.length === 0 && content.includes('<tool_call>')) {
+      const parsed = parseTextToolCalls(content);
+      if (parsed.calls.length) {
+        calls = parsed.calls;
+        textMode = true;
+        this.textMode = true;
+        content = parsed.text;
+      }
+    }
+    const toolCalls = calls.map((c) => ({ id: c.id || `call_${crypto.randomBytes(6).toString('hex')}`, type: 'function',
+      function: { name: c.name, arguments: c.arguments || '{}' } }));
+    const message = { role: 'assistant', content, time: Date.now(), stats: completion.stats() };
+    if (completion.sources.length) message.sources = completion.sources;
+    if (completion.reasoning) message.reasoning = completion.reasoning;
+    if (toolCalls.length) message.tool_calls = toolCalls;
+    if (textMode) { message.textMode = true; message.raw = completion.content; }
+    this.push(message);
+    this.event({ type: 'assistant-end', content, stats: message.stats, sources: message.sources || [], calls: toolCalls.map((c) => ({ id: c.id, name: c.function.name, ...this.describeCall(c) })) });
+    if (toolCalls.length === 0) {
+      if (!content.trim()) this.event({ type: 'notice', text: 'Das Modell hat keine Antwort geschrieben.' });
+      return true;
+    }
+
+    for (const call of toolCalls) {
+      if (signal.aborted) {
+        this.push({ role: 'tool', tool_call_id: call.id, content: 'Von der Person abgebrochen.', textMode });
+        continue;
+      }
+      const started = Date.now();
+      this.event({ type: 'tool-start', id: call.id, name: call.function.name, ...this.describeCall(call) });
+      const result = call.function.name === 'goal_done'
+        ? this.finishGoal(call.function.arguments)
+        : await runTool(this.terminal, call.function.name, call.function.arguments, {
+          signal,
+          onProgress: (output) => this.event({ type: 'tool-progress', id: call.id, output: clip(output, 4000) }),
+        });
+      this.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: result.output, ok: result.ok,
+        summary: result.summary, display: clip(result.display ?? result.output, 6000), tasks: result.tasks, textMode, ms: Date.now() - started });
+      this.event({ type: 'tool-end', id: call.id, ok: result.ok, summary: result.summary,
+        output: clip(result.display ?? result.output, 6000), tasks: result.tasks, ms: Date.now() - started });
+    }
+    return false;
+  }
+
+  // Werkzeug goal_done: Ziel als erreicht markieren
+  finishGoal(rawArgs) {
+    let summary = '';
+    try { summary = String(JSON.parse(rawArgs || '{}').zusammenfassung || ''); } catch { /* ohne */ }
+    if (!this.chat.goal) return { ok: false, output: 'Es ist kein Ziel gesetzt.', summary: 'kein Ziel' };
+    this.chat.goal = { ...this.chat.goal, done: true, summary, doneAt: Date.now() };
+    this.emit('changed');
+    return { ok: true, output: 'Ziel als erreicht markiert. Schreib jetzt die kurze Schlussantwort.', summary: summary || 'Ziel erreicht' };
+  }
+
+  describeCall(call) {
+    let args = {};
+    try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* roh */ }
+    return describe(call.function.name, args);
+  }
+
+  // Für die Anzeige eines gespeicherten Chats.
+  transcript() {
+    return this.chat.messages.map((m) => {
+      if (m.role === 'assistant') {
+        return { role: 'assistant', content: m.content, reasoning: m.reasoning || '', stats: m.stats || null, sources: m.sources || [], time: m.time,
+          calls: (m.tool_calls || []).map((c) => ({ id: c.id, name: c.function.name, ...this.describeCall(c) })) };
+      }
+      if (m.role === 'tool') return { role: 'tool', id: m.tool_call_id, ok: m.ok !== false, summary: m.summary || '', output: m.display ?? m.content, tasks: m.tasks };
+      return { role: m.auto ? 'auto' : m.role, content: m.content, time: m.time };
+    });
+  }
+}
+
+module.exports = { Agent, apiMessages, textModePrompt, loopReason, NEW };

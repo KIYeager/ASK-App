@@ -1,16 +1,17 @@
 ---
 name: word
-description: Word-Dokumente (.docx) mit python-docx sauber formatiert erstellen und prüfen. Lesen, bevor eine .docx-Datei entsteht.
+description: Word-Dokumente (.docx) mit python-docx sauber formatiert erstellen, vorhandene bearbeiten und prüfen. Lesen, bevor eine .docx-Datei entsteht oder geändert wird.
 ---
-# Word-Dokument erstellen
+# Word-Dokument erstellen oder bearbeiten
 
-Werkzeug: python-docx. Immer zuerst ein Skript schreiben (z. B. `erstelle_dokument.py`), dann `python erstelle_dokument.py` ausführen.
+Werkzeug: python-docx. Immer zuerst ein Skript schreiben (z. B. `.ask/skripte/erstelle_dokument.py`), dann `python .ask/skripte/erstelle_dokument.py` ausführen.
 
 ## Regeln
 - Struktur über Formatvorlagen, nicht über Schriftgrösse von Hand: `Title`, `Heading 1`, `Heading 2`, `List Bullet`, `List Number`, Tabellenstil `Table Grid`.
 - Liegt in `.ask/skills/vorlagen/` eine Word-Vorlage (`.docx`), damit beginnen (siehe unten). Sonst die Grundeinstellungen aus dem Gerüst übernehmen.
 - Schweizer Rechtschreibung: «ss» statt «ß», Anführungszeichen « ».
-- Speichern unter `ausgabe/`. Bestehende Dateien nie überschreiben, sondern neuen Namen wählen.
+- Speichern unter `ausgabe/`. Dateien der Person nie überschreiben. Eigene Ergebnisse in `ausgabe/` bei Änderungswünschen unter demselben Namen neu speichern, keine `_V2`.
+- Soll ein vorhandenes Dokument geändert werden: nicht neu aufbauen, sondern öffnen und nur die verlangten Stellen ändern (siehe «Vorhandene Datei bearbeiten»).
 
 ## Gerüst
 ```python
@@ -72,6 +73,34 @@ for el in list(body):
     if el.tag != qn("w:sectPr"):      # Inhalt der Vorlage leeren, Kopf/Fuss und Ränder behalten
         body.remove(el)
 ```
+
+## Vorhandene Datei bearbeiten
+Zuerst mit `read_file` lesen. Dann öffnen, nur die verlangten Stellen ändern, speichern. So bleiben Formatvorlagen, Kopf- und Fusszeilen, Bilder und Tabellen erhalten.
+- Datei der Person (liegt im Arbeitsordner): Ergebnis unter demselben Namen in `ausgabe/` speichern, das Original bleibt.
+- Eigene Datei in `ausgabe/`: direkt diese Datei öffnen und überschreiben (`quelle` gleich `ziel`).
+```python
+import sys; sys.path.insert(0, ".ask/skills")
+from docx import Document
+from bearbeiten import word_ersetzen, word_finde, word_absatz_nach, word_loeschen
+
+quelle = "bericht.docx"            # Datei der Person; eigene Datei: "ausgabe/bericht.docx"
+ziel = "ausgabe/bericht.docx"
+doc = Document(quelle)
+print(word_ersetzen(doc, "Proxmox 7", "Proxmox 8"), "Stellen ersetzt")   # auch in Tabellen, Kopf- und Fusszeilen
+titel = word_finde(doc, "Installation")
+if titel:
+    neu = word_absatz_nach(titel, "Vor der Installation ein Backup erstellen.", stil="Normal")
+    word_absatz_nach(neu, "Backup auf externe Festplatte", stil="List Bullet")
+alt = word_finde(doc, "Dieser Abschnitt ist veraltet")
+if alt:
+    word_loeschen(alt)
+doc.save(ziel)
+print("gespeichert")
+```
+- Text nie mit `absatz.text = …` ersetzen: das löscht fett, kursiv und Links im ganzen Absatz. `word_ersetzen` behält die Formatierung.
+- Meldet `word_ersetzen` 0 Stellen, steht der Text anders im Dokument (Leerzeichen, Silbentrennung): mit `read_file` nachsehen.
+- Nicht zuverlässig möglich: Änderungen nachverfolgen, Kommentare, Textfelder, SmartArt, Inhaltsverzeichnis aktualisieren (das macht Word beim Öffnen mit F9). Das der Person sagen statt es zu versuchen.
+- Danach wie unten prüfen. Lässt sich die Datei nicht speichern, ist sie in Word offen: die Person bitten, sie zu schliessen.
 
 ## Typische Fehler
 - Absätze mit `\n` füllen statt mehrere `add_paragraph`: ergibt schlecht formatierten Text.

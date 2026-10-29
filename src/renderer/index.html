@@ -8,30 +8,95 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="statusbar">
-    <div class="brand" aria-hidden="true">ASK</div>
-    <button id="folder-btn" class="folder-btn" title="Arbeitsordner">
-      <span class="icon-folder" aria-hidden="true"></span>
-      <span id="folder-name">Kein Ordner</span>
-      <span class="caret" aria-hidden="true">▾</span>
-    </button>
-    <button id="terminal-pill" class="pill" title="Status des Terminals">
-      <span class="dot"></span><span id="terminal-text">Terminal gestoppt</span>
-    </button>
-    <button id="ask-pill" class="pill" title="Verbindung mit ASK">
-      <span class="dot"></span><span id="ask-text">ASK: unbekannt</span>
+  <header class="topbar">
+    <button id="chatbar-btn" class="ghost icon" title="Chats ein- oder ausblenden" aria-label="Chats ein- oder ausblenden">☰</button>
+    <div class="brand"><span class="spark" aria-hidden="true">✻</span> ASK</div>
+    <button id="folder-btn" class="crumb" title="Arbeitsordner">
+      <span id="folder-name">Kein Ordner</span><span class="caret" aria-hidden="true">▾</span>
     </button>
     <div class="spacer"></div>
-    <button id="restart-btn" class="btn">Terminal neu starten</button>
-    <button id="choose-btn" class="btn">Ordner wechseln</button>
-    <button id="sidebar-btn" class="btn icon-only" title="Seitenleiste ein- oder ausblenden" aria-label="Seitenleiste ein- oder ausblenden">
-      <span class="icon-sidebar" aria-hidden="true"></span>
-    </button>
+    <button id="web-btn" class="toggle" title="Websuche über ASK (/web)">🌐 Web</button>
+    <div class="think-wrap">
+      <button id="think-btn" class="toggle" title="Denkaufwand des Modells (/denken)">✻ <span id="think-label">Standard</span></button>
+      <div id="think-pop" class="think-pop" hidden>
+        <div class="think-head"><span>Denkaufwand</span><span id="think-value" class="think-value">Standard</span></div>
+        <div class="think-scale"><span>Tief</span><span>Maximal</span></div>
+        <input id="think-range" type="range" min="1" max="4" step="1" value="2" aria-label="Denkaufwand">
+        <div class="think-foot">
+          <button id="think-standard" class="link-btn" type="button">Standard</button>
+          <span class="muted">· das Modell entscheidet selbst</span>
+        </div>
+      </div>
+    </div>
+    <label class="model" title="Modell in ASK">
+      <span class="muted">Modell</span>
+      <select id="model-select"></select>
+    </label>
+    <button id="sidebar-btn" class="ghost icon" title="Seitenleiste ein- oder ausblenden" aria-label="Seitenleiste ein- oder ausblenden">▥</button>
   </header>
 
   <main class="layout">
-    <section id="ask-area" class="ask-area">
-      <div id="ask-placeholder" class="ask-placeholder">ASK wird geladen …</div>
+    <aside id="chatbar" class="chatbar">
+      <button id="new-btn" class="chatbar-new" title="Neuer Chat im aktuellen Ordner (/neu)">+ Neuer Chat</button>
+      <input id="chat-search" class="chat-search" type="search" placeholder="Chats durchsuchen" spellcheck="false">
+      <div id="chat-groups" class="chat-groups"></div>
+    </aside>
+
+    <section class="chat-area">
+      <div id="login-area" class="login-area" hidden>
+        <div class="login-head">
+          <span><span class="spark">✻</span> Bei ASK anmelden. Danach arbeitest du hier im Chat; die Seite verschwindet wieder.</span>
+          <button id="login-reload" class="ghost">Seite neu laden</button>
+        </div>
+        <div id="ask-host" class="ask-host"><div id="ask-placeholder" class="ask-placeholder">Verbinde mit ASK …</div></div>
+      </div>
+
+      <div id="transcript" class="transcript">
+        <div class="column">
+          <div id="welcome" class="welcome">
+            <div class="welcome-box">
+              <div class="welcome-title"><span class="spark">✻</span> Willkommen bei <strong>ASK</strong></div>
+              <div class="muted" id="welcome-folder"></div>
+            </div>
+            <p class="muted">Lege die Dateien, mit denen das Modell arbeiten soll, in den Arbeitsordner und beschreibe den Auftrag. Das Modell liest, schreibt und prüft selbst und legt fertige Dateien in <code>ausgabe/</code> ab.</p>
+            <div class="examples">
+              <button class="example">Welche Dateien liegen im Arbeitsordner?</button>
+              <button class="example">Erstelle aus den Stichworten in meiner Textdatei eine Word-Anleitung mit Checkliste.</button>
+              <button class="example">Werte die CSV-Datei aus: Summen pro Kategorie und ein Diagramm, alles in Excel.</button>
+              <button class="example">Schreibe ein Python-Skript, das prüft, ob ein Passwort sicher ist, und teste es.</button>
+            </div>
+          </div>
+          <div id="messages" class="messages"></div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="column">
+          <div id="goal-bar" class="goal-bar" hidden>
+            <span class="goal-icon" aria-hidden="true">◎</span><span class="muted">Ziel:</span>
+            <span id="goal-text" class="goal-text"></span><span id="goal-state" class="goal-state"></span>
+            <button id="goal-clear" class="ghost small" title="Ziel aufheben (/goal aus)" aria-label="Ziel aufheben">×</button>
+          </div>
+          <div id="activity" class="activity" hidden>
+            <span class="spinner" aria-hidden="true">✻</span>
+            <span id="activity-text">Denkt nach …</span>
+            <span class="muted">(<span id="activity-time">0 s</span> · Esc zum Stoppen)</span>
+          </div>
+          <div id="slash" class="slash" hidden></div>
+          <div class="input-box" id="input-box">
+            <span class="prompt" aria-hidden="true">›</span>
+            <textarea id="input" rows="1" spellcheck="true" placeholder="Was soll ich im Arbeitsordner erledigen?"></textarea>
+            <button id="send-btn" class="send" title="Senden (Enter)">↵</button>
+          </div>
+          <div class="statusline">
+            <button id="terminal-pill" class="pill" title="Terminal"><span class="dot"></span><span id="terminal-text">Terminal gestoppt</span></button>
+            <button id="ask-pill" class="pill" title="ASK"><span class="dot"></span><span id="ask-text">ASK: unbekannt</span></button>
+            <span class="spacer"></span>
+            <span class="muted hint">Enter senden · Shift+Enter neue Zeile · / Befehle · </span>
+            <button id="verbose-btn" class="pill hint" title="Gedanken und alle Details ein- oder ausblenden">Ctrl+O Details</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <aside id="sidebar" class="sidebar">
@@ -39,7 +104,7 @@
         <h2>Aufgaben <span id="tasks-count" class="muted"></span></h2>
         <p id="tasks-goal" class="goal"></p>
         <ul id="tasks-list" class="tasks"></ul>
-        <p id="tasks-empty" class="muted small">Noch keine Aufgabenliste. Bei grösseren Aufträgen legt das Modell sie in .ask/tasks.json an.</p>
+        <p id="tasks-empty" class="muted small">Bei grösseren Aufträgen führt das Modell hier eine Aufgabenliste.</p>
       </section>
       <section class="panel" id="output-panel">
         <h2>Ausgabe</h2>
@@ -54,19 +119,19 @@
       <section class="panel preview-panel" id="preview-panel" hidden>
         <div class="preview-head">
           <h2 id="preview-title">Vorschau</h2>
-          <button id="preview-big" class="btn small">Gross</button>
-          <button id="preview-close" class="btn small" aria-label="Vorschau schliessen">×</button>
+          <button id="preview-big" class="ghost small">Gross</button>
+          <button id="preview-close" class="ghost small" aria-label="Vorschau schliessen">×</button>
         </div>
         <div id="preview-body" class="preview-body"></div>
       </section>
     </aside>
   </main>
 
-  <!-- Dialoge: Solange einer offen ist, wird die ASK-Ansicht ausgeblendet. -->
+  <!-- Dialoge: Solange einer offen ist, ist die ASK-Seite verborgen. -->
   <div id="overlay" class="overlay" hidden>
     <div id="dlg-warning" class="dialog" hidden>
       <h1>Bevor es losgeht</h1>
-      <p>Mit ASK Desktop arbeitet das Sprachmodell selbständig in einem Ordner auf deinem Laptop. Es kann dort Dateien lesen, neue Dateien schreiben, Programme ausführen und Dateien <strong>ändern oder löschen</strong>.</p>
+      <p>Mit ASK arbeitet das Sprachmodell selbständig in einem Ordner auf deinem Laptop. Es kann dort Dateien lesen, neue Dateien schreiben, Programme ausführen und Dateien <strong>ändern oder löschen</strong>.</p>
       <p>Arbeite deshalb nur mit <strong>Kopien</strong>. Lege für jedes Projekt einen eigenen Ordner an und kopiere nur die Dateien hinein, die das Modell braucht. Wichtige Originale bleiben an ihrem Ort.</p>
       <p>Ordner in OneDrive oder SharePoint lassen sich nicht wählen, weil Änderungen dort sofort in die Cloud übertragen würden. Ausserhalb des gewählten Ordners kann das Modell nichts schreiben, lesen kann es aber auch andere Dateien auf dem Laptop.</p>
       <p>Was das Modell aus deinen Dateien liest, wird an ASK geschickt. Lege keine vertraulichen oder persönlichen Daten in den Ordner.</p>
@@ -95,16 +160,13 @@
       <ul id="recent-list" class="recent"></ul>
     </div>
 
-    <div id="dlg-connect" class="dialog" hidden>
-      <h1>Verbindung mit ASK</h1>
-      <div id="connect-body"></div>
-      <div class="kv">
-        <span>URL</span><code id="connect-url"></code><button class="btn small" data-copy="connect-url">Kopieren</button>
-        <span>Key</span><code id="connect-key"></code><button class="btn small" data-copy="connect-key">Kopieren</button>
-      </div>
+    <div id="dlg-ask" class="dialog" hidden>
+      <h1>ASK</h1>
+      <div id="ask-body"></div>
       <div class="actions">
-        <button id="connect-retry" class="btn">Erneut prüfen</button>
-        <button id="connect-close" class="btn primary">Schliessen</button>
+        <button id="ask-logout" class="btn">Abmelden</button>
+        <button id="ask-retry" class="btn">Erneut prüfen</button>
+        <button id="ask-close" class="btn primary">Schliessen</button>
       </div>
     </div>
 
@@ -127,6 +189,7 @@
     </div>
   </div>
 
+  <script src="md.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

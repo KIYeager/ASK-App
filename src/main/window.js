@@ -1,4 +1,5 @@
-// Hauptfenster: eigene Oberfläche (Statusleiste, Seitenleiste, Dialoge) und ASK als WebContentsView.
+// Hauptfenster: eigene Oberfläche (Chat, Seitenleiste, Dialoge). Die ASK-Seite liegt als
+// WebContentsView darüber und ist nur für die Anmeldung sichtbar.
 const path = require('node:path');
 const { BrowserWindow, WebContentsView, Menu, shell, session, clipboard } = require('electron');
 const paths = require('./paths');
@@ -9,17 +10,14 @@ const ALLOWED_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-writ
   'fullscreen', 'local-network-access', 'local-network', 'loopback-network', 'speaker-selection']);
 
 class AppWindow {
-  constructor({ onAskRequest }) {
-    this.onAskRequest = onAskRequest;
+  constructor() {
     this.askOrigin = '';
-    this.terminalPort = 0;
-    this.terminalKey = '';
     this.askBounds = null;
     this.askVisible = false;
 
     this.win = new BrowserWindow({
       width: 1440, height: 920, minWidth: 960, minHeight: 600,
-      title: 'ASK', icon: paths.iconFile(), backgroundColor: '#f4f5f7', show: false, autoHideMenuBar: true,
+      title: 'ASK', icon: paths.iconFile(), backgroundColor: '#141414', show: false, autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(paths.preloadDir(), 'shell.js'),
         contextIsolation: true, sandbox: true, plugins: true, spellcheck: false,
@@ -64,27 +62,6 @@ class AppWindow {
     });
   }
 
-  // Echter Key wird nur hier eingesetzt; ASK selbst kennt nur den Platzhalter.
-  setTerminal(port, key) {
-    this.terminalPort = port;
-    this.terminalKey = key;
-    const filter = { urls: [`http://127.0.0.1:${port}/*`, `ws://127.0.0.1:${port}/*`] };
-    this.askSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-      const headers = details.requestHeaders;
-      const name = Object.keys(headers).find((k) => k.toLowerCase() === 'authorization');
-      const fromAsk = details.webContentsId === this.view.webContents.id;
-      if (fromAsk && this.terminalKey && (name || details.resourceType === 'webSocket')) {
-        headers[name || 'Authorization'] = `Bearer ${this.terminalKey}`;
-      }
-      callback({ requestHeaders: headers });
-    });
-    this.askSession.webRequest.onCompleted({ urls: [`http://127.0.0.1:${port}/*`] }, (details) => {
-      if (details.method !== 'OPTIONS' && details.statusCode < 400 && !/\/(health|api\/config)$/.test(details.url)) {
-        this.onAskRequest();
-      }
-    });
-  }
-
   setupAskView() {
     const wc = this.view.webContents;
     wc.setWindowOpenHandler(({ url }) => {
@@ -96,7 +73,6 @@ class AppWindow {
       if (isMainFrame && code !== -3) this.send('ask:load-failed', { code, description, url });
     });
     wc.on('did-finish-load', () => this.send('ask:loaded', { url: wc.getURL() }));
-    wc.on('page-title-updated', (_e, title) => this.win.setTitle(title ? `ASK – ${title.replace(/ ?[•|-] ?Open WebUI$/, '')}` : 'ASK'));
   }
 
   showContextMenu(params) {
@@ -132,7 +108,8 @@ class AppWindow {
   setupMenu() {
     // Unsichtbares Menü, damit die üblichen Tastenkürzel funktionieren.
     const ask = () => this.view.webContents;
-    const zoom = (delta) => ask().setZoomLevel(delta === 0 ? 0 : ask().getZoomLevel() + delta);
+    const ui = () => this.win.webContents;
+    const zoom = (delta) => ui().setZoomLevel(delta === 0 ? 0 : ui().getZoomLevel() + delta);
     const menu = Menu.buildFromTemplate([
       { label: 'Bearbeiten', submenu: [
         { role: 'undo', label: 'Rückgängig' }, { role: 'redo', label: 'Wiederholen' }, { type: 'separator' },
@@ -140,7 +117,7 @@ class AppWindow {
         { role: 'paste', label: 'Einfügen' }, { role: 'selectAll', label: 'Alles auswählen' },
       ] },
       { label: 'Ansicht', submenu: [
-        { label: 'ASK neu laden', accelerator: 'CmdOrCtrl+R', click: () => ask().reload() },
+        { label: 'ASK-Anmeldeseite neu laden', accelerator: 'CmdOrCtrl+R', click: () => ask().reload() },
         { label: 'Vergrössern', accelerator: 'CmdOrCtrl+Plus', click: () => zoom(0.5) },
         { label: 'Vergrössern', accelerator: 'CmdOrCtrl+=', visible: false, click: () => zoom(0.5) },
         { label: 'Verkleinern', accelerator: 'CmdOrCtrl+-', click: () => zoom(-0.5) },

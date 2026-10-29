@@ -73,6 +73,16 @@ async function evaluate(match, expression) {
 }
 const shell = (expr) => evaluate((u) => u.endsWith('index.html'), expr);
 
+// Neuer Chat, Auftrag an das Mock-Modell; es führt «echo hallo aus ASK» aus und meldet «Fertig».
+async function chatRoundtrip() {
+  await shell('window.ask.chatNew()');
+  await until('leerer Chat', () => shell('document.querySelectorAll("#messages .msg").length === 0'), 10000);
+  await until('bereit', () => shell('!document.getElementById("send-btn").disabled'), 60000);
+  await shell('window.ask.chatSend("Bitte teste die Werkzeuge")');
+  return until('Antwort im Chat', () => shell(`[...document.querySelectorAll('.msg.tool .result')].some((r) => r.textContent.includes('hallo aus ASK'))
+    && [...document.querySelectorAll('.msg.assistant .md')].some((m) => m.textContent.startsWith('Fertig'))`), 60000).catch(() => false);
+}
+
 function bundledPython() {
   const out = execFileSync('powershell.exe', ['-NoProfile', '-Command',
     'Get-CimInstance Win32_Process -Filter "Name=\'python.exe\'" | ForEach-Object { "$($_.ProcessId)|$($_.ExecutablePath)" }'],
@@ -105,7 +115,7 @@ async function main() {
   fs.mkdirSync(workdir, { recursive: true });
   fs.writeFileSync(settingsFile, JSON.stringify({ askUrl: mockUrl, folder: workdir, recent: [workdir],
     warningAccepted: true, sidebarOpen: true, autoConnect: true, port: 0 }));
-  const mock = spawn(process.execPath, [path.join(__dirname, 'mock-ask.js'), String(mockPort), 'frei'], { stdio: 'ignore' });
+  const mock = spawn(process.execPath, [path.join(__dirname, 'mock-ask.js'), String(mockPort), 'angemeldet'], { stdio: 'ignore' });
 
   try {
     let app = launch();
@@ -122,12 +132,9 @@ async function main() {
     check('Ohne Key: 401', (await get(`http://127.0.0.1:${port}/files/cwd`)).status === 401);
     check('Mit falschem Key: 401', (await get(`http://127.0.0.1:${port}/files/cwd`, { Authorization: 'Bearer ask-desktop' })).status === 401);
 
-    await until('Mit ASK verbunden', () => shell('document.getElementById("ask-text").textContent').then((t) => t === 'Mit ASK verbunden'), 60000);
-    check('Automatisch mit (Mock-)ASK verbunden', true);
-    const results = await until('Ergebnisse', () => get(`${mockUrl}/__mock/results`).then((r) => {
-      const j = JSON.parse(r.body); return j.execute ? j : null;
-    }));
-    check('ASK-Seite führt Befehl im Terminal aus', String(results.execute).includes('hallo aus ASK'), JSON.stringify(results));
+    await until('Bei ASK angemeldet', () => shell('document.getElementById("ask-text").textContent').then((t) => t === 'ASK: Lea Test'), 60000);
+    check('Bei (Mock-)ASK angemeldet', true);
+    check('Auftrag im Chat: Modell ruft Befehl im Terminal auf', await chatRoundtrip());
 
     for (const blocked of [process.env.OneDrive, 'C:\\Windows', process.env.USERPROFILE, 'C:\\'].filter(Boolean)) {
       const r = await shell(`window.ask.openFolder(${JSON.stringify(blocked)})`);
@@ -154,12 +161,8 @@ async function main() {
     app = launch();
     const port2 = await waitRunning();
     check('Neustart der App', true);
-    await get(`${mockUrl}/__mock/reset`);
-    const again = await until('Ergebnisse nach Neustart', () => get(`${mockUrl}/__mock/results`).then((r) => {
-      const j = JSON.parse(r.body); return j.execute ? j : null;
-    }));
-    check('Nach Neustart: ASK lädt erst, wenn das Terminal läuft (Werkzeuge beim ersten Laden da)',
-      again.firstLoad === 200, JSON.stringify(again));
+    check('Nach Neustart: letzter Chat wieder da', await until('Chat geladen', () => shell('document.querySelectorAll(".msg.tool").length >= 3'), 15000).catch(() => false));
+    check('Nach Neustart: Auftrag im Chat funktioniert', await chatRoundtrip());
     execFileSync('taskkill.exe', ['/F', '/PID', String(app.pid)]);
     await wait(4000);
     check('Nach Absturz (hart beendet): keine Python-Prozesse mehr', bundledPython().length === 0, bundledPython().join(','));

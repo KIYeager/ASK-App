@@ -5,16 +5,20 @@ eine JSON-Zeile von stdin, damit der API-Key weder in der Kommandozeile noch in 
 Anpassungen gegenüber open-terminal 0.14.2:
   - Ordnersperre für die Datei-API (guard.py)
   - CORS nur für den ASK-Origin, Private-Network-Preflight erlaubt
-  - Befehle ohne ConPTY (saubere UTF-8-Ausgabe), Abbruch beendet den ganzen Prozessbaum
+  - Befehle ohne ConPTY (saubere UTF-8-Ausgabe, Zeilen in der OEM-Codepage werden umgewandelt),
+    Abbruch beendet den ganzen Prozessbaum
   - Skills aus .ask/skills, eigener Systemprompt
+  - read_file liest Word vollständig, auch Inhaltssteuerelemente und Kopfzeilen (documents.py)
   - WebSocket-Anmeldung über den Header, den die App einsetzt
 """
+import asyncio
 import ctypes
 import hmac
 import json
 import os
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -22,6 +26,14 @@ from ask_terminal import VERSION, winproc  # noqa: E402
 from ask_terminal.guard import PathGuard, install as install_guard  # noqa: E402
 
 CREATE_NO_WINDOW = 0x08000000
+
+
+def decode_output(line: bytes, fallback: str) -> str:
+    """Python schreibt UTF-8, viele Windows-Programme (ping, ipconfig, Meldungen von cmd) die OEM-Codepage."""
+    try:
+        return line.decode("utf-8")
+    except UnicodeDecodeError:
+        return line.decode(fallback, errors="replace")
 
 
 def read_config() -> dict:
@@ -100,7 +112,20 @@ def main() -> None:
     install_guard(UserFS, PathGuard(workdir))
     ot.GLOBAL_SKILL_DIRS = (".ask/skills",) + tuple(ot.GLOBAL_SKILL_DIRS)
 
+    oem = f"cp{ctypes.windll.kernel32.GetOEMCP()}"
+
     class TreePipeRunner(PipeRunner):
+        async def read_output(self, log_file) -> None:
+            async def read_stream(stream, label):
+                async for line in stream:
+                    if log_file:
+                        entry = {"type": label, "data": decode_output(line, oem), "ts": time.time()}
+                        await log_file.write(json.dumps(entry) + "\n")
+
+            async with asyncio.TaskGroup() as readers:
+                readers.create_task(read_stream(self._process.stdout, "stdout"))
+                readers.create_task(read_stream(self._process.stderr, "stderr"))
+
         def kill(self, force: bool = False) -> None:
             if self._process is not None and self._process.returncode is None:
                 subprocess.run(["taskkill", "/T", "/F", "/PID", str(self._process.pid)],
@@ -112,6 +137,17 @@ def main() -> None:
         return runner
 
     ot.create_runner = create_runner
+
+    # read_file: eigener Word-Extraktor (documents.py), der auch Inhaltssteuerelemente liest
+    original_worker = ot.run_worker
+    documents_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "documents.py")
+
+    async def run_worker(command, *args, **kwargs):
+        if list(command[1:]) == ["-m", "open_terminal.utils.documents"]:
+            command = [command[0], documents_py]
+        return await original_worker(command, *args, **kwargs)
+
+    ot.run_worker = run_worker
 
     try:
         integrity = winproc.current_integrity_sid()
