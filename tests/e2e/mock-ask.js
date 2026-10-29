@@ -7,6 +7,9 @@
 // /__mock/tools/aus lässt Anfragen mit «tools» mit HTTP 400 scheitern, /__mock/usage/aus solche mit
 // «stream_options». Sonst kommen am Ende des Stroms Tokenzahlen (usage), wenn sie verlangt sind.
 const http = require('node:http');
+const { createMockGitHub } = require('./mock-github');
+
+const github = createMockGitHub(); // GitHub-API unter /github-api
 
 const port = Number(process.argv[2] || 18900);
 const mode = process.argv[3] || 'angemeldet';
@@ -74,6 +77,18 @@ function script(messages) {
     if (results < 5) return toolCallChunks([{ name: 'run_command', args: { command: `echo schritt ${results + 1}` } }]);
     return textChunks('Viele erledigt.');
   }
+  if (text.includes('auf github anlegen')) {
+    if (results === 0) return toolCallChunks([{ name: 'github_create', args: { name: 'testprojekt', beschreibung: 'Aus dem Test' } }]);
+    return textChunks('Das Projekt liegt jetzt auf GitHub.');
+  }
+  if (text.includes('auf github hochladen')) {
+    if (results === 0) return toolCallChunks([{ name: 'github_push', args: { nachricht: 'Bericht ergänzt' } }]);
+    return textChunks('Hochgeladen.');
+  }
+  if (text.includes('von github holen')) {
+    if (results === 0) return toolCallChunks([{ name: 'github_pull', args: {} }]);
+    return textChunks('Geholt.');
+  }
   if (text.includes('schleife')) return toolCallChunks([{ name: 'run_command', args: { command: 'echo immer gleich' } }]);
   if (text.includes('lies')) {
     if (results === 0) {
@@ -102,6 +117,25 @@ function script(messages) {
 
 http.createServer((req, res) => {
   log.push(`${req.method} ${req.url}`);
+  if (req.url.startsWith('/github-api/')) {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const r = github.handle(req.method, req.url.slice('/github-api'.length), req.headers, body ? JSON.parse(body) : null);
+      json(res, r.status, r.body);
+    });
+    return undefined;
+  }
+  if (req.url.startsWith('/__mock/github/')) {
+    // Für Tests: Datei auf GitHub lesen (/__mock/github/datei?repo=…&path=…) oder dort ändern (…/aendern)
+    const u = new URL(req.url, 'http://x');
+    if (u.pathname.endsWith('/aendern')) {
+      github.commitOnGitHub(u.searchParams.get('repo'), u.searchParams.get('path'), u.searchParams.get('text'));
+      return json(res, 200, {});
+    }
+    return json(res, 200, { text: github.fileOnGitHub(u.searchParams.get('repo'), u.searchParams.get('path')),
+      commits: github.commitCount(u.searchParams.get('repo')) });
+  }
   const authed = req.headers.authorization === `Bearer ${TOKEN}`;
   const url = req.url.split('?')[0];
   if (url === '/' || url === '/auth') {

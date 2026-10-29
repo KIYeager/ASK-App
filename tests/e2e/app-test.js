@@ -153,6 +153,8 @@ async function chat(ctx, check, shell, shoot) {
   check('Schalter «Web» schaltet wieder aus', settings.get('webSearch') === false);
 await compact(ctx, check, shell, shoot);
 
+  await githubFlow(ctx, check, shell, shoot);
+
   // Sperren gelten auch für die Werkzeuge der App
   const outside = path.join(path.dirname(folder), 'ausserhalb-chat.txt');
   const shellOut = await runTool(terminal, 'run_command', { command: `echo x > "${outside}"` });
@@ -255,6 +257,48 @@ await compact(ctx, check, shell, shoot);
   check('Chat löschen', otherChats.length === 1 && agent.remove(opened.path, otherChats[0].id) && agent.list(opened.path).length === 0, JSON.stringify(otherChats));
   check('Skripte des gelöschten Chats sind weg', !fs.existsSync(chatScripts));
   check('Dateien im Ordner bleiben beim Löschen', fs.existsSync(path.join(opened.path, 'ausgabe', 'bericht.txt')));
+}
+
+// GitHub: verbinden über /github, Projekt anlegen, hochladen, holen (gegen den Nachbau in mock-github.js)
+async function githubFlow(ctx, check, shell, shoot) {
+  const { agent, settings } = ctx;
+  const mockUrl = process.env.ASK_TEST_ASK_URL;
+  const folder = settings.get('folder');
+  const onGitHub = (p) => getJson(`${mockUrl}/__mock/github/datei?repo=lea-test/testprojekt&path=${encodeURIComponent(p)}`);
+
+  await order(shell, agent, 'Bitte auf github anlegen');
+  const notConnected = await shell(`[...document.querySelectorAll('.msg.tool')].pop().querySelector('.result').textContent`);
+  check('Ohne Verbindung: Hinweis auf /github', /Nicht mit GitHub verbunden.*\/github/.test(notConnected), notConnected);
+
+  await shell(`(() => { const i = document.getElementById('input'); i.value = '/github'; i.dispatchEvent(new Event('input')); document.getElementById('send-btn').click(); })()`);
+  await until('GitHub-Dialog', () => shell('!document.getElementById("dlg-github").hidden'), 5000);
+  await shell(`(() => { document.getElementById('github-token').value = 'falsch'; document.getElementById('github-ok').click(); })()`).catch(() => {});
+  await until('Fehler', () => shell('!document.getElementById("github-error").hidden'), 5000).catch(() => {});
+  check('Falsches Token wird abgelehnt', await shell('document.getElementById("github-error").textContent.includes("Token")'));
+  await shell(`(() => { document.getElementById('github-token').value = 'gh-test-token'; document.getElementById('github-ok').click(); })()`);
+  await until('verbunden', () => shell('document.getElementById("github-body").textContent.includes("lea-test")'), 5000).catch(() => {});
+  check('Verbunden als lea-test', await shell('document.getElementById("github-body").textContent.includes("Verbunden als lea-test")'));
+  const stored = JSON.parse(fs.readFileSync(path.join(process.env.ASK_TEST_USER_DATA, 'einstellungen.json'), 'utf8')).githubToken;
+  check('Token verschlüsselt gespeichert', stored && !stored.includes('gh-test-token') && !Buffer.from(stored, 'base64').toString('latin1').includes('gh-test-token'));
+  await shoot('11-github');
+  await shell('document.getElementById("github-close").click()');
+
+  await order(shell, agent, 'Bitte auf github anlegen');
+  const readme = await onGitHub('ausgabe/bericht.txt');
+  check('Projekt auf GitHub angelegt und hochgeladen', readme.text === fs.readFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'utf8'), JSON.stringify(readme));
+  check('.ask nicht hochgeladen', (await onGitHub('.ask/tasks.json')).text === null);
+  check('Ordner mit dem Repository verbunden', JSON.parse(fs.readFileSync(path.join(folder, '.ask', 'github.json'), 'utf8')).repo === 'lea-test/testprojekt');
+
+  fs.writeFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'Inhalt des Berichts, ergänzt');
+  await order(shell, agent, 'Bitte auf github hochladen');
+  check('Änderung als Commit hochgeladen', (await onGitHub('ausgabe/bericht.txt')).text === 'Inhalt des Berichts, ergänzt');
+
+  await getJson(`${mockUrl}/__mock/github/aendern?repo=lea-test/testprojekt&path=notizen.txt&text=${encodeURIComponent('aus einer anderen Sitzung')}`);
+  await order(shell, agent, 'Bitte von github holen');
+  check('Änderung aus anderer Sitzung geholt', fs.readFileSync(path.join(folder, 'notizen.txt'), 'utf8') === 'aus einer anderen Sitzung');
+  const rows = await shell(`[...document.querySelectorAll('.msg.tool')].slice(-3).map((r) => r.querySelector('.call').textContent + ' ⎿ ' + r.querySelector('.result').textContent)`);
+  check('GitHub-Zeilen im Chat', rows.some((r) => /GitHub\(neu testprojekt \(privat\)\)/.test(r)) && rows.some((r) => /GitHub\(holen\)/.test(r)), JSON.stringify(rows));
+  fs.writeFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'Inhalt des Berichts'); // für die folgenden Prüfungen
 }
 
 // Anzeige wie Claude Code, Lese-Gruppe, Denkstufen, Schleifenschutz, versteckter Ordner .ask

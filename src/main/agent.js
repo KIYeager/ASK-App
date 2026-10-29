@@ -93,8 +93,10 @@ function apiMessages(system, messages, textMode = false) {
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, confirm }) {
     super();
+    this.github = github;
+    this.confirm = confirm || (async () => false);
     this.ask = ask;
     this.terminal = terminal;
     this.getFolder = getFolder;
@@ -343,6 +345,9 @@ class Agent extends EventEmitter {
         : await runTool(this.terminal, call.function.name, call.function.arguments, {
           signal,
           onProgress: (output) => this.event({ type: 'tool-progress', id: call.id, output: clip(output, 4000) }),
+          github: this.github,
+          folder: this.getFolder(),
+          confirm: this.confirm,
         });
       this.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: result.output, ok: result.ok,
         summary: result.summary, display: clip(result.display ?? result.output, 6000), tasks: result.tasks, textMode, ms: Date.now() - started });

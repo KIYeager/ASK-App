@@ -206,7 +206,7 @@ function showAskPage() {
 
 function renderDialogs() {
   const currentDialog = activeDialog();
-  for (const name of ['warning', 'url', 'start', 'ask', 'terminal', 'preview']) {
+  for (const name of ['warning', 'url', 'start', 'ask', 'github', 'terminal', 'preview']) {
     $(`dlg-${name}`).hidden = name !== currentDialog;
   }
   $('overlay').hidden = !currentDialog;
@@ -267,6 +267,35 @@ function renderAskDialog() {
     body.append(p('Nicht angemeldet. Die Anmeldeseite von ASK erscheint im Hauptfenster.'));
   }
   $('ask-logout').hidden = a.state !== 'angemeldet';
+}
+
+// ---------- GitHub (/github) ----------
+
+async function showGithub() {
+  openDialog = 'github';
+  render();
+  const s = await api.githubStatus();
+  const p = (...parts) => el('p', {}, ...parts);
+  const body = $('github-body');
+  body.replaceChildren();
+  if (s.connected && s.login) {
+    body.append(p('Verbunden als ', el('strong', {}, s.login), '.'));
+    if (s.linked) {
+      body.append(p('Dieser Ordner gehört zu ', el('a', { href: s.url, onclick: (e) => { e.preventDefault(); api.openLink(s.url); } }, s.repo),
+        `. Hier geändert: ${s.changed.length + s.added.length + s.deleted.length} Dateien${s.remoteNewer ? '; auf GitHub gibt es Neueres' : ''}.`));
+    } else {
+      body.append(p('Dieser Ordner ist mit keinem Repository verbunden. Sag dem Modell zum Beispiel «Hol das Repository besitzer/name» oder «Leg das Projekt auf GitHub an».'));
+    }
+    body.append(p(el('span', { class: 'muted small' }, 'Im Chat: «lade die Änderungen auf GitHub hoch», «hol die neuesten Änderungen von GitHub».')));
+  } else if (s.message) {
+    body.append(p(`GitHub meldet: ${s.message}`));
+  }
+  const connected = !!(s.connected && s.login);
+  $('github-connect').hidden = connected;
+  $('github-ok').hidden = connected;
+  $('github-disconnect').hidden = !connected;
+  $('github-error').hidden = true;
+  $('github-token').value = '';
 }
 
 async function renderTerminalDialog() {
@@ -793,6 +822,7 @@ const COMMANDS = [
   { cmd: '/suchen', text: 'Chats durchsuchen', run: () => { if (!state.chatbarOpen) api.setChatbar(true); $('chat-search').focus(); } },
   { cmd: '/ordner', text: 'Anderen Arbeitsordner wählen', run: () => openFolder(api.chooseFolder) },
   { cmd: '/explorer', text: 'Arbeitsordner im Explorer öffnen', run: () => api.showFolder() },
+  { cmd: '/github', text: 'Mit GitHub verbinden, Repository des Ordners', run: () => showGithub() },
   { cmd: '/modell', text: 'Modell wählen', run: () => $('model-select').focus() },
   { cmd: '/denken', text: 'Denkaufwand einstellen (Standard, Tief bis Maximal)', run: () => toggleThinkPop(true) },
   { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api.setWebSearch(!state.webSearch); } },
@@ -1116,6 +1146,20 @@ function wire() {
   api.onTasks((t) => renderTasks(t));
   api.onMenuChooseFolder(() => openFolder(api.chooseFolder));
   api.onMenuNewFolder(() => openFolder(api.newFolder));
+  api.onMenuGithub(() => showGithub());
+  $('github-token-link').onclick = () => api.openLink('https://github.com/settings/tokens/new?scopes=repo&description=ASK%20Desktop');
+  $('github-ok').onclick = async () => {
+    const res = await api.githubConnect($('github-token').value);
+    if (!res.ok) {
+      $('github-error').textContent = res.message;
+      $('github-error').hidden = false;
+      return;
+    }
+    showGithub();
+  };
+  $('github-token').onkeydown = (e) => { if (e.key === 'Enter') $('github-ok').click(); };
+  $('github-disconnect').onclick = async () => { await api.githubDisconnect(); showGithub(); };
+  $('github-close').onclick = () => { openDialog = null; render(); };
   api.onFolderError((reason) => alertBox(reason));
   api.onAskLoaded(() => {
     askFailed = false;

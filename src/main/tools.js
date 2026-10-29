@@ -298,6 +298,104 @@ const TOOLS = [
   },
 ];
 
+// GitHub: Projekt holen und hochladen (src/main/github.js). Das Token kennt nur der Hauptprozess;
+// Anlegen und Hochladen bestätigt die Person in einem Dialog (ctx.confirm).
+const NOT_CONNECTED = 'Nicht mit GitHub verbunden. Sag der Person: in der App /github eingeben und ein Token eintragen.';
+
+function githubTool(fn) {
+  return async (terminal, args, ctx) => {
+    if (!ctx.github || !ctx.folder) throw new Error('GitHub ist hier nicht verfügbar.');
+    if (!ctx.github.connected()) return { ok: false, output: NOT_CONNECTED, summary: 'nicht verbunden' };
+    return fn(ctx.github, ctx.folder, args, ctx);
+  };
+}
+
+const list = (items, max = 15) => (items.length ? `${items.slice(0, max).join(', ')}${items.length > max ? ` und ${items.length - max} weitere` : ''}` : '–');
+
+TOOLS.push(
+  {
+    name: 'github_status',
+    label: 'GitHub',
+    describe: () => 'Status',
+    description: 'Zeigt, ob der Arbeitsordner mit einem GitHub-Repository verbunden ist, was hier geändert ist und ob es auf GitHub Neueres gibt.',
+    parameters: { type: 'object', properties: {} },
+    run: githubTool(async (gh, folder) => {
+      const s = await gh.status(folder);
+      if (!s.linked) return { ok: true, output: `Mit GitHub verbunden als ${s.login}. Der Ordner ist mit keinem Repository verbunden (github_clone oder github_create).`, summary: 'kein Repository' };
+      const output = [`Repository: ${s.repo} (${s.url}), Branch ${s.branch}`, `Geändert: ${list(s.changed)}`, `Neu: ${list(s.added)}`,
+        `Gelöscht: ${list(s.deleted)}`, s.remoteNewer ? 'Auf GitHub gibt es neuere Änderungen: zuerst github_pull.' : 'GitHub ist auf dem Stand des letzten Abgleichs.'].join('\n');
+      return { ok: true, output, summary: `${s.repo} · ${s.changed.length + s.added.length + s.deleted.length} Änderungen hier${s.remoteNewer ? ' · auf GitHub Neueres' : ''}` };
+    }),
+  },
+  {
+    name: 'github_clone',
+    label: 'GitHub',
+    describe: (a) => `holen ${a.repo}`,
+    description: 'Holt ein GitHub-Repository in den Arbeitsordner und verbindet den Ordner damit. Vorhandene Dateien mit gleichem Namen werden nicht überschrieben.',
+    parameters: { type: 'object', properties: { repo: { type: 'string', description: 'besitzer/name oder GitHub-Adresse' } }, required: ['repo'] },
+    run: githubTool(async (gh, folder, a) => {
+      const r = await gh.clone(folder, a.repo);
+      const output = `Geholt von ${r.repo}: ${r.written.length} Dateien.${r.conflicts.length ? ` Nicht überschrieben, weil hier schon anders vorhanden: ${list(r.conflicts)}.` : ''}`;
+      return { ok: true, output, summary: `${r.written.length} Dateien von ${r.repo}${r.conflicts.length ? ` · ${r.conflicts.length} Konflikte` : ''}` };
+    }),
+  },
+  {
+    name: 'github_pull',
+    label: 'GitHub',
+    describe: () => 'holen',
+    description: 'Holt Änderungen vom verbundenen GitHub-Repository. Hier geänderte Dateien werden nie überschrieben, sondern als Konflikt gemeldet.',
+    parameters: { type: 'object', properties: {} },
+    run: githubTool(async (gh, folder) => {
+      const r = await gh.pull(folder);
+      const output = [`Geholt: ${list(r.written)}`, `Gelöscht (auf GitHub entfernt): ${list(r.removed)}`,
+        r.conflicts.length ? `Konflikte (hier und auf GitHub geändert, nichts überschrieben): ${list(r.conflicts)}. Die Person entscheiden lassen.` : 'Keine Konflikte.'].join('\n');
+      return { ok: true, output, summary: `${r.written.length} geholt${r.removed.length ? `, ${r.removed.length} gelöscht` : ''}${r.conflicts.length ? ` · ${r.conflicts.length} Konflikte` : ''}` };
+    }),
+  },
+  {
+    name: 'github_push',
+    label: 'GitHub',
+    describe: (a) => `hochladen «${a.nachricht || ''}»`,
+    description: 'Lädt die Änderungen im Arbeitsordner als Commit auf das verbundene GitHub-Repository hoch (ohne .ask). Die Person bestätigt vorher.',
+    parameters: { type: 'object', properties: { nachricht: { type: 'string', description: 'Kurze Commit-Nachricht, was sich geändert hat' } }, required: ['nachricht'] },
+    run: githubTool(async (gh, folder, a, ctx) => {
+      const s = await gh.status(folder);
+      if (!s.linked) return { ok: false, output: 'Der Ordner ist mit keinem Repository verbunden (github_create oder github_clone).', summary: 'kein Repository' };
+      const changes = [...s.changed, ...s.added, ...s.deleted];
+      if (changes.length === 0) return { ok: true, output: 'Nichts hochzuladen: keine Änderungen seit dem letzten Abgleich.', summary: 'nichts zu tun' };
+      if (!(await ctx.confirm(`${changes.length} Änderungen auf GitHub hochladen?`, `Repository: ${s.repo}\nNachricht: ${a.nachricht}\n\n${list(changes, 20)}`))) {
+        return { ok: false, output: 'Die Person hat das Hochladen abgelehnt.', summary: 'abgelehnt' };
+      }
+      const r = await gh.push(folder, a.nachricht);
+      return { ok: true, output: `Hochgeladen: ${r.uploaded} Dateien, ${r.deleted.length} gelöscht. ${r.url}`, summary: `${r.uploaded} hochgeladen${r.deleted.length ? `, ${r.deleted.length} gelöscht` : ''} · ${s.repo}` };
+    }),
+  },
+  {
+    name: 'github_create',
+    label: 'GitHub',
+    describe: (a) => `neu ${a.name}${a.privat === false ? ' (öffentlich)' : ' (privat)'}`,
+    description: 'Legt ein neues GitHub-Repository an (standardmässig privat), verbindet den Arbeitsordner damit und lädt ihn hoch. Die Person bestätigt vorher.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Name des Repositorys, z. B. frogger-spiel' },
+        privat: { type: 'boolean', description: 'Privat (Standard true). Öffentlich nur, wenn die Person es ausdrücklich will.' },
+        beschreibung: { type: 'string' },
+      },
+      required: ['name'],
+    },
+    run: githubTool(async (gh, folder, a, ctx) => {
+      const privat = a.privat !== false;
+      if (!(await ctx.confirm(`Neues ${privat ? 'privates' : 'ÖFFENTLICHES'} GitHub-Repository «${a.name}» anlegen und den Arbeitsordner hochladen?`,
+        `Konto: ${await gh.whoami()}\nOrdner: ${folder}\nHochgeladen wird alles ausser .ask (Chats, Skripte).`))) {
+        return { ok: false, output: 'Die Person hat das Anlegen abgelehnt.', summary: 'abgelehnt' };
+      }
+      const r = await gh.create(folder, String(a.name).trim(), { privat, beschreibung: a.beschreibung || '' });
+      return { ok: true, output: `Angelegt: ${r.repo} (${r.private ? 'privat' : 'öffentlich'}), ${r.uploaded} Dateien hochgeladen. ${r.url}`, summary: `${r.repo} · ${r.uploaded} Dateien` };
+    }),
+  },
+);
+
 const byName = new Map(TOOLS.map((t) => [t.name, t]));
 
 // Werkzeugbeschreibungen im OpenAI-Format; die Befehlsbeschreibung kommt aus resources/anweisungen.

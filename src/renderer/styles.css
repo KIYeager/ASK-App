@@ -377,7 +377,7 @@ body:not(.verbose) .msg.folded { display: none; }
 .dialog h1::before { content: "✻ "; color: var(--accent); }
 .dialog h2 { font-size: 13px; color: var(--muted); margin: 18px 0 6px; }
 .dialog p { margin: 0 0 10px; }
-.dialog input[type=url] {
+.dialog input[type=url], .dialog input[type=password] {
   width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-2); background: var(--bg);
   color: var(--text); font: 14px var(--mono);
 }

@@ -170,6 +170,23 @@
       </div>
     </div>
 
+    <div id="dlg-github" class="dialog" hidden>
+      <h1>GitHub</h1>
+      <div id="github-body"></div>
+      <div id="github-connect">
+        <p>Damit das Modell Projekte von GitHub holen und hochladen kann, braucht die App einmal ein persönliches Token mit dem Recht «repo».
+          <button id="github-token-link" class="link-btn" type="button">Token auf github.com erstellen</button></p>
+        <input id="github-token" type="password" placeholder="ghp_… oder github_pat_…" spellcheck="false" autocomplete="off">
+        <p class="muted small">Das Token wird mit deinem Windows-Konto verschlüsselt gespeichert. Das Modell und das Terminal sehen es nie. Anlegen und Hochladen bestätigst du jedes Mal.</p>
+        <p id="github-error" class="error" hidden></p>
+      </div>
+      <div class="actions">
+        <button id="github-disconnect" class="btn">Trennen</button>
+        <button id="github-ok" class="btn primary">Verbinden</button>
+        <button id="github-close" class="btn">Schliessen</button>
+      </div>
+    </div>
+
     <div id="dlg-terminal" class="dialog wide" hidden>
       <h1>Terminal</h1>
       <p id="terminal-detail"></p>

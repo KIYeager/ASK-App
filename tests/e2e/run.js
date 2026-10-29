@@ -44,7 +44,8 @@ const mock = spawn(process.execPath, [path.join(__dirname, 'mock-ask.js'), Strin
 const app = spawn(electron, [root], {
   stdio: ['ignore', 'pipe', 'pipe'],
   env: { ...process.env, ASK_TEST_USER_DATA: userData, ASK_TEST_SCRIPT: path.join(__dirname, 'app-test.js'),
-    ASK_TEST_REPORT: report, ASK_TEST_SCENARIO: scenario, ASK_TEST_SHOTS: shots, ASK_TEST_ASK_URL: askUrl },
+    ASK_TEST_REPORT: report, ASK_TEST_SCENARIO: scenario, ASK_TEST_SHOTS: shots, ASK_TEST_ASK_URL: askUrl,
+    ASK_TEST_GITHUB_API: `${askUrl}/github-api`, ASK_TEST_AUTOCONFIRM: '1' },
 });
 app.stdout.on('data', (d) => process.stdout.write(`[app] ${d}`));
 app.stderr.on('data', (d) => process.stderr.write(`[app] ${d}`));

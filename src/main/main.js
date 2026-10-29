@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu } = require('electron');
+const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage } = require('electron');
 const settings = require('./settings');
 const paths = require('./paths');
 const { checkFolder } = require('./folders');
@@ -13,6 +13,7 @@ const { Workspace } = require('./workspace');
 const { AppWindow } = require('./window');
 const { convertToPdf } = require('./office');
 const { cleanupOldVersions } = require('./portable');
+const { GitHub } = require('./github');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -31,7 +32,35 @@ if (!singleInstance) {
 const terminal = new Terminal();
 const ask = new AskSession();
 const workspace = new Workspace();
+const testMode = !app.isPackaged && !!process.env.ASK_TEST_SCRIPT;
+
+// GitHub-Token verschlüsselt mit dem Windows-Konto (DPAPI) in den Einstellungen; nur hier lesbar.
+const github = new GitHub({
+  api: (testMode && process.env.ASK_TEST_GITHUB_API) || undefined,
+  store: {
+    get() {
+      const stored = settings.get('githubToken');
+      if (!stored) return '';
+      try { return safeStorage.decryptString(Buffer.from(stored, 'base64')); } catch { return ''; }
+    },
+    set(token) {
+      settings.set({ githubToken: token ? safeStorage.encryptString(token).toString('base64') : '' });
+    },
+  },
+  fetchImpl: (url, options) => net.fetch(url, options), // Netzwerk von Chromium, nutzt den Proxy von Windows
+});
+
+// Rückfrage vor Aktionen nach aussen (GitHub anlegen, hochladen). In automatischen Tests: ja.
+async function confirm(message, detail) {
+  if (testMode && process.env.ASK_TEST_AUTOCONFIRM === '1') return true;
+  if (!appWindow) return false;
+  const res = await dialog.showMessageBox(appWindow.win, { type: 'question', buttons: ['Ja', 'Nein'], defaultId: 0, cancelId: 1, message, detail });
+  return res.response === 0;
+}
+
 const agent = new Agent({
+  github,
+  confirm,
   ask,
   terminal,
   getFolder: () => (terminal.state === 'läuft' ? terminal.folder : settings.get('folder')),
@@ -216,6 +245,7 @@ function setupIpc() {
     if (items.length) items.push({ type: 'separator' });
     items.push({ label: 'Anderen Ordner wählen …', click: () => ipcMain.emit('folder:choose-from-menu') });
     items.push({ label: 'Neuen Projektordner anlegen', click: () => appWindow.send('menu:new-folder') });
+    items.push({ label: 'GitHub …', click: () => appWindow.send('menu:github') });
     if (folder) {
       items.push({ type: 'separator' });
       items.push({ label: 'Arbeitsordner im Explorer öffnen', click: () => shell.openPath(folder) });
@@ -270,6 +300,23 @@ function setupIpc() {
   ipcMain.handle('chat:send', (_e, text) => { agent.send(text); });
   ipcMain.handle('chat:stop', () => agent.stop());
   ipcMain.handle('chat:goal', (_e, text) => agent.setGoal(text));
+  ipcMain.handle('github:status', async () => {
+    try {
+      const folder = settings.get('folder');
+      const s = folder ? await github.status(folder) : { linked: false, connected: github.connected(), login: github.connected() ? await github.whoami() : '' };
+      return { ok: true, ...s };
+    } catch (err) {
+      return { ok: false, connected: github.connected(), message: err.message };
+    }
+  });
+  ipcMain.handle('github:connect', async (_e, token) => {
+    try {
+      return { ok: true, login: await github.connect(token) };
+    } catch (err) {
+      return { ok: false, message: err.message };
+    }
+  });
+  ipcMain.handle('github:disconnect', () => github.disconnect());
   ipcMain.handle('chat:new', (_e, folder) => openChat(folder || settings.get('folder'), NEW));
   ipcMain.handle('chat:groups', () => chatGroups());
   ipcMain.handle('chat:open', (_e, folder, id) => openChat(folder, id));
