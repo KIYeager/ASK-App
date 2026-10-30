@@ -84,7 +84,8 @@ async function browserPane() {
   const view = appWindow.ensureBrowser();
   for (let i = 0; i < 40 && !appWindow.browserReady(); i++) await new Promise((r) => setTimeout(r, 50));
   if (!appWindow.browserReady()) return null;
-  return { wc: view.webContents, mode: 'sichtbar', allow: (fileRoot) => { view.fileRoot = fileRoot; }, close: () => {} };
+  // focus tut nichts: Die Person tippt vielleicht gerade im Chat, die Eingaben des Modells erreichen die Seite auch so
+  return { wc: view.webContents, mode: 'sichtbar', allow: (fileRoot) => { view.fileRoot = fileRoot; }, focus: () => {}, close: () => {} };
 }
 
 const visual = new Visual({ electron: { BrowserWindow, nativeImage }, convertToPdf, renderPage: path.join(__dirname, 'render', 'pdf.html'),

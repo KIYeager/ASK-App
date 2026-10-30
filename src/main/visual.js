@@ -180,7 +180,7 @@ class Visual {
       live({ frame: `data:image/jpeg;base64,${lastPaint.resize({ width: 960, quality: 'good' }).toJPEG(80).toString('base64')}` });
     }, Math.round(1000 / LIVE_FPS));
     return {
-      wc, mode: 'unsichtbar', lastPaint: () => lastPaint,
+      wc, mode: 'unsichtbar', lastPaint: () => lastPaint, focus: () => wc.focus(),
       allow: (fileRoot) => wc.on('will-navigate', (e, to) => { if (!allowedNavigation(to, fileRoot)) e.preventDefault(); }),
       close: () => { clearInterval(stream); if (!win.isDestroyed()) win.destroy(); },
     };
@@ -263,7 +263,7 @@ class Visual {
         await pause(Math.min(Math.max(Number(warten), 0), 10000));
       }
       live({ step: page ? 'geladen' : 'weiter auf der offenen Seite' });
-      if (Array.isArray(aktionen) && aktionen.length) wc.focus();
+      if (Array.isArray(aktionen) && aktionen.length) view.focus();
 
       const done = [];
       for (const a of (Array.isArray(aktionen) ? aktionen : []).slice(0, MAX_ACTIONS)) {
@@ -285,7 +285,7 @@ class Visual {
           done.push(`Klick ${name}`);
         } else if (a.taste !== undefined) {
           const code = keyCode(a.taste);
-          wc.focus();
+          view.focus();
           send({ type: 'keyDown', keyCode: code });
           if (code.length === 1) send({ type: 'char', keyCode: code });
           await pause(Math.min(Math.max(Number(a.dauer) || 60, 20), 3000));

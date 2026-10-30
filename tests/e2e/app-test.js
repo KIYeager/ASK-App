@@ -535,7 +535,9 @@ async function visualFlow(ctx, check, shell, shoot) {
     return t.querySelector('.call').textContent.startsWith('Ansehen(grafik.png') && t.querySelector('.shots img').naturalWidth === 60; })()`));
   check('Ansicht nicht als Eingabe im Chat', agent.transcript().every((i) => !String(i.content || '').startsWith('[Ansicht]')));
 
+  await shell('document.getElementById("input").focus()');
   await order(shell, agent, 'Bitte spiel testen');
+  check('Browser nimmt dem Eingabefeld den Fokus nicht', await shell('document.activeElement === document.getElementById("input")') && !appWindow.browser.webContents.isFocused());
   const tested = agent.chat.messages.filter((m) => m.role === 'tool').pop();
   check('browser: Konsole, Klick und Taste', tested.ok && tested.content.includes('Fehler: absichtlicher Testfehler') && tested.content.includes('Gestartet Rechts')
     && tested.content.includes('«Testspiel»'), tested.content);
