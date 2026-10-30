@@ -1,7 +1,7 @@
 // Tests für das Lesen der Antworten von ASK und den Verlauf an das Modell (node --test tests/).
 const test = require('node:test');
 const assert = require('node:assert');
-const { SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed } = require('../src/main/askapi');
+const { AskSession, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal } = require('../src/main/askapi');
 const { apiMessages } = require('../src/main/agent');
 const { parseArgs, clip, toolSpecs } = require('../src/main/tools');
 
@@ -74,6 +74,58 @@ test('Websuche: Freigabe und Quellen aus ASK', () => {
   c.add({ sources: [{ metadata: [{ source: 'https://a.ch/x', title: 'A' }] }] });
   c.add({ sources: [{ metadata: [{ source: 'https://a.ch/x', title: 'A' }] }] });
   assert.strictEqual(c.sources.length, 1);
+});
+
+test('Alter Terminal-Eintrag: nur genau dieser gilt als alt', () => {
+  const old = { name: 'ASK Desktop', key: 'ask-desktop', url: 'http://127.0.0.1:30853' };
+  assert.strictEqual(isStaleTerminal(old), true);
+  assert.strictEqual(isStaleTerminal({ ...old, key: 'echter-key' }), false);
+  assert.strictEqual(isStaleTerminal({ ...old, name: 'Mein Terminal' }), false);
+  assert.strictEqual(isStaleTerminal({ ...old, url: 'https://terminal.example.ch' }), false);
+  assert.strictEqual(isStaleTerminal(null), false);
+});
+
+// AskSession mit nachgebauter ASK-Schnittstelle; zeichnet die Schreibzugriffe auf.
+function cleanerWith(settingsResponse) {
+  const ask = new AskSession();
+  ask.base = 'https://ask.example.ch';
+  const writes = [];
+  ask.session = {
+    fetch: async (url, options = {}) => {
+      if (url.endsWith('/settings/update')) {
+        writes.push(JSON.parse(options.body));
+        return { ok: true };
+      }
+      return settingsResponse();
+    },
+  };
+  return { ask, writes };
+}
+
+test('Alter Terminal-Eintrag: wird einmal entfernt, Anderes bleibt', async () => {
+  const mine = { name: 'Mein Terminal', key: 'k', url: 'http://127.0.0.1:8000', enabled: false };
+  const servers = [mine, { name: 'ASK Desktop', key: 'ask-desktop', url: 'http://127.0.0.1:30853', enabled: true }];
+  const { ask, writes } = cleanerWith(() => ({ ok: true, json: async () => ({ ui: { terminalServers: servers } }) }));
+  await ask.cleanStaleTerminal('token');
+  await ask.cleanStaleTerminal('token');
+  assert.deepStrictEqual(writes, [{ ui: { terminalServers: [mine] } }]);
+});
+
+test('Alter Terminal-Eintrag: ohne Eintrag oder bei Fehlern kein Schreiben, Anmeldung bleibt', async () => {
+  const none = cleanerWith(() => ({ ok: true, json: async () => ({ ui: { terminalServers: [{ name: 'Mein Terminal', url: 'http://127.0.0.1:8000' }] } }) }));
+  await none.ask.cleanStaleTerminal('token');
+  assert.deepStrictEqual(none.writes, []);
+  const empty = cleanerWith(() => ({ ok: true, json: async () => ({}) }));
+  await empty.ask.cleanStaleTerminal('token');
+  assert.deepStrictEqual(empty.writes, []);
+  const denied = cleanerWith(() => ({ ok: false, status: 403 }));
+  denied.ask.token = 'token';
+  await denied.ask.cleanStaleTerminal('token');
+  assert.deepStrictEqual(denied.writes, []);
+  assert.strictEqual(denied.ask.token, 'token');
+  const broken = cleanerWith(() => { throw new Error('offline'); });
+  await broken.ask.cleanStaleTerminal('token');
+  assert.deepStrictEqual(broken.writes, []);
 });
 
 test('Werkzeugaufrufe im Text (Qwen-Format)', () => {

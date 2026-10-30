@@ -209,6 +209,12 @@ function parseSources(list) {
   return out;
 }
 
+// Terminal-Einträge, die Versionen bis 29.10.2026 in den ASK-Einstellungen hinterlassen haben (E30).
+// Nur genau dieser Eintrag zählt, eigene Terminals der Person bleiben unberührt.
+function isStaleTerminal(s) {
+  return s?.name === 'ASK Desktop' && s?.key === 'ask-desktop' && /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(String(s?.url));
+}
+
 async function errorOf(res) {
   const text = await res.text().catch(() => '');
   let detail = text;
@@ -289,6 +295,7 @@ class AskSession extends EventEmitter {
       this.webSearch = webSearchAllowed(await this.json('/api/config').catch(() => ({})), user);
       this.publish({ state: 'angemeldet', user: this.user.name });
       if (models.length === 0) this.publish({ state: 'fehler', message: 'ASK bietet diesem Konto kein Modell an.' });
+      this.cleanStaleTerminal(token);
     } catch (err) {
       if (err instanceof AuthError) this.publish({ state: 'nicht-angemeldet' });
       else this.publish({ state: 'fehler', message: err.message });
@@ -314,6 +321,26 @@ class AskSession extends EventEmitter {
       throw new AuthError('Die Anmeldung bei ASK ist abgelaufen. Bitte neu anmelden.');
     }
     return res;
+  }
+
+  // Entfernt den alten Terminal-Eintrag aus den ASK-Einstellungen, einmal pro Anmeldung. Ohne die
+  // Abmelde-Logik von request(): Schlägt das fehl, bleibt die Anmeldung gültig, und der nächste Start versucht es wieder.
+  async cleanStaleTerminal(token) {
+    if (this.cleanedFor === token) return;
+    this.cleanedFor = token;
+    try {
+      const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+      const res = await this.session.fetch(`${this.base}/api/v1/users/user/settings`, { headers });
+      if (!res.ok) return;
+      const servers = (await res.json())?.ui?.terminalServers;
+      if (!Array.isArray(servers) || !servers.some(isStaleTerminal)) return;
+      await this.session.fetch(`${this.base}/api/v1/users/user/settings/update`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ ui: { terminalServers: servers.filter((s) => !isStaleTerminal(s)) } }),
+      });
+    } catch {
+      // nicht wichtig genug für eine Meldung
+    }
   }
 
   // Websuche von ASK (Open WebUI /api/v1/retrieval/process/web/search) für das Werkzeug web_search.
@@ -401,4 +428,4 @@ class AskSession extends EventEmitter {
   }
 }
 
-module.exports = { AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, THINKING_PARAMS, THINKING_LEVELS };
+module.exports = { AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS };

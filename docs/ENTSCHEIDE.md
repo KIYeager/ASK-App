@@ -178,3 +178,9 @@ Navigation: Webseiten sind frei, Dateien nur im Arbeitsordner. Das Modell kann k
 Anmeldung: Die Sitzung liegt in `persist:ask-browser`, getrennt von ASK und Chrome, damit das Modell mit einer Anmeldung weiterarbeiten kann. Das Modell gibt keine Passwörter ein. Popups sind als kleine Fenster erlaubt, weil Anmeldungen über Microsoft und Google sie brauchen; neue Tabs öffnen in derselben Ansicht. Downloads und Berechtigungen (Kamera, Standort usw.) bleiben gesperrt, ausser Vollbild.
 
 Risiko: Das Modell handelt auf Webseiten mit der Anmeldung der Person, und Text auf einer Seite kann versuchen, ihm Anweisungen zu geben (Prompt Injection). Dass es vor dem Abschicken nachfragt und solchen Text nicht befolgt, steht nur im Systemprompt; das ist keine technische Sperre. Darum der Hinweis, wichtige Konten dort nicht anzumelden, und der Knopf «Anmeldungen löschen».
+
+## E30 Alten Terminal-Eintrag aus ASK entfernen
+
+Versionen vor E19 schrieben eine Verbindung «ASK Desktop» mit dem Platzhalter-Key `ask-desktop` in die ASK-Einstellungen (`ui.terminalServers`). Den echten Key setzte nur das Fenster der App ein. Seit E19 entfernte niemand den Eintrag, und auf der ASK-Webseite meldete Open Terminal `Invalid API key`, sobald die App auf dem gemerkten Port lief.
+
+Die App entfernt den Eintrag deshalb einmal pro Anmeldung. Das ist die einzige Stelle, an der sie noch in die ASK-Einstellungen schreibt, und sie gilt nur für Einträge mit diesem Namen, diesem Key und einer Adresse auf `127.0.0.1`. Die Terminals der Person bleiben unberührt; auch die, welche die alten Versionen deaktiviert haben, schaltet die App nicht wieder ein, weil sich nicht mehr erkennen lässt, welche das waren. Ein Fehler beim Aufräumen wird nicht gemeldet und meldet niemanden ab; der nächste Start versucht es wieder. Die Auswahl im normalen Browser (`localStorage.selectedTerminalId`) erreicht die App nicht.
