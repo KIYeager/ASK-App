@@ -270,7 +270,13 @@ body.verbose #verbose-btn { color: var(--accent); }
 .todo li.in_arbeit { color: var(--text); font-weight: 700; }
 
 /* ---------- Eingabe ---------- */
-.composer { flex: none; padding: 6px 0 10px; font-family: var(--mono); font-size: 13.5px; }
+.composer { flex: none; padding: 6px 0 10px; font-family: var(--mono); font-size: 13.5px; position: relative; }
+.jump-btn {
+  position: absolute; top: -38px; left: 50%; transform: translateX(-50%); z-index: 5; padding: 5px 14px; border-radius: 16px;
+  border: 1px solid var(--border-2); background: var(--panel); color: var(--text); font: 12.5px var(--mono); cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+.jump-btn:hover { border-color: var(--accent-strong); color: var(--accent); }
 .activity { color: var(--warn); margin: 0 0 6px 2px; }
 .goal-bar {
   display: flex; align-items: center; gap: 7px; margin: 0 0 6px; padding: 4px 6px 4px 10px; font-size: 12.5px;

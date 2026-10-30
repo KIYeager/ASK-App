@@ -190,6 +190,8 @@ await compact(ctx, check, shell, shoot);
   await visualFlow(ctx, check, shell, shoot);
   await webFlow(ctx, check, shell, shoot);
   await memoryFlow(ctx, check, shell, shoot);
+  await scrollFlow(ctx, check, shell, shoot);
+  await folderListFlow(ctx, check);
 
   // Sperren gelten auch für die Werkzeuge der App
   const outside = path.join(path.dirname(folder), 'ausserhalb-chat.txt');
@@ -349,6 +351,41 @@ async function attachFlow(ctx, check, shell, shoot) {
   check('Bild abgelehnt: Hinweis und Antwort ohne Bild', log.images === 0 && agent.chat.messages.at(-1).content === 'Ich sehe das Bild.'
     && await shell('[...document.querySelectorAll(".msg.notice")].some((n) => n.textContent.includes("nimmt keine Bilder an"))'), JSON.stringify(log.images));
   await getJson(`${mockUrl}/__mock/vision/an`);
+}
+
+// Scrollen: Wer hochscrollt, bleibt dort, auch wenn er nur wenig gescrollt hat und das Modell weiterarbeitet
+async function scrollFlow(ctx, check, shell) {
+  const { agent } = ctx;
+  await shell(`(() => { const i = document.getElementById('input'); i.value = 'langsam bitte'; document.getElementById('send-btn').click(); })()`);
+  await until('läuft', () => agent.running, 5000);
+  await wait(800);
+  const top = await shell(`(() => { const t = document.getElementById('transcript');
+    t.dispatchEvent(new WheelEvent('wheel', { deltaY: -60, bubbles: true })); t.scrollTop = t.scrollHeight - t.clientHeight - 60; return t.scrollTop; })()`);
+  await wait(2500); // ping schreibt jede Sekunde eine Zeile
+  const after = await shell('document.getElementById("transcript").scrollTop');
+  check('Scrollen: 60 Pixel hochgescrollt, die Ansicht bleibt während des Auftrags stehen', top > 0 && Math.abs(after - top) < 5, `${top} → ${after}`);
+  check('Scrollen: Knopf «nach unten» erscheint', await shell('!document.getElementById("jump-btn").hidden'));
+  await shell('document.getElementById("jump-btn").click()');
+  await until('unten', () => shell(`(() => { const t = document.getElementById('transcript'); return t.scrollHeight - t.scrollTop - t.clientHeight < 4; })()`), 3000).catch(() => {});
+  check('Scrollen: Knopf springt ans Ende und die Ansicht folgt wieder', await shell(`(() => { const t = document.getElementById('transcript');
+    return t.scrollHeight - t.scrollTop - t.clientHeight < 4 && document.getElementById('jump-btn').hidden; })()`));
+  await shell('document.getElementById("send-btn").click()'); // Stopp
+  await until('gestoppt', () => !agent.running, 20000);
+}
+
+// Ordner-Menü: gelöschter Ordner ist markiert und lässt sich entfernen
+async function folderListFlow(ctx, check) {
+  const { settings, folderMenuItems } = ctx;
+  const gone = path.join(path.dirname(settings.get('folder')), 'gibt-es-nicht-mehr');
+  const keep = settings.get('folder');
+  settings.set({ recent: [...settings.load().recent, gone] });
+  const item = folderMenuItems().find((i) => i.label === `${gone} (nicht gefunden)`);
+  check('Ordner-Menü: gelöschter Ordner ist markiert', !!item && item.type !== 'radio');
+  const sub = folderMenuItems().find((i) => i.label === 'Aus der Liste entfernen')?.submenu || [];
+  check('Ordner-Menü: «Aus der Liste entfernen» listet alle Ordner', sub.some((i) => i.label === gone) && sub.some((i) => i.label === keep), JSON.stringify(sub.map((i) => i.label)));
+  await item.click();
+  await until('entfernt', () => !settings.load().recent.includes(gone), 3000).catch(() => {});
+  check('Ordner-Menü: Klick entfernt den Eintrag, aktueller Ordner bleibt', !settings.load().recent.includes(gone) && settings.get('folder') === keep);
 }
 
 // Frühere Chats: Schalter «Chats», Liste im Systemprompt, chat_search und chat_read

@@ -276,6 +276,41 @@ async function handleOrder(file) {
   }
 }
 
+// Ordner aus der Liste nehmen. Beim aktuellen Ordner auch Terminal und Beobachtung beenden.
+function forgetFolder(f) {
+  const current = sameFolder(f, settings.get('folder'));
+  settings.removeRecent(f);
+  if (current) {
+    workspace.close();
+    terminal.stop();
+  }
+  pushState();
+}
+
+// Ordner-Menü. Ein Ordner, den es nicht mehr gibt, lässt sich nicht öffnen (das Terminal startet nicht):
+// Er ist markiert, und ein Klick bietet an, ihn aus der Liste zu nehmen.
+function folderMenuItems() {
+  const { recent, folder } = settings.load();
+  const items = recent.map((f) => (fs.existsSync(f)
+    ? { label: f, type: 'radio', checked: f === folder,
+      click: () => openFolder(f).then((res) => { if (!res.ok) appWindow.send('folder:error', res.reason); }) }
+    : { label: `${f} (nicht gefunden)`,
+      click: async () => { if (await confirm('Ordner nicht gefunden', `${f}\n\nDiesen Eintrag aus der Liste entfernen?`)) forgetFolder(f); } }));
+  if (items.length) items.push({ type: 'separator' });
+  items.push({ label: 'Anderen Ordner wählen …', click: () => ipcMain.emit('folder:choose-from-menu') });
+  items.push({ label: 'Neuen Projektordner anlegen', click: () => appWindow.send('menu:new-folder') });
+  items.push({ label: 'GitHub …', click: () => appWindow.send('menu:github') });
+  if (folder || recent.length) items.push({ type: 'separator' });
+  if (folder) {
+    items.push({ label: 'Arbeitsordner im Explorer öffnen', click: () => shell.openPath(folder) });
+    items.push({ label: 'Projektnotizen bearbeiten', click: () => openNotes(folder) });
+  }
+  if (recent.length) {
+    items.push({ label: 'Aus der Liste entfernen', submenu: recent.map((f) => ({ label: f, click: () => forgetFolder(f) })) });
+  }
+  return items;
+}
+
 function setupIpc() {
   ipcMain.handle('file:pdf', async (_e, rel) => {
     const source = workspace.resolve(rel);
@@ -308,22 +343,7 @@ function setupIpc() {
     pushState();
   });
   ipcMain.handle('folder:menu', () => {
-    const { recent, folder } = settings.load();
-    const items = recent.map((f) => ({
-      label: f, type: 'radio', checked: f === folder,
-      click: () => openFolder(f).then((res) => { if (!res.ok) appWindow.send('folder:error', res.reason); }),
-    }));
-    if (items.length) items.push({ type: 'separator' });
-    items.push({ label: 'Anderen Ordner wählen …', click: () => ipcMain.emit('folder:choose-from-menu') });
-    items.push({ label: 'Neuen Projektordner anlegen', click: () => appWindow.send('menu:new-folder') });
-    items.push({ label: 'GitHub …', click: () => appWindow.send('menu:github') });
-    if (folder) {
-      items.push({ type: 'separator' });
-      items.push({ label: 'Arbeitsordner im Explorer öffnen', click: () => shell.openPath(folder) });
-      items.push({ label: 'Projektnotizen bearbeiten', click: () => openNotes(folder) });
-      items.push({ label: 'Aus der Liste entfernen', click: () => { settings.removeRecent(folder); workspace.close(); terminal.stop(); pushState(); } });
-    }
-    Menu.buildFromTemplate(items).popup({ window: appWindow.win });
+    Menu.buildFromTemplate(folderMenuItems()).popup({ window: appWindow.win });
   });
   ipcMain.on('folder:choose-from-menu', () => appWindow.send('menu:choose-folder'));
   ipcMain.handle('folder:show', () => {
@@ -549,7 +569,7 @@ app.whenReady().then(() => {
   });
   if (singleInstance) cleanupOldVersions();
   if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) {
-    require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, ask, agent, workspace, settings, openFolder, pushState });
+    require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, ask, agent, workspace, settings, openFolder, pushState, folderMenuItems });
   }
 });
 

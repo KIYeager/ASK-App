@@ -400,23 +400,55 @@ function renderChats() {
 
 const transcriptEl = () => $('transcript');
 
-function nearBottom() {
+// Die Ansicht folgt dem Text, bis die Person selbst nach oben scrollt, und erst wieder, wenn sie
+// bis ganz nach unten scrollt. Der Abstand zum Ende allein reicht nicht: Sonst holt jede neue Zeile
+// sie zurück, solange sie erst wenig nach oben gescrollt hat.
+let followChat = true;
+let lastScrollTop = 0;
+const fromBottom = (t) => t.scrollHeight - t.scrollTop - t.clientHeight;
+
+function renderJump() {
   const t = transcriptEl();
-  return t.scrollHeight - t.scrollTop - t.clientHeight < 120;
+  $('jump-btn').hidden = followChat || fromBottom(t) < 40;
 }
 
 function scrollDown(force = false) {
-  if (force || nearBottom()) requestAnimationFrame(() => { transcriptEl().scrollTop = transcriptEl().scrollHeight; });
+  if (force) followChat = true;
+  if (!followChat) {
+    renderJump();
+    return;
+  }
+  requestAnimationFrame(() => {
+    if (!followChat) return; // zwischen Aufruf und Bild hochgescrollt
+    transcriptEl().scrollTop = transcriptEl().scrollHeight;
+    renderJump();
+  });
+}
+
+function wireScroll() {
+  const t = transcriptEl();
+  t.addEventListener('wheel', (e) => {
+    if (e.deltaY < 0) followChat = false;
+    else if (e.deltaY > 0 && fromBottom(t) < 4) followChat = true;
+    renderJump();
+  }, { passive: true });
+  // Tastatur und Scrollleiste; nach oben heisst auch hier: nicht mehr folgen
+  t.addEventListener('scroll', () => {
+    if (t.scrollTop < lastScrollTop - 1 && fromBottom(t) > 4) followChat = false;
+    else if (t.scrollTop > lastScrollTop && fromBottom(t) < 4) followChat = true;
+    lastScrollTop = t.scrollTop;
+    renderJump();
+  }, { passive: true });
+  $('jump-btn').onclick = () => scrollDown(true);
 }
 
 function addMessage(cls, mark, ...content) {
   // Alles ausser Gedanken und weiteren Leseschritten beendet eine Gruppe von Leseschritten.
   if (!/^(assistant|tool group)/.test(cls)) closeGroup();
-  const stick = nearBottom();
   const node = el('div', { class: `msg ${cls}` }, el('span', { class: 'mark' }, mark), el('div', { class: 'body' }, ...content));
   $('messages').append(node);
   renderComposer();
-  scrollDown(stick);
+  scrollDown();
   return node;
 }
 
@@ -498,7 +530,9 @@ function appendReasoning(text) {
   scrollDown();
 }
 
-let textFrame = 0;
+// Der ganze Antworttext wird neu aufgebaut; bei langen Antworten nur alle TEXT_MS, sonst ruckelt es.
+const TEXT_MS = 125;
+let textTimer = 0;
 function appendText(text) {
   const c = ensureAssistant();
   c.text += text;
@@ -508,16 +542,18 @@ function appendText(text) {
     c.body.append(c.textEl);
   }
   activityLabel = 'Schreibt …';
-  if (!textFrame) {
-    textFrame = requestAnimationFrame(() => {
-      textFrame = 0;
+  if (!textTimer) {
+    textTimer = setTimeout(() => {
+      textTimer = 0;
       if (current?.textEl) markdown(current.textEl, current.text);
       scrollDown();
-    });
+    }, TEXT_MS);
   }
 }
 
 function endAssistant(content) {
+  clearTimeout(textTimer);
+  textTimer = 0;
   if (!current && !content) return;
   const c = ensureAssistant();
   if (content) {
@@ -1329,6 +1365,7 @@ function reportBounds() {
 
 function wire() {
   wireAttachments();
+  wireScroll();
   $('todo-head').onclick = () => toggleTodo();
   $('bp-close').onclick = () => closeBrowser();
   $('bp-big').onclick = () => toggleBrowserBig();
