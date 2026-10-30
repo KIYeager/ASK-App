@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { parsePages, keyCode } = require('../src/main/visual');
 const { apiMessages, loopReason } = require('../src/main/agent');
-const { runTool } = require('../src/main/tools');
+const fs = require('node:fs');
+const path = require('node:path');
+const { runTool, toolSpecs } = require('../src/main/tools');
 
 test('Seitenangaben und Tasten', () => {
   assert.deepStrictEqual(parsePages(''), [1, 2, 3]);
@@ -14,6 +16,14 @@ test('Seitenangaben und Tasten', () => {
   assert.strictEqual(keyCode('ArrowUp'), 'Up');
   assert.strictEqual(keyCode('Leertaste'), 'Space');
   assert.strictEqual(keyCode('a'), 'a');
+});
+
+test('Das Modell erfährt, dass die App einen sichtbaren Browser hat', () => {
+  const spec = toolSpecs().find((s) => s.function.name === 'browser_test').function.description;
+  assert.match(spec, /sichtbar im Browser-Bereich/);
+  assert.ok(!/unsichtbar/.test(spec), spec);
+  const prompt = fs.readFileSync(path.join(__dirname, '..', 'resources', 'anweisungen', 'systemprompt.md'), 'utf8');
+  assert.match(prompt, /Die App hat einen eingebauten Browser/);
 });
 
 test('Ansichten: Bilder als eigene Nachricht, nur die letzten zwei, Schleifenschutz zählt sie nicht als Eingabe', () => {

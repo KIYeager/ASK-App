@@ -525,8 +525,9 @@ TOOLS.push(
     name: 'browser_test',
     label: 'Browser',
     describe: (a) => `${a.path}${Array.isArray(a.aktionen) && a.aktionen.length ? `, ${a.aktionen.length} Aktionen` : ''}`,
-    description: 'Öffnet eine HTML-Datei (Webseite, Spiel) in einem unsichtbaren Browser mit 1280 × 800 Pixeln, führt auf Wunsch Klicks und Tasten aus '
-      + 'und liefert Fehler und Warnungen der Konsole, den sichtbaren Text und ein Bildschirmfoto. Damit prüfst du Webseiten und Spiele selbst.',
+    description: 'Öffnet eine HTML-Datei (Webseite, Spiel) im eingebauten Browser der App: Die Seite erscheint sichtbar im Browser-Bereich rechts in der App, '
+      + 'die Person sieht sie live und kann selbst klicken und Tasten drücken; nach dem Test bleibt sie offen. Führt auf Wunsch Klicks und Tasten aus '
+      + 'und liefert Fehler und Warnungen der Konsole, den sichtbaren Text und ein Bildschirmfoto. Damit prüfst du Webseiten und Spiele und zeigst sie der Person.',
     parameters: {
       type: 'object',
       properties: {
