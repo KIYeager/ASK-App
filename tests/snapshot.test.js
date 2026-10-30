@@ -92,7 +92,7 @@ test('Alte Stände und nicht mehr gebrauchte Fassungen werden gelöscht', async 
     f.write('a.txt', 'eins');
     const s = new Snapshots(f.root);
     const old = await s.take();
-    f.write('a.txt', 'zwei');
+    f.write('a.txt', 'zweite Fassung'); // andere Länge: gleich lang und gleiche Zeitmarke gilt als unverändert
     const now = await s.take();
     assert.strictEqual(objects(f.root), 2);
     const file = path.join(f.root, '.ask', 'sicherung', 'staende', `${old.id}.json`);
