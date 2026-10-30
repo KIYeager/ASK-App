@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { parsePages, keyCode } = require('../src/main/visual');
+const os = require('node:os');
+const { parsePages, keyCode, Visual, allowedNavigation } = require('../src/main/visual');
 const { apiMessages, loopReason } = require('../src/main/agent');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -19,11 +20,38 @@ test('Seitenangaben und Tasten', () => {
 });
 
 test('Das Modell erfährt, dass die App einen sichtbaren Browser hat', () => {
-  const spec = toolSpecs().find((s) => s.function.name === 'browser_test').function.description;
+  const spec = toolSpecs().find((s) => s.function.name === 'browser').function.description;
   assert.match(spec, /sichtbar im Browser-Bereich/);
   assert.ok(!/unsichtbar/.test(spec), spec);
   const prompt = fs.readFileSync(path.join(__dirname, '..', 'resources', 'anweisungen', 'systemprompt.md'), 'utf8');
   assert.match(prompt, /Die App hat einen eingebauten Browser/);
+});
+
+test('Browser: Ziele und Navigation', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-browser-'));
+  try {
+    fs.writeFileSync(path.join(root, 'spiel.html'), '<p>x</p>');
+    fs.writeFileSync(path.join(root, 'daten.txt'), 'x');
+    const v = new Visual({});
+    assert.strictEqual(v.target(root, ''), null, 'ohne ziel: auf der offenen Seite weiter');
+    assert.strictEqual(v.target(root, 'https://gloomwit.vercel.app').url, 'https://gloomwit.vercel.app/');
+    assert.strictEqual(v.target(root, 'gloomwit.vercel.app').url, 'https://gloomwit.vercel.app/');
+    const file = v.target(root, 'spiel.html');
+    assert.match(file.url, /^file:.*spiel\.html$/);
+    assert.ok(allowedNavigation(`${file.fileRoot}andere.html`, file.fileRoot), 'andere Datei im Arbeitsordner');
+    assert.ok(!allowedNavigation('file:///C:/Windows/win.ini', file.fileRoot));
+    assert.ok(allowedNavigation('https://example.ch/x', ''));
+    assert.ok(!allowedNavigation('file:///C:/x.html', ''));
+    assert.ok(!allowedNavigation('javascript:alert(1)', file.fileRoot));
+    assert.throws(() => v.target(root, 'daten.txt'), /nur \.html/);
+    assert.throws(() => v.target(root, '../aussen.html'), /nicht gefunden|Arbeitsordner/);
+    assert.throws(() => v.target(root, 'file:///C:/Windows/win.ini'), /nur http/);
+    assert.throws(() => v.target(root, 'javascript:alert(1)'), /nur http/);
+    for (const local of ['http://127.0.0.1:8000/', 'http://localhost/', 'http://192.168.1.1/']) assert.throws(() => v.target(root, local), /lokalen Netz/, local);
+    assert.strictEqual(new Visual({ allowLocal: true }).target(root, 'http://127.0.0.1:8000/').url, 'http://127.0.0.1:8000/');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('Ansichten: Bilder als eigene Nachricht, nur die letzten zwei, Schleifenschutz zählt sie nicht als Eingabe', () => {

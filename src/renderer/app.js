@@ -697,7 +697,7 @@ function toolProgress(row, output) {
   live.textContent = output;
 }
 
-// Bilder, die das Modell mit view_file oder browser_test angesehen hat
+// Bilder, die das Modell mit view_file oder browser angesehen hat
 function shotList(images) {
   const fileUrl = (p) => `askfile://datei/${p.split('/').map(encodeURIComponent).join('/')}`;
   return el('div', { class: 'shots' }, ...images.map((p) => el('img', { src: fileUrl(p), alt: '', title: 'Klicken für die Vorschau',
@@ -1206,7 +1206,7 @@ function onKey(e) {
 
 // ---------- Seitenleiste ----------
 
-// Browser-Bereich: die echte Seite, die browser_test öffnet und steuert (wie das Browser-Fenster in Claude).
+// Browser-Bereich: die echte Seite, die browser öffnet und steuert (wie das Browser-Fenster in Claude).
 // Die Seite selbst ist eine WebContentsView im Hauptprozess; hier liegen Kopfzeile, Platz und Konsole.
 // Ist die App nicht sichtbar, testet sie unsichtbar und schickt Bilder (Modus «unsichtbar»).
 let liveId = null;
@@ -1225,14 +1225,60 @@ function reportBrowser() {
 function openBrowser() {
   $('browser-pane').hidden = false;
   document.body.classList.add('browser-open');
+  $('browser-btn').classList.add('on');
   requestAnimationFrame(reportBrowser);
 }
 
 function closeBrowser() {
   $('browser-pane').hidden = true;
   document.body.classList.remove('browser-open', 'browser-big');
+  $('browser-btn').classList.remove('on');
+  $('bp-url').value = '';
+  $('bp-status').textContent = '';
+  $('bp-log').replaceChildren();
+  browserMode = '';
   api.browserClose();
   reportBrowser();
+}
+
+// Zustand der Seite für die Adressleiste; solange man dort tippt, bleibt die Eingabe stehen
+function onBrowserState(s) {
+  const url = $('bp-url');
+  if (document.activeElement !== url) url.value = s.url === 'about:blank' ? '' : s.url;
+  $('bp-back').disabled = !s.back;
+  $('bp-forward').disabled = !s.forward;
+  $('browser-pane').classList.toggle('loading', !!s.loading);
+}
+
+function browserLog(text, level) {
+  const log = $('bp-log');
+  log.append(el('li', { class: level === 'error' ? 'error' : 'warning' }, text));
+  while (log.children.length > 6) log.firstChild.remove();
+}
+
+function wireBrowser() {
+  $('browser-btn').onclick = () => {
+    if (browserOpen()) { closeBrowser(); return; }
+    api.browserShow();
+    openBrowser();
+    $('bp-url').focus();
+  };
+  $('bp-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = $('bp-url').value.trim();
+    if (!text) return;
+    $('bp-url').blur();
+    api.browserGo(text);
+  });
+  $('bp-url').addEventListener('focus', (e) => e.target.select());
+  $('bp-back').onclick = () => api.browserBack();
+  $('bp-forward').onclick = () => api.browserForward();
+  $('bp-reload').onclick = () => api.browserReload();
+  $('bp-close').onclick = () => closeBrowser();
+  $('bp-big').onclick = () => toggleBrowserBig();
+  $('bp-clear').onclick = () => api.browserClear();
+  api.onBrowserState(onBrowserState);
+  api.onBrowserNotice((text) => browserLog(text, 'warning'));
 }
 
 function toggleBrowserBig() {
@@ -1246,7 +1292,7 @@ function onLive(ev) {
     browserMode = '';
     $('browser-pane').classList.add('running');
     $('browser-pane').dataset.mode = '';
-    $('bp-path').textContent = ev.path;
+    if (ev.path) $('bp-url').value = ev.path;
     $('bp-status').textContent = 'lädt …';
     $('bp-log').replaceChildren();
     $('bp-frame').hidden = true;
@@ -1263,11 +1309,7 @@ function onLive(ev) {
   }
   if (ev.frame) $('bp-frame').src = ev.frame;
   if (ev.step) $('bp-status').textContent = `▸ ${ev.step}`;
-  if (ev.log) {
-    const log = $('bp-log');
-    log.append(el('li', { class: ev.level === 'error' ? 'error' : 'warning' }, ev.log));
-    while (log.children.length > 6) log.firstChild.remove();
-  }
+  if (ev.log) browserLog(ev.log, ev.level);
   if (ev.phase === 'end') {
     $('browser-pane').classList.remove('running');
     $('bp-status').textContent = `${ev.failed ? '✗' : '✓'} ${ev.summary}${ev.userInputs ? ` · ${ev.userInputs} eigene Eingaben` : ''}`;
@@ -1367,9 +1409,7 @@ function wire() {
   wireAttachments();
   wireScroll();
   $('todo-head').onclick = () => toggleTodo();
-  $('bp-close').onclick = () => closeBrowser();
-  $('bp-big').onclick = () => toggleBrowserBig();
-  $('bp-reload').onclick = () => api.browserReload();
+  wireBrowser();
   $('folder-btn').onclick = () => api.folderMenu();
   $('sidebar-btn').onclick = () => api.setSidebar(!state.sidebarOpen);
   $('new-btn').onclick = () => newChat();

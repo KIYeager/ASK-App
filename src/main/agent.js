@@ -32,7 +32,7 @@ function goalPrompt(goal) {
 }
 const KEEP_FULL_TOOL_RESULTS = 8; // ältere Werkzeugergebnisse gehen gekürzt an das Modell
 const IMAGE_TURNS = 2; // Bilder aus so vielen der letzten Eingaben gehen an das Modell
-const VIEW_TURNS = 2; // ebenso aus so vielen der letzten Ansichten (view_file, browser_test)
+const VIEW_TURNS = 2; // ebenso aus so vielen der letzten Ansichten (view_file, browser)
 const CHAT_DIR = path.join('.ask', 'chats');
 const NEW = 'neu'; // openLatest: leeren Chat beginnen
 const { WORK_DIRS } = require('./cleanup'); // unter .ask, je ein Unterordner pro Chat
@@ -80,7 +80,7 @@ function userText(m) {
 function apiMessages(system, messages, textMode = false, imageUrl = null) {
   const toolIndexes = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
   const recent = new Set(toolIndexes.slice(-KEEP_FULL_TOOL_RESULTS));
-  // Bilder: Anhänge der letzten IMAGE_TURNS Eingaben, Ansichten (view_file, browser_test) der letzten VIEW_TURNS
+  // Bilder: Anhänge der letzten IMAGE_TURNS Eingaben, Ansichten (view_file, browser) der letzten VIEW_TURNS
   const withImage = (view) => messages.map((m, i) => (m.role === 'user' && (m.note === 'view') === view && m.attachments?.some((a) => a.image) ? i : -1))
     .filter((i) => i >= 0);
   const withImages = imageUrl ? new Set([...withImage(false).slice(-IMAGE_TURNS), ...withImage(true).slice(-VIEW_TURNS)]) : new Set();
@@ -116,7 +116,7 @@ class Agent extends EventEmitter {
     this.getChatMemory = getChatMemory || (() => false); // Schalter «Chats»: frühere Chats lesen (history.js)
     this.web = web || null; // web_search und web_fetch (web.js)
     this.githubTrust = githubTrust || null;
-    this.visual = visual || null; // view_file und browser_test (visual.js)
+    this.visual = visual || null; // view_file und browser (visual.js)
     this.getSnapshots = getSnapshots || (() => null); // Sicherung des Arbeitsordners (snapshot.js)
     this.lastSkipped = '';
     this.github = github;
@@ -385,7 +385,7 @@ class Agent extends EventEmitter {
       return true;
     }
 
-    const seen = []; // Bilder aus view_file und browser_test, gehen danach als Nachricht an das Modell
+    const seen = []; // Bilder aus view_file und browser, gehen danach als Nachricht an das Modell
     const canSee = this.canSee();
     for (const call of toolCalls) {
       if (signal.aborted) {

@@ -166,3 +166,15 @@ Folgen: Die Seite ist so gross wie der Bereich (halbes Fenster oder ganzes Fenst
 ## E28 Frühere Chats nur mit Schalter
 
 Ein neuer Chat wusste nichts von früheren Chats im selben Ordner. Ein Schalter «Chats» (Einstellung `chatMemory`, Standard aus) gibt dem Modell eine Liste der letzten 15 Chats des Ordners im Systemprompt und die Werkzeuge `chat_search` und `chat_read` (`history.js`). Gelesen wird der Verlauf als Text: Eingaben, Antworten und Werkzeugaufrufe als Kurzzeile, ohne Werkzeugausgaben, Bilder und automatische Nachrichten, damit er kurz bleibt. Standard aus, weil alte Chats Dinge enthalten können, die nicht in den neuen Auftrag gehören, und weil jede Liste den Systemprompt verlängert; ausgeschaltet fehlen auch die Werkzeuge. Nur der aktuelle Ordner: Chats anderer Projekte bleiben getrennt. Dauerhaftes Wissen über ein Projekt gehört weiterhin in die Projektnotizen (E24).
+
+## E29 Der Browser wird ein allgemeiner Browser
+
+`browser_test` öffnete nur lokale HTML-Dateien. Das Modell schrieb deshalb für eine Webseite eine Hilfsdatei mit Weiterleitung; die Sperre gegen Navigation blockierte sie, die Seite blieb schwarz, und die App meldete «keine Fehler». Danach hing der Aufruf 24 Minuten, weil das Warten auf die Seite kein Zeitlimit hatte und der Stopp den Browser nicht erreichte.
+
+Das Werkzeug heisst jetzt `browser` und öffnet Webseiten und HTML-Dateien (`ziel`); ohne `ziel` arbeitet es auf der offenen Seite weiter, sonst liesse sich nichts über mehrere Schritte bedienen. Dazu kommen Klick nach sichtbarem Text, Eingabe in ein bestimmtes Feld, Scrollen, die Liste der Bedienelemente, ein Knopf «Browser» und eine Adressleiste. Jeder Zugriff auf die Seite hat ein Zeitlimit von 10 s, der ganze Aufruf von 2 Minuten, und der Stopp bricht ihn sofort ab. Leere Seiten werden gemeldet.
+
+Navigation: Webseiten sind frei, Dateien nur im Arbeitsordner. Das Modell kann keine Adressen im lokalen Netz öffnen; landet es über einen Link oder eine Weiterleitung dort, bekommt es weder Text noch Bild. Die Person kann solche Adressen selbst öffnen.
+
+Anmeldung: Die Sitzung liegt in `persist:ask-browser`, getrennt von ASK und Chrome, damit das Modell mit einer Anmeldung weiterarbeiten kann. Das Modell gibt keine Passwörter ein. Popups sind als kleine Fenster erlaubt, weil Anmeldungen über Microsoft und Google sie brauchen; neue Tabs öffnen in derselben Ansicht. Downloads und Berechtigungen (Kamera, Standort usw.) bleiben gesperrt, ausser Vollbild.
+
+Risiko: Das Modell handelt auf Webseiten mit der Anmeldung der Person, und Text auf einer Seite kann versuchen, ihm Anweisungen zu geben (Prompt Injection). Dass es vor dem Abschicken nachfragt und solchen Text nicht befolgt, steht nur im Systemprompt; das ist keine technische Sperre. Darum der Hinweis, wichtige Konten dort nicht anzumelden, und der Knopf «Anmeldungen löschen».

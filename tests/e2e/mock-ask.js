@@ -95,6 +95,23 @@ function script(messages) {
     return textChunks('Geholt.');
   }
   if (text.includes('bild an')) return textChunks('Ich sehe das Bild.');
+  const open = /browser öffne (\S+)/.exec(text);
+  if (open) {
+    if (results === 0) return toolCallChunks([{ name: 'browser', args: { ziel: open[1].replace('{port}', port) } }]);
+    return textChunks('Offen.');
+  }
+  if (text.includes('browser klicke')) {
+    if (results === 0) return toolCallChunks([{ name: 'browser', args: { aktionen: [{ klick_text: 'Weiter' }, { klick_text: 'Weiter' }, { text: 'hallo', in: '#feld' }] } }]);
+    return textChunks('Geklickt.');
+  }
+  if (text.includes('browser link')) {
+    if (results === 0) return toolCallChunks([{ name: 'browser', args: { aktionen: [{ klick_text: 'Zur Seite' }] } }]);
+    return textChunks('Gefolgt.');
+  }
+  if (text.includes('browser warte')) {
+    if (results === 0) return toolCallChunks([{ name: 'browser', args: { aktionen: [{ warten: 5000 }, { warten: 5000 }, { warten: 5000 }] } }]);
+    return textChunks('Gewartet.');
+  }
   if (text.includes('früher gemacht')) {
     const memory = messages[0]?.role === 'system' && String(messages[0].content).includes('# Frühere Chats');
     if (!memory) return textChunks('Ich sehe keine früheren Chats.');
@@ -115,7 +132,7 @@ function script(messages) {
     return textChunks('Angesehen.');
   }
   if (text.includes('spiel testen')) {
-    if (results === 0) return toolCallChunks([{ name: 'browser_test', args: { path: 'spiel.html', aktionen: [{ klick: '#start' }, { taste: 'ArrowRight' }] } }]);
+    if (results === 0) return toolCallChunks([{ name: 'browser', args: { ziel: 'spiel.html', aktionen: [{ klick: '#start' }, { taste: 'ArrowRight' }] } }]);
     return textChunks('Getestet.');
   }
   if (text.includes('ändere den bericht')) {
@@ -184,6 +201,12 @@ http.createServer((req, res) => {
     return res.end(page);
   }
   if (url === '/api/config') return json(res, 200, { version: '0.12.3', features: authed ? { enable_web_search: true } : {} });
+  if (url === '/__mock/app') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Mock App</title></head><body>
+      <button id="w" onclick="z.textContent = Number(z.textContent) + 1">Weiter</button><p id="z">0</p>
+      <input id="feld" placeholder="Name"><a href="/__mock/seite">Zur Seite</a></body></html>`);
+  }
   if (url === '/__mock/seite') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end('<!doctype html><html><head><title>Proxmox VE 9 Testseite</title><script>var geheim = 1;</script></head><body>'

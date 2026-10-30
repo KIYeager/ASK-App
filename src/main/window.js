@@ -3,8 +3,10 @@
 const path = require('node:path');
 const { BrowserWindow, WebContentsView, Menu, shell, session, clipboard } = require('electron');
 const paths = require('./paths');
+const { allowedNavigation } = require('./visual');
 
 const ASK_PARTITION = 'persist:ask';
+const BROWSER_PARTITION = 'persist:ask-browser';
 // Berechtigungen, die ASK bekommen darf. Alles andere wird abgelehnt.
 const ALLOWED_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write', 'notifications', 'media',
   'fullscreen', 'local-network-access', 'local-network', 'loopback-network', 'speaker-selection']);
@@ -75,8 +77,7 @@ class AppWindow {
     wc.on('did-finish-load', () => this.send('ask:loaded', { url: wc.getURL() }));
   }
 
-  showContextMenu(params) {
-    const wc = this.view.webContents;
+  showContextMenu(params, wc = this.view.webContents) {
     const items = [];
     if (params.misspelledWord) {
       for (const s of params.dictionarySuggestions.slice(0, 5)) {
@@ -155,27 +156,49 @@ class AppWindow {
     this.view.setVisible(!!show);
   }
 
-  // Browser-Bereich für browser_test (ENTSCHEIDE E27): eine echte Seite in der App, die das Modell steuert
-  // und die Person sieht und selbst bedienen kann. Eigene flüchtige Sitzung, ohne Popups, Downloads und
-  // Berechtigungen; Navigation nur innerhalb der geöffneten Datei (allowedUrl).
+  // Browser der App (ENTSCHEIDE E27, E29): eine echte Seite, die das Modell steuert und die Person sieht und
+  // selbst bedienen kann. Eigene Sitzung getrennt von ASK und von Chrome, Anmeldungen bleiben gespeichert.
+  // Webseiten sind frei, Dateien nur im Arbeitsordner (fileRoot). Keine Downloads, keine Berechtigungen.
   ensureBrowser() {
     if (this.browser && !this.browser.webContents.isDestroyed()) return this.browser;
     this.browserBounds = this.browserBounds || null;
     this.browserVisible = !!this.browserVisible;
     this.browser = new WebContentsView({
-      webPreferences: { partition: 'ask-browser', sandbox: true, contextIsolation: true, nodeIntegration: false,
+      webPreferences: { partition: BROWSER_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false,
         backgroundThrottling: false, spellcheck: false },
     });
     this.browser.setBackgroundColor('#000000');
     this.browser.setVisible(false);
-    this.browser.allowedUrl = '';
+    this.browser.fileRoot = '';
     this.win.contentView.addChildView(this.browser);
     const wc = this.browser.webContents;
-    wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-    wc.on('will-navigate', (e, url) => { if (url.split('#')[0] !== this.browser.allowedUrl) e.preventDefault(); });
-    wc.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
-    wc.session.setPermissionCheckHandler(() => false);
-    wc.session.on('will-download', (e) => e.preventDefault());
+    // Neue Tabs öffnen in derselben Ansicht, echte Popups (Anmeldung über Microsoft usw.) als kleines Fenster
+    wc.setWindowOpenHandler(({ url, disposition }) => {
+      if (!/^https?:/i.test(url)) return { action: 'deny' };
+      if (disposition === 'new-window') {
+        return { action: 'allow', overrideBrowserWindowOptions: { parent: this.win, width: 520, height: 700, autoHideMenuBar: true,
+          webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } } };
+      }
+      wc.loadURL(url).catch(() => {});
+      return { action: 'deny' };
+    });
+    wc.on('will-navigate', (e, url) => { if (!allowedNavigation(url, this.browser.fileRoot)) e.preventDefault(); });
+    wc.on('context-menu', (_e, params) => this.showContextMenu(params, wc));
+    wc.session.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === 'fullscreen'));
+    wc.session.setPermissionCheckHandler((_wc, perm) => perm === 'fullscreen');
+    wc.session.on('will-download', (e, item) => {
+      e.preventDefault();
+      this.send('browser:notice', `Download blockiert: ${item.getFilename()}`);
+    });
+    const report = () => {
+      if (wc.isDestroyed()) return;
+      this.send('browser:state', { url: wc.getURL(), title: wc.getTitle(), back: wc.navigationHistory.canGoBack(),
+        forward: wc.navigationHistory.canGoForward(), loading: wc.isLoading() });
+    };
+    for (const ev of ['did-navigate', 'did-navigate-in-page', 'did-start-loading', 'did-stop-loading', 'page-title-updated']) wc.on(ev, report);
+    wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
+      if (isMainFrame && code !== -3) this.send('browser:notice', `Seite nicht erreichbar: ${description} (${url})`);
+    });
     this.applyBrowserLayout();
     return this.browser;
   }
@@ -213,4 +236,4 @@ class AppWindow {
   }
 }
 
-module.exports = { AppWindow, ASK_PARTITION };
+module.exports = { AppWindow, ASK_PARTITION, BROWSER_PARTITION };

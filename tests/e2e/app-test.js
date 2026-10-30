@@ -190,6 +190,7 @@ await compact(ctx, check, shell, shoot);
   await visualFlow(ctx, check, shell, shoot);
   await webFlow(ctx, check, shell, shoot);
   await memoryFlow(ctx, check, shell, shoot);
+  await browserFlow(ctx, check, shell, shoot);
   await scrollFlow(ctx, check, shell, shoot);
   await folderListFlow(ctx, check);
 
@@ -353,6 +354,78 @@ async function attachFlow(ctx, check, shell, shoot) {
   await getJson(`${mockUrl}/__mock/vision/an`);
 }
 
+// Browser: Webseiten öffnen, auf der offenen Seite weiterarbeiten, Adressleiste, Stopp
+async function browserFlow(ctx, check, shell, shoot) {
+  const { agent, settings, appWindow } = ctx;
+  const mockUrl = process.env.ASK_TEST_ASK_URL;
+  const folder = settings.get('folder');
+  const page = () => appWindow.browser.webContents.getURL();
+  const inPage = (code) => appWindow.browser.webContents.executeJavaScript(code);
+  const lastTool = () => agent.chat.messages.filter((m) => m.role === 'tool').pop();
+
+  await order(shell, agent, `browser öffne ${mockUrl}/__mock/app`);
+  let t = lastTool();
+  check('browser öffnet eine Webseite und nennt Text und Bedienelemente', t.ok && page().endsWith('/__mock/app') && t.content.includes('«Mock App»')
+    && t.content.includes('button#w «Weiter»') && t.content.includes('input#feld «Name»') && t.images?.length === 1 && appWindow.browser.getVisible(), t.content);
+  check('Adressleiste zeigt die Seite', (await shell('document.getElementById("bp-url").value')).endsWith('/__mock/app'));
+
+  await inPage('window.merker = 42');
+  await order(shell, agent, 'browser klicke zweimal');
+  t = lastTool();
+  check('Ohne ziel weiter auf der offenen Seite: nicht neu geladen, Klicks nach Text, Eingabe ins Feld', t.ok && (await inPage('window.merker')) === 42
+    && (await inPage('z.textContent')) === '2' && (await inPage('feld.value')) === 'hallo', t.content);
+  check('Zeile «Browser(offene Seite, 3 Aktionen)»', await shell(`[...document.querySelectorAll('.msg.tool')].pop().querySelector('.call').textContent === 'Browser(offene Seite, 3 Aktionen)'`));
+
+  await order(shell, agent, 'browser link folgen');
+  t = lastTool();
+  check('Link führt auf die nächste Seite, Inhalt kommt zurück', t.ok && page().endsWith('/__mock/seite') && t.content.includes('Proxmox VE 9 bringt'), t.content.slice(0, 300));
+  await shell('document.getElementById("bp-back").click()');
+  await until('zurück', () => page().endsWith('/__mock/app'), 5000).catch(() => {});
+  check('Knopf «Zurück» funktioniert', page().endsWith('/__mock/app'));
+
+  await shell(`(() => { document.getElementById('bp-url').value = '${mockUrl}/__mock/seite'; document.getElementById('bp-form').requestSubmit(); })()`);
+  await until('Adresse', () => page().endsWith('/__mock/seite'), 5000).catch(() => {});
+  check('Adressleiste öffnet eine Adresse', page().endsWith('/__mock/seite'));
+
+  // Weiterleitung aus einer Hilfsdatei ist nicht mehr gesperrt; leere Seite wird gemeldet
+  fs.writeFileSync(path.join(folder, 'weiter.html'), `<!doctype html><script>location.replace("${mockUrl}/__mock/app");</script>`);
+  fs.writeFileSync(path.join(folder, 'leer.html'), '<!doctype html><html><body></body></html>');
+  await order(shell, agent, 'browser öffne weiter.html');
+  await until('Weiterleitung', () => page().endsWith('/__mock/app'), 5000).catch(() => {});
+  check('Weiterleitung auf eine Webseite funktioniert', page().endsWith('/__mock/app'), page());
+  await order(shell, agent, 'browser öffne leer.html');
+  t = lastTool();
+  check('Leere Seite wird gemeldet statt «keine Fehler»', t.content.includes('Die Seite ist leer') && t.summary.startsWith('Seite leer'), t.content);
+  fs.rmSync(path.join(folder, 'weiter.html'), { force: true });
+  fs.rmSync(path.join(folder, 'leer.html'), { force: true });
+
+  // Stopp beendet den Aufruf sofort
+  await shell(`(() => { const i = document.getElementById('input'); i.value = 'browser warte'; document.getElementById('send-btn').click(); })()`);
+  await until('läuft', () => agent.running, 5000);
+  await wait(1200);
+  const stopped = Date.now();
+  await shell('document.getElementById("send-btn").click()');
+  await until('gestoppt', () => !agent.running, 8000).catch(() => {});
+  check('Stopp beendet den Browser-Aufruf sofort', !agent.running && Date.now() - stopped < 3000, `${Date.now() - stopped} ms`);
+  await shell('document.getElementById("bp-close").click()');
+
+  // Von Hand mit Internet: ASK_TEST_REAL_URL=https://… prüft eine echte Webseite
+  if (process.env.ASK_TEST_REAL_URL) {
+    await order(shell, agent, `browser öffne ${process.env.ASK_TEST_REAL_URL}`);
+    t = lastTool();
+    await shoot('15-echte-seite');
+    check('Echte Webseite geöffnet', t.ok && t.images?.length === 1 && !t.summary.startsWith('Seite leer'), `${t.summary}
+${t.content.slice(0, 700)}`);
+    console.log(`ECHTE SEITE: ${t.ok} ${t.summary} ${page()} ${t.images?.[0]}
+${t.content.slice(0, 900)}`);
+    await shell('document.getElementById("bp-close").click()');
+  }
+  await shell('document.getElementById("browser-btn").click()');
+  await until('offen', () => appWindow.browser.getVisible(), 3000).catch(() => {});
+  check('Knopf «Browser» oben öffnet den Browser auch ohne Modell', appWindow.browser.getVisible() && await shell('document.getElementById("browser-btn").classList.contains("on")'));
+  await shell('document.getElementById("browser-btn").click()');
+}
+
 // Scrollen: Wer hochscrollt, bleibt dort, auch wenn er nur wenig gescrollt hat und das Modell weiterarbeitet
 async function scrollFlow(ctx, check, shell) {
   const { agent } = ctx;
@@ -464,7 +537,7 @@ async function visualFlow(ctx, check, shell, shoot) {
 
   await order(shell, agent, 'Bitte spiel testen');
   const tested = agent.chat.messages.filter((m) => m.role === 'tool').pop();
-  check('browser_test: Konsole, Klick und Taste', tested.ok && tested.content.includes('Fehler: absichtlicher Testfehler') && tested.content.includes('Gestartet Rechts')
+  check('browser: Konsole, Klick und Taste', tested.ok && tested.content.includes('Fehler: absichtlicher Testfehler') && tested.content.includes('Gestartet Rechts')
     && tested.content.includes('«Testspiel»'), tested.content);
   const shot = tested.images?.[0] ? nativeImage.createFromPath(path.join(folder, tested.images[0])) : null;
   const size = shot?.getSize() || {};
@@ -476,13 +549,13 @@ async function visualFlow(ctx, check, shell, shoot) {
     && (([, w, h]) => Math.abs(w - pane.width) <= 2 && Math.abs(h - pane.height) <= 2)(/Fenster (\d+) × (\d+)/.exec(tested.content)?.map(Number) || []),
     JSON.stringify({ size, rgb: [r, g, b], pane, text: /Fenster \d+ × \d+/.exec(tested.content)?.[0] }));
   log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
-  check('Bildschirmfoto geht ans Modell', log.lastImages === 1 && log.lastUser.startsWith('[Ansicht] Bilder zu browser_test(spiel.html'), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
+  check('Bildschirmfoto geht ans Modell', log.lastImages === 1 && log.lastUser.startsWith('[Ansicht] Bilder zu browser(spiel.html'), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
   const live = await shell(`({ visible: !document.getElementById('browser-pane').hidden, mode: document.getElementById('browser-pane').dataset.mode,
     status: document.getElementById('bp-status').textContent, log: document.getElementById('bp-log').textContent,
-    path: document.getElementById('bp-path').textContent, running: document.getElementById('browser-pane').classList.contains('running'),
+    path: document.getElementById('bp-url').value, running: document.getElementById('browser-pane').classList.contains('running'),
     sidebar: getComputedStyle(document.getElementById('sidebar')).display })`);
   check('Browser-Bereich: echte Seite sichtbar, Schritte, Konsole, Seitenleiste weg', live.visible && live.mode === 'sichtbar' && appWindow.browser?.getVisible()
-    && live.status.startsWith('✓ 1 Fehler') && live.log.includes('absichtlicher Testfehler') && live.path === 'spiel.html' && !live.running && live.sidebar === 'none', JSON.stringify(live));
+    && /1 Fehler in der Konsole/.test(live.status) && live.log.includes('absichtlicher Testfehler') && live.path.endsWith('spiel.html') && !live.running && live.sidebar === 'none', JSON.stringify(live));
   check('Seite bleibt nach dem Test offen und bedienbar', appWindow.browser.webContents.getURL().endsWith('spiel.html')
     && await appWindow.browser.webContents.executeJavaScript('document.getElementById("s").textContent') === 'Gestartet Rechts');
   // Eigene Eingabe der Person: Klick in die Seite

@@ -445,7 +445,7 @@ TOOLS.push(
       const source = [{ url: p.url, title: p.title }];
       if (p.pdf) return { ok: true, output: `PDF gespeichert unter ${p.pdf}. Mit read_file lesen.`, summary: 'PDF gespeichert', sources: source };
       const more = p.to < p.total ? `\n\n(Zeichen ${p.from}–${p.to} von ${p.total}; weiter mit ab: ${p.to})` : '';
-      return { ok: true, output: `${p.title}\n${p.url}\n\n${p.text || '(kein lesbarer Text, die Seite braucht wohl JavaScript; dann browser_test)'}${more}`,
+      return { ok: true, output: `${p.title}\n${p.url}\n\n${p.text || '(kein lesbarer Text, die Seite braucht wohl JavaScript; dann browser)'}${more}`,
         display: `${p.title}\n${p.url}\n\n${p.text.slice(0, 3000)}${p.text.length > 3000 ? ' …' : ''}`,
         summary: `${p.title.slice(0, 60)} · ${Math.round(p.total / 100) / 10}k Zeichen`, sources: source };
     }),
@@ -518,20 +518,21 @@ TOOLS.push(
     },
     run: visualTool(async (v, folder, a, ctx) => {
       if (!ctx.canSee) return { ok: false, output: 'Das Modell in ASK kann keine Bilder ansehen. Prüfe stattdessen mit pruefen.py.', summary: 'Bilder nicht möglich' };
-      return v.view(folder, a.path, { seiten: a.seiten, chat: ctx.chat });
+      return v.view(folder, a.path, { seiten: a.seiten, chat: ctx.chat, onLive: ctx.onLive, signal: ctx.signal });
     }),
   },
   {
-    name: 'browser_test',
+    name: 'browser',
     label: 'Browser',
-    describe: (a) => `${a.path}${Array.isArray(a.aktionen) && a.aktionen.length ? `, ${a.aktionen.length} Aktionen` : ''}`,
-    description: 'Öffnet eine HTML-Datei (Webseite, Spiel) im eingebauten Browser der App: Die Seite erscheint sichtbar im Browser-Bereich rechts in der App, '
-      + 'die Person sieht sie live und kann selbst klicken und Tasten drücken; nach dem Test bleibt sie offen. Führt auf Wunsch Klicks und Tasten aus '
-      + 'und liefert Fehler und Warnungen der Konsole, den sichtbaren Text und ein Bildschirmfoto. Damit prüfst du Webseiten und Spiele und zeigst sie der Person.',
+    describe: (a) => `${a.ziel || 'offene Seite'}${Array.isArray(a.aktionen) && a.aktionen.length ? `, ${a.aktionen.length} Aktionen` : ''}`,
+    description: 'Der eingebaute Browser der App: Öffnet eine Webseite (ziel: https://…) oder eine HTML-Datei im Arbeitsordner sichtbar im Browser-Bereich rechts in der App. '
+      + 'Die Person sieht alles live und kann selbst klicken, tippen und sich anmelden. Ohne ziel arbeitest du auf der offenen Seite weiter, ohne sie neu zu laden. '
+      + 'Führt Klicks, Tasten, Eingaben und Scrollen aus und liefert Adresse, Titel, Fehler der Konsole, den sichtbaren Text, die Bedienelemente und ein Bildschirmfoto. '
+      + 'Damit bedienst du Webseiten, prüfst Spiele und zeigst der Person Seiten. Frag vor allem, was etwas abschickt, kauft, postet oder löscht.',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'HTML-Datei relativ zum Arbeitsordner' },
+        ziel: { type: 'string', description: 'Adresse wie https://example.ch oder HTML-Datei relativ zum Arbeitsordner. Weglassen: auf der offenen Seite weiterarbeiten.' },
         warten: { type: 'number', description: 'Millisekunden nach dem Laden warten (Standard 1000)' },
         aktionen: {
           type: 'array',
@@ -540,20 +541,22 @@ TOOLS.push(
             type: 'object',
             properties: {
               klick: { type: 'string', description: 'CSS-Selektor des Elements, das angeklickt wird' },
+              klick_text: { type: 'string', description: 'Sichtbarer Text eines Links oder Knopfs, der angeklickt wird' },
               x: { type: 'number', description: 'Klick auf Pixel-Position (mit y), z. B. in ein Canvas' },
               y: { type: 'number' },
               taste: { type: 'string', description: 'Taste: ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Space, Enter, Escape oder ein Zeichen' },
               dauer: { type: 'number', description: 'So lange die Taste halten (ms)' },
-              text: { type: 'string', description: 'Text ins fokussierte Feld tippen' },
+              text: { type: 'string', description: 'Text tippen, ins Feld aus «in» oder ins fokussierte Feld. Nie Passwörter: Anmelden macht die Person selbst.' },
+              in: { type: 'string', description: 'CSS-Selektor des Eingabefelds für text' },
+              scroll: { type: 'number', description: 'So viele Pixel nach unten scrollen (negativ: nach oben)' },
               warten: { type: 'number', description: 'So lange warten (ms, höchstens 5000)' },
             },
           },
         },
       },
-      required: ['path'],
     },
     run: visualTool(async (v, folder, a, ctx) => {
-      const r = await v.browse(folder, a.path, { aktionen: a.aktionen, warten: a.warten, chat: ctx.chat, onLive: ctx.onLive });
+      const r = await v.browse(folder, a.ziel, { aktionen: a.aktionen, warten: a.warten, chat: ctx.chat, onLive: ctx.onLive, signal: ctx.signal });
       if (!ctx.canSee) r.output = r.output.replace('Das Bildschirmfoto folgt in der nächsten Nachricht.', 'Das Bildschirmfoto bekommst du nicht: das Modell in ASK kann keine Bilder ansehen.');
       return r;
     }),

@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage, nativeImage, BrowserWindow } = require('electron');
+const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage, nativeImage, BrowserWindow, session } = require('electron');
 const settings = require('./settings');
 const paths = require('./paths');
 const { checkFolder } = require('./folders');
@@ -10,7 +10,7 @@ const { Terminal } = require('./terminal');
 const { AskSession, THINKING_LEVELS } = require('./askapi');
 const { Agent, NEW } = require('./agent');
 const { Workspace } = require('./workspace');
-const { AppWindow } = require('./window');
+const { AppWindow, BROWSER_PARTITION } = require('./window');
 const { convertToPdf } = require('./office');
 const { cleanupOldVersions } = require('./portable');
 const { GitHub } = require('./github');
@@ -77,18 +77,18 @@ const githubTrust = {
 // Internet für das Modell; lokale Adressen nur im Test (Mock-Server auf 127.0.0.1)
 const web = new Web({ ask, fetchImpl: (url, options) => net.fetch(url, options), allowLocal: testMode });
 
-// Browser-Bereich der App für browser_test. Die Oberfläche öffnet ihn beim Start des Tests und meldet
+// Browser-Bereich der App für browser. Die Oberfläche öffnet ihn beim Start des Tests und meldet
 // Grösse und Sichtbarkeit; ist er nach 2 s nicht sichtbar (App minimiert), testet visual.js unsichtbar.
 async function browserPane() {
   if (!appWindow) return null;
   const view = appWindow.ensureBrowser();
   for (let i = 0; i < 40 && !appWindow.browserReady(); i++) await new Promise((r) => setTimeout(r, 50));
   if (!appWindow.browserReady()) return null;
-  return { wc: view.webContents, mode: 'sichtbar', allow: (url) => { view.allowedUrl = url; }, close: () => {} };
+  return { wc: view.webContents, mode: 'sichtbar', allow: (fileRoot) => { view.fileRoot = fileRoot; }, close: () => {} };
 }
 
 const visual = new Visual({ electron: { BrowserWindow, nativeImage }, convertToPdf, renderPage: path.join(__dirname, 'render', 'pdf.html'),
-  getPane: browserPane });
+  getPane: browserPane, allowLocal: testMode });
 
 const agent = new Agent({
   github,
@@ -276,6 +276,14 @@ async function handleOrder(file) {
   }
 }
 
+// Eingabe in der Adressleiste: Adresse oder Suchbegriffe
+function browserAddress(text) {
+  const t = String(text || '').trim();
+  if (/^https?:\/\//i.test(t)) return t;
+  if (!t.includes(' ') && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/.*)?$/.test(t)) return `https://${t}`;
+  return `https://duckduckgo.com/?q=${encodeURIComponent(t)}`;
+}
+
 // Ordner aus der Liste nehmen. Beim aktuellen Ordner auch Terminal und Beobachtung beenden.
 function forgetFolder(f) {
   const current = sameFolder(f, settings.get('folder'));
@@ -459,12 +467,22 @@ function setupIpc() {
   ipcMain.on('ui:ask-visible', (_e, visible) => appWindow.setAskVisible(visible));
   ipcMain.on('ui:browser-bounds', (_e, bounds) => appWindow.setBrowserBounds(bounds));
   ipcMain.on('ui:browser-visible', (_e, visible) => appWindow.setBrowserVisible(visible));
-  ipcMain.handle('browser:reload', () => { if (appWindow.browser && appWindow.browser.allowedUrl) appWindow.browser.webContents.reload(); });
+  ipcMain.handle('browser:show', () => { appWindow.ensureBrowser(); });
+  ipcMain.handle('browser:go', (_e, text) => appWindow.ensureBrowser().webContents.loadURL(browserAddress(text)).catch(() => {}));
+  ipcMain.handle('browser:back', () => { if (appWindow.browser) appWindow.browser.webContents.navigationHistory.goBack(); });
+  ipcMain.handle('browser:forward', () => { if (appWindow.browser) appWindow.browser.webContents.navigationHistory.goForward(); });
+  ipcMain.handle('browser:reload', () => { if (appWindow.browser) appWindow.browser.webContents.reload(); });
   ipcMain.handle('browser:close', () => {
     if (!appWindow.browser) return;
-    appWindow.browser.allowedUrl = 'about:blank';
     appWindow.browser.webContents.loadURL('about:blank').catch(() => {});
     appWindow.setBrowserVisible(false);
+  });
+  // Anmeldungen im Browser der App löschen (Cookies, Speicher); nach Rückfrage
+  ipcMain.handle('browser:clear', async () => {
+    if (!(await confirm('Anmeldungen im Browser löschen?', 'Du wirst im Browser der App überall abgemeldet. ASK und dein Chrome sind davon nicht betroffen.'))) return false;
+    await session.fromPartition(BROWSER_PARTITION).clearStorageData();
+    if (appWindow.browser) appWindow.browser.webContents.reload();
+    return true;
   });
   ipcMain.handle('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
   ipcMain.handle('link:open', (_e, url) => {

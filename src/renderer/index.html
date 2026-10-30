@@ -17,6 +17,7 @@
     <div class="spacer"></div>
     <button id="web-btn" class="toggle" title="Websuche über ASK (/web)">🌐 Web</button>
     <button id="memory-btn" class="toggle" title="Frühere Chats (/chats)">◷ Chats</button>
+    <button id="browser-btn" class="toggle" title="Browser öffnen oder schliessen">⧉ Browser</button>
     <div class="think-wrap">
       <button id="think-btn" class="toggle" title="Denkaufwand des Modells (/denken)">✻ <span id="think-label">Standard</span></button>
       <div id="think-pop" class="think-pop" hidden>
@@ -134,20 +135,20 @@
       </section>
     </aside>
 
-    <!-- Browser für browser_test: die echte Seite (WebContentsView) liegt über #browser-host -->
+    <!-- Browser der App: die echte Seite (WebContentsView) liegt über #browser-host -->
     <section id="browser-pane" class="browser-pane" hidden>
       <div class="bp-head">
-        <span class="live-dot" aria-hidden="true"></span>
-        <span class="bp-title">Browser</span>
-        <span id="bp-path" class="bp-path"></span>
-        <span id="bp-status" class="bp-status"></span>
-        <button id="bp-reload" class="ghost small" title="Seite neu laden">↻</button>
-        <button id="bp-big" class="ghost small" title="Gross: ganzes Fenster">⤢</button>
+        <button id="bp-back" class="ghost small" title="Zurück" aria-label="Zurück" disabled>←</button>
+        <button id="bp-forward" class="ghost small" title="Vorwärts" aria-label="Vorwärts" disabled>→</button>
+        <button id="bp-reload" class="ghost small" title="Seite neu laden" aria-label="Neu laden">↻</button>
+        <form id="bp-form" class="bp-form"><input id="bp-url" class="bp-url" spellcheck="false" autocomplete="off" placeholder="Adresse oder Suchbegriffe" aria-label="Adresse"></form>
+        <button id="bp-big" class="ghost small" title="Gross: ganzes Fenster" aria-label="Gross">⤢</button>
         <button id="bp-close" class="ghost small" title="Browser schliessen" aria-label="Browser schliessen">×</button>
       </div>
+      <div class="bp-status-row"><span class="live-dot" aria-hidden="true"></span><span id="bp-status" class="bp-status"></span></div>
       <div id="browser-host" class="browser-host"><img id="bp-frame" class="bp-frame" alt="" hidden></div>
       <ul id="bp-log" class="live-log"></ul>
-      <div class="bp-hint muted small">Du kannst selbst klicken und Tasten drücken. Was du während eines Tests machst, erfährt das Modell.</div>
+      <div class="bp-hint muted small">Du kannst selbst klicken, tippen und dich anmelden. Wichtige Konten (E-Banking) hier besser nicht. <button id="bp-clear" class="link-btn" type="button">Anmeldungen löschen</button></div>
     </section>
   </main>
 
