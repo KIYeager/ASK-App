@@ -323,6 +323,16 @@ class AskSession extends EventEmitter {
     return res;
   }
 
+  // Anfrage an ASK ohne die Abmelde-Logik von request(), für Nebenwege wie Flux (bild.js), bei denen ein
+  // 401 oder 403 auch «nicht freigegeben» heissen kann.
+  async raw(path, options = {}) {
+    if (!this.token) throw new AuthError('Nicht bei ASK angemeldet.');
+    return this.session.fetch(this.base + path, {
+      ...options,
+      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json', ...(options.headers || {}) },
+    });
+  }
+
   // Entfernt den alten Terminal-Eintrag aus den ASK-Einstellungen, einmal pro Anmeldung. Ohne die
   // Abmelde-Logik von request(): Schlägt das fehl, bleibt die Anmeldung gültig, und der nächste Start versucht es wieder.
   async cleanStaleTerminal(token) {

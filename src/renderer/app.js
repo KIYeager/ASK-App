@@ -697,10 +697,13 @@ function toolProgress(row, output) {
   live.textContent = output;
 }
 
-// Bilder, die das Modell mit view_file oder browser angesehen hat
-function shotList(images) {
-  const fileUrl = (p) => `askfile://datei/${p.split('/').map(encodeURIComponent).join('/')}`;
-  return el('div', { class: 'shots' }, ...images.map((p) => el('img', { src: fileUrl(p), alt: '', title: 'Klicken für die Vorschau',
+// Bilder, die das Modell mit view_file oder browser angesehen hat, gross: mit bild_erstellen erstellte
+function shotList(images, big = false) {
+  // ?v: ein bearbeitetes Bild behält oft seinen Namen, der Browser soll nicht die alte Fassung zeigen
+  const fileUrl = (p) => `askfile://datei/${p.split('/').map(encodeURIComponent).join('/')}${big ? `?v=${Date.now()}` : ''}`;
+  return el('div', { class: big ? 'shots big' : 'shots' }, ...images.map((p) => el('img', { src: fileUrl(p), alt: big ? baseName(p) : '', title: big ? `${p} · klicken für die Vorschau` : 'Klicken für die Vorschau',
+    // Geladen wird erst nach dem Scrollen: dann nochmals ans Ende, sofern die Ansicht dem Text folgt
+    onload: () => scrollDown(),
     onclick: (e) => { e.stopPropagation(); showPreview({ path: p, name: baseName(p) }); } })));
 }
 
@@ -720,7 +723,7 @@ function toolResult(row, { ok, summary, output, tasks, name, images }, live = fa
     row.details.append(todoList(tasks));
     if (live) setTodo(tasks, true);
   }
-  if (images && images.length) row.result.querySelector('.res').append(shotList(images));
+  if (images && images.length) row.result.querySelector('.res').append(shotList(images, name === 'bild_erstellen'));
   row.details.querySelector('pre.out')?.remove();
   if (output && !(tasks && tasks.length)) row.details.append(detailBlock(output, name === 'edit_file'));
 }

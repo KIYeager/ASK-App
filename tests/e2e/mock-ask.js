@@ -7,6 +7,7 @@
 // /__mock/tools/aus lässt Anfragen mit «tools» mit HTTP 400 scheitern, /__mock/usage/aus solche mit
 // «stream_options». Sonst kommen am Ende des Stroms Tokenzahlen (usage), wenn sie verlangt sind.
 const http = require('node:http');
+const zlib = require('node:zlib');
 const { createMockGitHub } = require('./mock-github');
 
 const github = createMockGitHub(); // GitHub-API unter /github-api
@@ -21,6 +22,67 @@ let toolsAccepted = true;
 let usageAccepted = true;
 let thinkAccepted = true;
 let visionAccepted = true;
+// Flux (bild.js): Werkzeug in ASK, vorübergehende Chats, Hintergrund-Antworten, erzeugte Bilder
+let fluxOffered = true;
+const fluxLog = [];
+const tempChats = new Map();
+const deletedChats = [];
+const runningChats = new Set();
+let fluxCount = 0;
+
+// Kleines PNG mit Farbverlauf, damit die App ein echtes Bild anzeigt
+function png(width, height, seed) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (buf) => { let c = 0xffffffff; for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const part = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const sum = Buffer.alloc(4);
+    sum.writeUInt32BE(crc(body));
+    return Buffer.concat([len, body, sum]);
+  };
+  const head = Buffer.alloc(13);
+  head.writeUInt32BE(width, 0);
+  head.writeUInt32BE(height, 4);
+  head[8] = 8;
+  head[9] = 2;
+  const rows = [];
+  for (let y = 0; y < height; y++) {
+    rows.push(0);
+    for (let x = 0; x < width; x++) rows.push((x * 4 + seed * 60) & 255, (y * 4) & 255, (200 - seed * 40) & 255);
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), part('IHDR', head),
+    part('IDAT', zlib.deflateSync(Buffer.from(rows))), part('IEND', Buffer.alloc(0))]);
+}
+
+// Antwort mit Flux: gestreamt mit Bild-Link («strom» in der Beschreibung oder ohne Sitzung) oder wie
+// die Webseite im Hintergrund, das Bild als Datei in der Antwort im vorübergehenden Chat
+function fluxAnswer(data, res) {
+  const user = data.messages.filter((m) => m.role === 'user').pop();
+  let args = {};
+  try { args = JSON.parse(/\{[\s\S]*\}/.exec(textOf(user?.content))?.[0] || '{}'); } catch { /* leer */ }
+  fluxLog.push({ model: data.model, toolIds: data.tool_ids, chatId: data.chat_id || '', messageId: data.id || '', sessionId: data.session_id || '',
+    appTools: !!data.tools, images: imagesIn(data.messages), args });
+  const n = ++fluxCount;
+  if (/strom/i.test(args.beschreibung || '') || !data.session_id) {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    for (const c of textChunks(`Fertig: ![Bild](/cache/image/generations/flux-${n}.png)`)) res.write(`data: ${JSON.stringify(c)}\n\n`);
+    return res.end('data: [DONE]\n\n');
+  }
+  runningChats.add(data.chat_id);
+  setTimeout(() => {
+    const chat = tempChats.get(data.chat_id);
+    const answer = chat?.history?.messages?.[data.id];
+    if (answer) {
+      answer.files = Array.from({ length: args.anzahl || 1 }, (_, i) => ({ type: 'image', url: `/api/v1/files/flux-${n}-${i}/content` }));
+      answer.content = args.bearbeiten ? 'Ich habe das Bild angepasst.' : 'Hier ist dein Bild.';
+    }
+    runningChats.delete(data.chat_id);
+  }, 600);
+  return json(res, 200, { status: true, task_id: `task-${n}` });
+}
+
 // Text einer Nachricht; mit Bildern ist content eine Liste von Teilen
 const textOf = (content) => (Array.isArray(content) ? content.filter((p) => p.type === 'text').map((p) => p.text).join('\n') : String(content ?? ''));
 const imagesIn = (messages) => messages.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((p) => p.type === 'image_url') : [])).length;
@@ -95,6 +157,18 @@ function script(messages) {
     return textChunks('Geholt.');
   }
   if (text.includes('bild an')) return textChunks('Ich sehe das Bild.');
+  if (text.includes('bild von einem fuchs')) {
+    if (results === 0) return toolCallChunks([{ name: 'bild_erstellen', args: { beschreibung: 'Ein Fuchs im Schnee', format: 'querformat' } }]);
+    return textChunks('Das Bild liegt unter `bilder/ein-fuchs-im-schnee.png`.');
+  }
+  if (text.includes('bild ändern')) {
+    if (results === 0) return toolCallChunks([{ name: 'bild_erstellen', args: { beschreibung: 'Mach den Himmel blau', vorlage: 'bilder/ein-fuchs-im-schnee.png' } }]);
+    return textChunks('Angepasst.');
+  }
+  if (text.includes('plakatbild')) {
+    if (results === 0) return toolCallChunks([{ name: 'bild_erstellen', args: { beschreibung: 'Bergsee im strom', datei: 'plakat/titel.png' } }]);
+    return textChunks('Gespeichert.');
+  }
   const open = /browser öffne (\S+)/.exec(text);
   if (open) {
     if (results === 0) return toolCallChunks([{ name: 'browser', args: { ziel: open[1].replace('{port}', port) } }]);
@@ -216,6 +290,11 @@ http.createServer((req, res) => {
   if (url === '/__mock/searches') return json(res, 200, searches);
   if (url === '/__mock/log') return json(res, 200, log);
   if (url === '/__mock/chatlog') return json(res, 200, chatLog);
+  if (url === '/__mock/flux') return json(res, 200, { log: fluxLog, open: [...tempChats.keys()], deleted: deletedChats });
+  if (url.startsWith('/__mock/flux/')) {
+    fluxOffered = url.endsWith('/an');
+    return json(res, 200, { fluxOffered });
+  }
   if (url.startsWith('/__mock/tools/')) {
     toolsAccepted = url.endsWith('/an');
     return json(res, 200, { toolsAccepted });
@@ -248,6 +327,37 @@ http.createServer((req, res) => {
     });
     return undefined;
   }
+  if (url === '/api/v1/tools/') {
+    return json(res, 200, [{ id: 'moodle', name: 'Moodle', specs: [{ name: 'moodle_kurse' }] },
+      ...(fluxOffered ? [{ id: 'flux_bild', name: 'Flux Bild', specs: [{ name: 'bild_erstellen', parameters: { properties: { beschreibung: { type: 'string' } } } }] }] : [])]);
+  }
+  if (url === '/api/v1/chats/new' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const id = `tmp-${tempChats.size + deletedChats.length + 1}`;
+      tempChats.set(id, JSON.parse(body).chat);
+      json(res, 200, { id, chat: tempChats.get(id) });
+    });
+    return undefined;
+  }
+  const chatMatch = /^\/api\/v1\/chats\/(tmp-\d+)$/.exec(url);
+  if (chatMatch) {
+    if (!tempChats.has(chatMatch[1])) return json(res, 404, { detail: 'not found' });
+    if (req.method === 'DELETE') {
+      tempChats.delete(chatMatch[1]);
+      deletedChats.push(chatMatch[1]);
+      return json(res, 200, true);
+    }
+    return json(res, 200, { id: chatMatch[1], chat: tempChats.get(chatMatch[1]) });
+  }
+  const tasks = /^\/api\/tasks\/chat\/(.+)$/.exec(url);
+  if (tasks) return json(res, 200, { task_ids: runningChats.has(tasks[1]) ? ['task'] : [] });
+  const image = /^\/(?:api\/v1\/files\/flux-(\d+)-\d+\/content|cache\/image\/generations\/flux-(\d+)\.png)$/.exec(url);
+  if (image) {
+    res.writeHead(200, { 'Content-Type': 'image/png' });
+    return res.end(png(96, 64, Number(image[1] || image[2]) % 5));
+  }
   if (url === '/api/models') {
     // Nach der Anmeldung langsam antworten, damit der Test die Phase «Anmeldung wird geprüft» sieht
     if (mode === 'abgemeldet') {
@@ -261,6 +371,7 @@ http.createServer((req, res) => {
     req.on('data', (c) => { body += c; });
     req.on('end', async () => {
       const data = JSON.parse(body);
+      if ((data.tool_ids || []).includes('flux_bild')) return fluxAnswer(data, res);
       chatLog.push({ model: data.model, stream: data.stream, usage: !!data.stream_options?.include_usage, web: !!data.features?.web_search,
         effort: data.reasoning_effort, think: data.think, enableThinking: data.chat_template_kwargs?.enable_thinking, tools: (data.tools || []).map((t) => t.function.name),
         system: data.messages[0]?.content || '', roles: data.messages.map((m) => m.role),

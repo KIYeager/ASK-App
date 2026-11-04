@@ -312,6 +312,7 @@ function githubTool(fn) {
 
 const { PAGE_CHARS } = require('./web');
 const history = require('./history');
+const { FORMATS: FLUX_FORMATS, QUALITIES: FLUX_QUALITIES } = require('./bild');
 
 const list = (items, max = 15) => (items.length ? `${items.slice(0, max).join(', ')}${items.length > max ? ` und ${items.length - max} weitere` : ''}` : '–');
 
@@ -562,6 +563,49 @@ TOOLS.push(
     }),
   },
 );
+
+// Bilder mit Flux (src/main/bild.js): ASK führt Flux auf dem Server aus, die App speichert die Bilder
+// im Arbeitsordner. Nur angeboten, wenn ASK dem Konto das Werkzeug anbietet (agent.js).
+TOOLS.push({
+  name: 'bild_erstellen',
+  label: 'Bild erstellen',
+  describe: (a) => `${a.vorlage ? `${a.vorlage}: ` : ''}${a.beschreibung || ''}`,
+  description: 'Erstellt oder bearbeitet Bilder mit Flux, dem Bildmodell von ASK, und speichert sie im Arbeitsordner (Standard: bilder/). '
+    + 'Für jedes gewünschte Bild, Foto, Zeichnung, Illustration oder Hintergrundbild. Zum Ändern eines Bildes (angehängt oder früher erstellt) '
+    + 'den Pfad als vorlage angeben und in beschreibung nur die Änderung; das Ergebnis ersetzt die Vorlage, ein Anhang bleibt und das Ergebnis kommt nach bilder/. '
+    + 'Diagramme und Grafiken aus Daten weiterhin mit Python. '
+    + 'Format, Qualität, Stil und Anzahl nur angeben, wenn die Person sie nennt. Dauert meist 10 bis 60 Sekunden.',
+  parameters: {
+    type: 'object',
+    properties: {
+      beschreibung: { type: 'string', description: 'Neues Bild: was es zeigen soll, in den Worten und der Sprache der Person, mit allen Details. Bearbeiten: nur die Änderung, z. B. «mach den Himmel stürmisch».' },
+      vorlage: { type: 'string', description: 'Nur zum Bearbeiten: Pfad des Bildes im Arbeitsordner, z. B. ein Anhang oder ein früher erstelltes Bild' },
+      datei: { type: 'string', description: 'Optional: speichern unter diesem Pfad, z. B. «plakat/titelbild.png». Sonst neue Bilder unter bilder/ mit Namen aus der Beschreibung.' },
+      format: { type: 'string', enum: FLUX_FORMATS, description: 'quadrat (1:1), hochformat (2:3), querformat (3:2), breitbild (16:9), handy (9:16), panorama (21:9). Beim Bearbeiten leer: Form bleibt.' },
+      qualitaet: { type: 'string', enum: FLUX_QUALITIES, description: 'schnell (Entwurf), hoch (Standard), maximal (beste Details, langsamer)' },
+      stil: { type: 'string', description: 'Optional: foto, comic, aquarell, oel, pixel, bausteine, skizze, render. Leer, wenn die Beschreibung den Stil schon nennt.' },
+      anzahl: { type: 'integer', description: 'Verschiedene Bilder, 1 bis 4 (Standard 1)' },
+      referenzen: { type: 'string', description: 'Nur neue Bilder: echte, benannte Dinge, die das Bildmodell vielleicht nicht genau kennt (Bauwerke, Berge, Städte, bestimmte Fahrzeug- oder Tierarten). '
+        + 'Höchstens zwei, getrennt mit «;», je «Titel des deutschen Wikipedia-Artikels = kurze englische Beschreibung», z. B. «Zytglogge = the Zytglogge clock tower in Bern». Nie für Personen oder Alltägliches.' },
+      tf_branding: { type: 'boolean', description: 'true, wenn Logo oder Auftritt der TF Bern aufs Bild soll (Schule, «unser Logo», Merchandise, Plakate). Das echte Logo wird dann eingesetzt.' },
+      verwandeln: { type: 'boolean', description: 'true nur, wenn ein benanntes Ding zu etwas anderem wird (z. B. «Zytglogge aus Schokolade»)' },
+    },
+    required: ['beschreibung'],
+  },
+  run: async (terminal, a, ctx) => {
+    if (!ctx.images || !ctx.folder) throw new Error('Bilder erstellen ist hier nicht verfügbar.');
+    const r = await ctx.images.create(ctx.folder, a, { chat: ctx.chat, signal: ctx.signal, onProgress: ctx.onProgress });
+    const one = r.files.length === 1;
+    return {
+      ok: true,
+      images: r.files,
+      view: false, // die Person sieht die Bilder in der App; das Modell nur auf Wunsch mit view_file
+      summary: `${one ? r.files[0] : `${r.files.length} Bilder`} · ${r.seconds} s`,
+      output: `${one ? 'Bild gespeichert' : 'Bilder gespeichert'}: ${r.files.join(', ')}${r.text ? `\nFlux/ASK: ${r.text}` : ''}\n`
+        + `Die Person sieht ${one ? 'das Bild' : 'die Bilder'} in der App. Ansehen kannst du ${one ? 'es' : 'sie'} mit view_file; zum Ändern bild_erstellen mit vorlage.`,
+    };
+  },
+});
 
 const byName = new Map(TOOLS.map((t) => [t.name, t]));
 

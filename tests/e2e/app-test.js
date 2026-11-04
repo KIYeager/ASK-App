@@ -189,6 +189,7 @@ await compact(ctx, check, shell, shoot);
   await undoFlow(ctx, check, shell, shoot);
   await visualFlow(ctx, check, shell, shoot);
   await webFlow(ctx, check, shell, shoot);
+  await imageFlow(ctx, check, shell, shoot);
   await memoryFlow(ctx, check, shell, shoot);
   await browserFlow(ctx, check, shell, shoot);
   await scrollFlow(ctx, check, shell, shoot);
@@ -507,6 +508,63 @@ async function webFlow(ctx, check, shell, shoot) {
   check('web_fetch: nur http und https', !bad.ok && /http/.test(bad.output), bad.output);
 }
 
+// Bilder mit Flux: ASK bietet das Werkzeug an, die App fragt wie die Webseite an und speichert das Bild
+async function imageFlow(ctx, check, shell, shoot) {
+  const { agent, settings } = ctx;
+  const mockUrl = process.env.ASK_TEST_ASK_URL;
+  const folder = settings.get('folder');
+  await until('Flux gefunden', () => agent.images.available(), 10000).catch(() => {});
+  check('Flux-Werkzeug in ASK gefunden', agent.images.available() && agent.images.tool?.id === 'flux_bild', JSON.stringify(agent.images.tool));
+  const before = (await getJson(`${mockUrl}/__mock/chatlog`)).length;
+  await order(shell, agent, 'Bitte mach ein Bild von einem Fuchs');
+  const log = (await getJson(`${mockUrl}/__mock/chatlog`)).slice(before);
+  check('bild_erstellen wird dem Modell angeboten', log[0]?.tools.includes('bild_erstellen'), JSON.stringify(log[0]?.tools));
+  const tool = agent.chat.messages.filter((m) => m.role === 'tool').pop();
+  const file = path.join(folder, 'bilder', 'ein-fuchs-im-schnee.png');
+  check('Bild im Arbeitsordner unter bilder/ gespeichert', tool.ok && tool.images?.[0] === 'bilder/ein-fuchs-im-schnee.png' && fs.existsSync(file)
+    && fs.readFileSync(file).subarray(1, 4).toString() === 'PNG', tool.content);
+  let flux = await getJson(`${mockUrl}/__mock/flux`);
+  const req = flux.log.at(-1) || {};
+  check('Eigene Anfrage an ASK mit Flux wie die Webseite (Chat, Nachricht, Sitzung), ohne Werkzeuge der App', req.toolIds?.join() === 'flux_bild'
+    && /^tmp-/.test(req.chatId) && req.messageId && req.sessionId && !req.appTools && req.model === 'qwen-test'
+    && req.args?.beschreibung === 'Ein Fuchs im Schnee' && req.args?.format === 'querformat', JSON.stringify(req));
+  check('Vorübergehender Chat in ASK danach gelöscht', flux.open.length === 0 && flux.deleted.includes(req.chatId), JSON.stringify(flux.deleted));
+  check('Das Bild geht nicht von selbst ans Modell', !log.some((l) => l.lastUser.startsWith('[Ansicht]')) && !agent.chat.messages.slice(-3).some((m) => m.note === 'view'),
+    JSON.stringify(log.map((l) => l.lastUser)));
+  const shown = await until('Bild im Chat', () => shell(`(() => { const i = [...document.querySelectorAll('.msg.tool .shots.big img')].pop();
+    return !!i && i.complete && i.naturalWidth === 96; })()`), 10000).catch(() => false);
+  check('Bild gross im Chat angezeigt', shown, shown ? '' : await shell(`document.querySelector('.shots.big')?.outerHTML || 'fehlt'`));
+  const row = await shell(`(() => { const m = [...document.querySelectorAll('.msg.tool')].pop(); return m.querySelector('.call').textContent + ' ⎿ ' + m.querySelector('.result').textContent; })()`);
+  check('Zeile «Bild erstellen(…)» mit Datei und Dauer', /^Bild erstellen\(Ein Fuchs im Schnee\) ⎿ ⎿bilder\/ein-fuchs-im-schnee\.png · \d+ s$/.test(row), row);
+  check('Unter dem Auftrag: neues Bild mit «Rückgängig»', await shell(`(() => { const c = [...document.querySelectorAll('.msg.changes')].pop();
+    return !!c && c.textContent.includes('ein-fuchs-im-schnee.png'); })()`));
+  await shoot('16-bild');
+
+  // Bearbeiten: die Vorlage geht als Bild mit, das Ergebnis ersetzt sie
+  const first = fs.readFileSync(file);
+  await order(shell, agent, 'Bitte bild ändern: Himmel blau');
+  flux = await getJson(`${mockUrl}/__mock/flux`);
+  const edit = flux.log.at(-1) || {};
+  const edited = agent.chat.messages.filter((m) => m.role === 'tool').pop();
+  check('Bearbeiten: Vorlage als Bild an Flux, bearbeiten = true', edit.images === 1 && edit.args?.bearbeiten === true && edit.args?.beschreibung === 'Mach den Himmel blau',
+    JSON.stringify(edit));
+  check('Bearbeitetes Bild ersetzt die Vorlage', edited.ok && edited.images?.[0] === 'bilder/ein-fuchs-im-schnee.png' && !fs.readFileSync(file).equals(first)
+    && fs.readdirSync(path.join(folder, 'bilder')).length === 1, edited.content);
+
+  // Gestreamter Bild-Link, gewünschter Dateiname
+  await order(shell, agent, 'Bitte ein plakatbild');
+  const poster = agent.chat.messages.filter((m) => m.role === 'tool').pop();
+  check('Bild aus gestreamtem Link unter dem gewünschten Namen', poster.ok && fs.existsSync(path.join(folder, 'plakat', 'titel.png')), poster.content);
+
+  // Ohne Flux in ASK wird das Werkzeug nicht angeboten
+  await getJson(`${mockUrl}/__mock/flux/aus`);
+  await agent.images.discover();
+  await order(shell, agent, 'Schau dir das Bild an');
+  check('Ohne Flux in ASK kein bild_erstellen', !agent.images.available() && !(await getJson(`${mockUrl}/__mock/chatlog`)).at(-1).tools.includes('bild_erstellen'));
+  await getJson(`${mockUrl}/__mock/flux/an`);
+  await agent.images.discover();
+}
+
 // Ansehen: das Modell sieht ein Bild und testet eine HTML-Seite im unsichtbaren Browser
 async function visualFlow(ctx, check, shell, shoot) {
   const { agent, settings, appWindow } = ctx;
@@ -537,7 +595,9 @@ async function visualFlow(ctx, check, shell, shoot) {
 
   await shell('document.getElementById("input").focus()');
   await order(shell, agent, 'Bitte spiel testen');
-  check('Browser nimmt dem Eingabefeld den Fokus nicht', await shell('document.activeElement === document.getElementById("input")') && !appWindow.browser.webContents.isFocused());
+  const focus = await shell(`(() => { const a = document.activeElement; return { input: a === document.getElementById('input'), active: a ? a.tagName + '#' + a.id : '', windowFocus: document.hasFocus() }; })()`);
+  const paneFocus = appWindow.browser.webContents.isFocused();
+  check('Browser nimmt dem Eingabefeld den Fokus nicht', focus.input && !paneFocus, JSON.stringify({ ...focus, paneFocus, appFocus: appWindow.win?.isFocused?.() }));
   const tested = agent.chat.messages.filter((m) => m.role === 'tool').pop();
   check('browser: Konsole, Klick und Taste', tested.ok && tested.content.includes('Fehler: absichtlicher Testfehler') && tested.content.includes('Gestartet Rechts')
     && tested.content.includes('«Testspiel»'), tested.content);

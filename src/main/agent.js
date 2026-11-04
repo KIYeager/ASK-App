@@ -111,8 +111,9 @@ function apiMessages(system, messages, textMode = false, imageUrl = null) {
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, confirm, getImageUrl, getVision, getSnapshots, getChatMemory }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory }) {
     super();
+    this.images = images || null; // bild_erstellen mit Flux (bild.js), nur wenn ASK das Werkzeug anbietet
     this.getChatMemory = getChatMemory || (() => false); // Schalter «Chats»: frühere Chats lesen (history.js)
     this.web = web || null; // web_search und web_fetch (web.js)
     this.githubTrust = githubTrust || null;
@@ -315,7 +316,9 @@ class Agent extends EventEmitter {
     if (!model) throw new Error('Kein Modell gewählt.');
     const goal = this.chat.goal && !this.chat.goal.done ? this.chat.goal : null;
     const memory = !!this.getChatMemory();
-    const specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => memory || !s.function.name.startsWith('chat_')), ...(goal ? [GOAL_TOOL] : [])];
+    const flux = !!this.images?.available();
+    const offered = (name) => (memory || !name.startsWith('chat_')) && (flux || name !== 'bild_erstellen');
+    const specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => offered(s.function.name)), ...(goal ? [GOAL_TOOL] : [])];
     let sentImages = false;
     const request = () => {
       const system = this.getSystemPrompt(this.chat.id) + (goal ? goalPrompt(goal) : '') + (this.textMode ? textModePrompt(specs) : '');
@@ -403,6 +406,7 @@ class Agent extends EventEmitter {
           githubTrust: this.githubTrust,
           visual: this.visual,
           web: this.web,
+          images: flux ? this.images : null,
           chatMemory: memory,
           onLive: (data) => this.event({ type: 'live', id: call.id, ...data }),
           canSee,
@@ -416,7 +420,7 @@ class Agent extends EventEmitter {
         summary: result.summary, display: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, textMode, ms: Date.now() - started });
       this.event({ type: 'tool-end', id: call.id, ok: result.ok, summary: result.summary,
         output: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, ms: Date.now() - started });
-      if (canSee && images.length) seen.push({ call: `${call.function.name}(${this.describeCall(call).detail})`, images });
+      if (canSee && images.length && result.view !== false) seen.push({ call: `${call.function.name}(${this.describeCall(call).detail})`, images });
     }
     if (seen.length && !signal.aborted) {
       this.push({ role: 'user', auto: true, note: 'view', time: Date.now(),

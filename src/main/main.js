@@ -19,6 +19,7 @@ const { Snapshots } = require('./snapshot');
 const { Visual } = require('./visual');
 const { Web } = require('./web');
 const { historyPrompt } = require('./history');
+const { Images } = require('./bild');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -77,6 +78,10 @@ const githubTrust = {
 // Internet für das Modell; lokale Adressen nur im Test (Mock-Server auf 127.0.0.1)
 const web = new Web({ ask, fetchImpl: (url, options) => net.fetch(url, options), allowLocal: testMode });
 
+// Bilder mit Flux über ASK (bild.js); angeboten, sobald ASK dem Konto das Werkzeug anbietet
+const images = new Images({ ask, getModel: () => currentModel(), fetchImpl: (url, options) => net.fetch(url, options),
+  allowLocal: testMode, resize: nativeResize(nativeImage) });
+
 // Browser-Bereich der App für browser. Die Oberfläche öffnet ihn beim Start des Tests und meldet
 // Grösse und Sichtbarkeit; ist er nach 2 s nicht sichtbar (App minimiert), testet visual.js unsichtbar.
 async function browserPane() {
@@ -96,6 +101,7 @@ const agent = new Agent({
   githubTrust,
   visual,
   web,
+  images,
   confirm,
   ask,
   terminal,
@@ -496,8 +502,8 @@ function setupIpc() {
     if (!full) return { kind: 'missing' };
     const ext = path.extname(full).toLowerCase();
     const url = `askfile://datei/${rel.split(path.sep).map(encodeURIComponent).join('/')}`;
-    const size = fs.statSync(full).size;
-    if (IMAGE_EXT.has(ext)) return { kind: 'image', url };
+    const { size, mtimeMs } = fs.statSync(full);
+    if (IMAGE_EXT.has(ext)) return { kind: 'image', url: `${url}?v=${Math.round(mtimeMs)}` }; // neue Fassung, nicht die zwischengespeicherte
     if (ext === '.pdf') return { kind: 'pdf', url };
     if (OFFICE_EXT.has(ext)) return { kind: 'office', name: path.basename(full) };
     if (TEXT_EXT.has(ext) || size < 200000) {
@@ -547,7 +553,11 @@ function wireEvents() {
     }
     pushState();
   });
-  ask.on('status', () => pushState());
+  ask.on('status', (s) => {
+    if (s.state === 'angemeldet') images.discover();
+    else if (s.state === 'nicht-angemeldet') images.forget();
+    pushState();
+  });
   agent.on('event', (ev) => appWindow?.send('chat:event', ev));
   agent.on('changed', () => {
     appWindow?.send('chat:changed', agent.state());
