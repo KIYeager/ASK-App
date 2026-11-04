@@ -175,7 +175,8 @@ function script(messages) {
     return textChunks('Offen.');
   }
   if (text.includes('browser klicke')) {
-    if (results === 0) return toolCallChunks([{ name: 'browser', args: { aktionen: [{ klick_text: 'Weiter' }, { klick_text: 'Weiter' }, { text: 'hallo', in: '#feld' }] } }]);
+    // Text einmal ins zuvor angeklickte Feld (ohne «in») und einmal mit «in»
+    if (results === 0) return toolCallChunks([{ name: 'browser', args: { aktionen: [{ klick_text: 'Weiter' }, { klick_text: 'Weiter' }, { klick: '#feld' }, { text: 'hal' }, { text: 'lo', in: '#feld' }] } }]);
     return textChunks('Geklickt.');
   }
   if (text.includes('browser link')) {

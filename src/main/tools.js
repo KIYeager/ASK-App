@@ -574,7 +574,8 @@ TOOLS.push({
     + 'Für jedes gewünschte Bild, Foto, Zeichnung, Illustration oder Hintergrundbild. Zum Ändern eines Bildes (angehängt oder früher erstellt) '
     + 'den Pfad als vorlage angeben und in beschreibung nur die Änderung; das Ergebnis ersetzt die Vorlage, ein Anhang bleibt und das Ergebnis kommt nach bilder/. '
     + 'Diagramme und Grafiken aus Daten weiterhin mit Python. '
-    + 'Format, Qualität, Stil und Anzahl nur angeben, wenn die Person sie nennt. Dauert meist 10 bis 60 Sekunden.',
+    + 'Qualität, Stil und Anzahl nur angeben, wenn die Person sie nennt, das Format ebenso, ausser das Bild kommt in ein Dokument: '
+    + 'dann das Format passend zur Stelle wählen, z. B. breitbild für eine ganze Folie, hochformat für eine ganze A4-Seite. Dauert meist 10 bis 60 Sekunden.',
   parameters: {
     type: 'object',
     properties: {

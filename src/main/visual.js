@@ -220,6 +220,15 @@ class Visual {
     const notes = [];
     let synthetic = 0; // Zeitpunkt der letzten eigenen Eingabe; Eingaben danach stammen von der Person
     let userInputs = 0;
+    // Laden und Klicks holen in Electron den Tastaturfokus in den Browser-Bereich. Die App gibt ihn
+    // gleich zurück, ausser die Person klickt während des Aufrufs selbst in den Browser: Sonst landet,
+    // was sie im Chat tippt, auf der Seite. Ob der Bereich schon vorher den Fokus hatte, sagt nichts
+    // darüber, wo die Person ist (Einblenden und frühere Aufrufe holen ihn auch dorthin).
+    // Tasten und Text erreichen die Seite auch ohne Fokus.
+    let keepFocus = false;
+    const giveBack = () => {
+      if (!keepFocus && view.giveBack && wc.isFocused()) view.giveBack();
+    };
     let cancelled = false;
     let limitTimer = null;
     const onConsole = (e, level, message, line, source) => {
@@ -235,7 +244,10 @@ class Visual {
     };
     const onGone = () => notes.push('Die Seite ist abgestürzt.');
     const onInput = (_e, input) => {
-      if (['mouseDown', 'keyDown', 'rawKeyDown'].includes(input?.type) && Date.now() - synthetic > 150) userInputs++;
+      if (['mouseDown', 'keyDown', 'rawKeyDown'].includes(input?.type) && Date.now() - synthetic > 150) {
+        userInputs++;
+        if (input.type === 'mouseDown') keepFocus = true;
+      }
     };
     const send = (event) => { synthetic = Date.now(); wc.sendInputEvent(event); };
     // Die Seite kann hängen: jeder Zugriff hat ein Zeitlimit
@@ -258,10 +270,12 @@ class Visual {
           if (err.message === 'zeit') notes.push('Die Seite lädt nach 15 Sekunden noch; das Bild zeigt den Stand bis dahin.');
           else if (err.code !== 'ERR_ABORTED') throw new Error(`Seite nicht erreichbar: ${err.code || err.message}`); // ERR_ABORTED: Weiterleitung
         }
+        giveBack();
         await pause(Math.min(Math.max(Number(warten) || 1000, 200), 10000));
       } else if (warten) {
         await pause(Math.min(Math.max(Number(warten), 0), 10000));
       }
+      giveBack();
       live({ step: page ? 'geladen' : 'weiter auf der offenen Seite' });
       if (Array.isArray(aktionen) && aktionen.length) view.focus();
 
@@ -282,6 +296,8 @@ class Visual {
           const name = a.klick ?? (a.klick_text !== undefined ? `«${a.klick_text}»` : `${a.x},${a.y}`);
           if (!pos) { done.push(`Klick ${name}: Element nicht gefunden`); live({ step: done.at(-1) }); continue; }
           click(pos);
+          await pause(30);
+          giveBack();
           done.push(`Klick ${name}`);
         } else if (a.taste !== undefined) {
           const code = keyCode(a.taste);
@@ -314,6 +330,7 @@ class Visual {
         }
         live({ step: done.at(-1) });
         await pause(250); // Klicks und Tasten wirken oft erst nach einem Moment
+        giveBack(); // auch nach Text in ein angeklicktes Feld und falls der Fokus spät wechselt
       }
       await pause(300);
 

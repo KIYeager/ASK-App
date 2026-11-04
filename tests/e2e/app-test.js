@@ -371,11 +371,15 @@ async function browserFlow(ctx, check, shell, shoot) {
   check('Adressleiste zeigt die Seite', (await shell('document.getElementById("bp-url").value')).endsWith('/__mock/app'));
 
   await inPage('window.merker = 42');
+  appWindow.win.focus(); // wie beim Tippen im Chat, während das Modell im Browser arbeitet
+  await shell('document.getElementById("input").focus()');
   await order(shell, agent, 'browser klicke zweimal');
   t = lastTool();
-  check('Ohne ziel weiter auf der offenen Seite: nicht neu geladen, Klicks nach Text, Eingabe ins Feld', t.ok && (await inPage('window.merker')) === 42
-    && (await inPage('z.textContent')) === '2' && (await inPage('feld.value')) === 'hallo', t.content);
-  check('Zeile «Browser(offene Seite, 3 Aktionen)»', await shell(`[...document.querySelectorAll('.msg.tool')].pop().querySelector('.call').textContent === 'Browser(offene Seite, 3 Aktionen)'`));
+  check('Ohne ziel weiter auf der offenen Seite: nicht neu geladen, Klicks nach Text, Eingabe ins Feld (mit und ohne «in»)', t.ok && (await inPage('window.merker')) === 42
+    && (await inPage('z.textContent')) === '2' && (await inPage('feld.value')) === 'hallo', `${await inPage('feld.value')} | ${t.content}`);
+  check('Klicks und Text auf der Seite lassen den Fokus im Eingabefeld des Chats', await shell('document.activeElement === document.getElementById("input")')
+    && !appWindow.browser.webContents.isFocused(), JSON.stringify({ pane: appWindow.browser.webContents.isFocused(), app: appWindow.win.isFocused() }));
+  check('Zeile «Browser(offene Seite, 5 Aktionen)»', await shell(`[...document.querySelectorAll('.msg.tool')].pop().querySelector('.call').textContent === 'Browser(offene Seite, 5 Aktionen)'`));
 
   await order(shell, agent, 'browser link folgen');
   t = lastTool();
@@ -593,6 +597,8 @@ async function visualFlow(ctx, check, shell, shoot) {
     return t.querySelector('.call').textContent.startsWith('Ansehen(grafik.png') && t.querySelector('.shots img').naturalWidth === 60; })()`));
   check('Ansicht nicht als Eingabe im Chat', agent.transcript().every((i) => !String(i.content || '').startsWith('[Ansicht]')));
 
+  // App im Vordergrund wie beim Tippen im Chat: nur dann holt ein Klick in den Browser den Fokus
+  appWindow.win.focus();
   await shell('document.getElementById("input").focus()');
   await order(shell, agent, 'Bitte spiel testen');
   const focus = await shell(`(() => { const a = document.activeElement; return { input: a === document.getElementById('input'), active: a ? a.tagName + '#' + a.id : '', windowFocus: document.hasFocus() }; })()`);
