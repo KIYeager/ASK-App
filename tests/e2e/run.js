@@ -50,7 +50,7 @@ const app = spawn(electron, [root], {
 app.stdout.on('data', (d) => process.stdout.write(`[app] ${d}`));
 app.stderr.on('data', (d) => process.stderr.write(`[app] ${d}`));
 
-const timer = setTimeout(() => { console.error('Zeitüberschreitung, App wird beendet'); app.kill(); }, 240000);
+const timer = setTimeout(() => { console.error('Zeitüberschreitung, App wird beendet'); app.kill(); }, 360000);
 app.on('exit', async (code) => {
   clearTimeout(timer);
   mock.kill();

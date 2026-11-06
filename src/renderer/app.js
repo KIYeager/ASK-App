@@ -125,6 +125,7 @@ function renderStatus() {
   $('new-btn').disabled = running || !s.folder;
   document.body.classList.toggle('no-sidebar', !s.sidebarOpen);
   document.body.classList.toggle('no-chatbar', !s.chatbarOpen);
+  applyWidths(); // eingeblendete Leiste: Breiten neu begrenzen
   renderComposer();
 }
 
@@ -1229,6 +1230,7 @@ function openBrowser() {
   $('browser-pane').hidden = false;
   document.body.classList.add('browser-open');
   $('browser-btn').classList.add('on');
+  applyWidths();
   requestAnimationFrame(reportBrowser);
 }
 
@@ -1241,6 +1243,7 @@ function closeBrowser() {
   $('bp-log').replaceChildren();
   browserMode = '';
   api.browserClose();
+  applyWidths();
   reportBrowser();
 }
 
@@ -1282,6 +1285,90 @@ function wireBrowser() {
   $('bp-clear').onclick = () => api.browserClear();
   api.onBrowserState(onBrowserState);
   api.onBrowserNotice((text) => browserLog(text, 'warning'));
+}
+
+// ---------- Breite der Seitenleisten ----------
+// Wie in der Claude-App lassen sich die Ränder zwischen Chats, Chat, Seitenleiste und Browser ziehen;
+// Doppelklick setzt die Standardbreite, Pfeiltasten verschieben den fokussierten Rand. Die Breiten
+// gelten für diesen Rechner (localStorage). Der Browser folgt seinem Platz über reportBrowser.
+const PANELS = {
+  chatbar: { css: '--chatbar-w', min: 180, max: 480, grows: 1 },
+  sidebar: { css: '--sidebar-w', min: 240, max: 720, grows: -1 },
+  browser: { css: '--browser-w', min: 320, max: 4000, grows: -1 },
+};
+const CHAT_MIN = 360; // so breit bleibt der Chat mindestens
+let widths = {};
+try { widths = JSON.parse(localStorage.getItem('ask.breiten') || '{}') || {}; } catch { widths = {}; }
+
+const panelEl = (name) => $(name === 'browser' ? 'browser-pane' : name);
+const shownWidth = (name) => {
+  const node = panelEl(name);
+  return node.hidden || getComputedStyle(node).display === 'none' ? 0 : node.getBoundingClientRect().width;
+};
+
+// Breite begrenzen: Der Chat dazwischen behält CHAT_MIN, auch mit der anderen Leiste
+function clampWidth(name, w) {
+  const other = name === 'chatbar' ? Math.max(shownWidth('sidebar'), shownWidth('browser')) : shownWidth('chatbar');
+  const room = window.innerWidth - other - CHAT_MIN;
+  return Math.round(Math.max(PANELS[name].min, Math.min(PANELS[name].max, room, w)));
+}
+
+function applyWidths() {
+  for (const [name, p] of Object.entries(PANELS)) {
+    if (widths[name]) document.body.style.setProperty(p.css, `${clampWidth(name, widths[name])}px`);
+    else document.body.style.removeProperty(p.css);
+  }
+}
+
+function saveWidths() {
+  try { localStorage.setItem('ask.breiten', JSON.stringify(widths)); } catch { /* nur für diese Sitzung */ }
+}
+
+function wireResizers() {
+  for (const handle of document.querySelectorAll('.resizer')) {
+    const name = handle.dataset.panel;
+    const set = (w) => { widths[name] = clampWidth(name, w); applyWidths(); };
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = panelEl(name).getBoundingClientRect().width;
+      handle.setPointerCapture(e.pointerId);
+      handle.classList.add('dragging');
+      document.body.classList.add('resizing');
+      const move = (ev) => {
+        if (!(ev.buttons & 1)) { end(); return; } // Loslassen ging verloren
+        set(startW + PANELS[name].grows * (ev.clientX - startX));
+      };
+      const end = () => {
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', end);
+        handle.removeEventListener('lostpointercapture', end);
+        window.removeEventListener('blur', end);
+        handle.classList.remove('dragging');
+        document.body.classList.remove('resizing');
+        saveWidths();
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', end);
+      handle.addEventListener('lostpointercapture', end);
+      window.addEventListener('blur', end);
+    });
+    handle.addEventListener('dblclick', () => {
+      delete widths[name];
+      applyWidths();
+      saveWidths();
+    });
+    handle.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const step = (e.key === 'ArrowRight' ? 1 : -1) * PANELS[name].grows * (e.shiftKey ? 64 : 16);
+      set(panelEl(name).getBoundingClientRect().width + step);
+      saveWidths();
+    });
+  }
+  window.addEventListener('resize', applyWidths);
+  applyWidths();
 }
 
 function toggleBrowserBig() {
@@ -1413,6 +1500,7 @@ function wire() {
   wireScroll();
   $('todo-head').onclick = () => toggleTodo();
   wireBrowser();
+  wireResizers();
   $('folder-btn').onclick = () => api.folderMenu();
   $('sidebar-btn').onclick = () => api.setSidebar(!state.sidebarOpen);
   $('new-btn').onclick = () => newChat();

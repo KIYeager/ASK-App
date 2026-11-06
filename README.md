@@ -108,6 +108,8 @@ Im Arbeitsordner legt die App nur `.ask/` an. Dort liegen die Anleitungen (`skil
 
 Scrollt man im Chat nach oben, bleibt die Ansicht dort, auch während das Modell arbeitet; «↓ nach unten» oder Scrollen bis ans Ende lässt sie dem Text wieder folgen. Im Ordner-Menü sind Ordner, die es nicht mehr gibt, mit «(nicht gefunden)» markiert; ein Klick entfernt sie aus der Liste, und «Aus der Liste entfernen» listet alle Ordner.
 
+Die Ränder zwischen den Chats links, dem Chat, der Seitenleiste rechts und dem Browser lassen sich mit der Maus ziehen; ein Doppelklick auf einen Rand setzt die Standardbreite zurück, mit Tab angewählt verschieben ihn die Pfeiltasten. Der Chat bleibt mindestens 360 Pixel breit. Die Breiten merkt sich die App auf diesem Rechner.
+
 Tastenkürzel: Ctrl+Plus/Minus/0 zoomt die Oberfläche, Ctrl+R lädt die Anmeldeseite von ASK neu.
 
 ## Bekannte Grenzen

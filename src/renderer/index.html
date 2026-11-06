@@ -43,6 +43,7 @@
       <input id="chat-search" class="chat-search" type="search" placeholder="Chats durchsuchen" spellcheck="false">
       <div id="chat-groups" class="chat-groups"></div>
     </aside>
+    <div class="resizer" data-panel="chatbar" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Breite der Chats" title="Ziehen: Breite ändern · Doppelklick: Standardbreite"></div>
 
     <section class="chat-area">
       <div id="login-area" class="login-area" hidden>
@@ -114,6 +115,7 @@
       </div>
     </section>
 
+    <div class="resizer" data-panel="sidebar" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Breite der Seitenleiste" title="Ziehen: Breite ändern · Doppelklick: Standardbreite"></div>
     <aside id="sidebar" class="sidebar">
       <section class="panel" id="output-panel">
         <h2>Zuletzt geändert</h2>
@@ -136,6 +138,7 @@
     </aside>
 
     <!-- Browser der App: die echte Seite (WebContentsView) liegt über #browser-host -->
+    <div class="resizer" data-panel="browser" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Breite des Browsers" title="Ziehen: Breite ändern · Doppelklick: Standardbreite"></div>
     <section id="browser-pane" class="browser-pane" hidden>
       <div class="bp-head">
         <button id="bp-back" class="ghost small" title="Zurück" aria-label="Zurück" disabled>←</button>

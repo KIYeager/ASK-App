@@ -90,15 +90,25 @@ code { font-family: var(--mono); font-size: 0.92em; background: var(--panel-2); 
 .layout { flex: 1; display: flex; min-height: 0; }
 .chat-area { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
 .sidebar {
-  width: 340px; flex: none; border-left: 1px solid var(--border); background: var(--bg-2);
+  width: var(--sidebar-w, 340px); flex: none; border-left: 1px solid var(--border); background: var(--bg-2);
   overflow-y: auto; display: flex; flex-direction: column;
 }
 body.no-sidebar .sidebar { display: none; }
 body.no-chatbar .chatbar { display: none; }
 
+/* Ziehbare Ränder zwischen Chats, Chat, Seitenleiste und Browser (app.js, wireResizers) */
+.resizer { flex: none; width: 0; position: relative; z-index: 6; outline: none; }
+.resizer::before { content: ''; position: absolute; top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; }
+.resizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: transparent; pointer-events: none; transition: background 0.1s; }
+.resizer:hover::after { background: var(--accent-strong); transition-delay: 0.15s; }
+.resizer.dragging::after, .resizer:focus-visible::after { background: var(--accent-strong); transition-delay: 0s; }
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none !important; }
+body.no-chatbar .resizer[data-panel=chatbar], body.no-sidebar .resizer[data-panel=sidebar], body.browser-open .resizer[data-panel=sidebar],
+body:not(.browser-open) .resizer[data-panel=browser], body.browser-big .resizer[data-panel=browser] { display: none; }
+
 /* ---------- Chats (links) ---------- */
 .chatbar {
-  width: 260px; flex: none; border-right: 1px solid var(--border); background: var(--bg-2);
+  width: var(--chatbar-w, 260px); flex: none; border-right: 1px solid var(--border); background: var(--bg-2);
   display: flex; flex-direction: column; min-height: 0; padding: 10px 8px 8px;
 }
 .chatbar-new {
@@ -377,9 +387,13 @@ body:not(.verbose) .msg.folded { display: none; }
 .statusline .hint { font-size: 11.5px; }
 .statusline > * { white-space: nowrap; flex: none; }
 .statusline > span.hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Schmaler Chat (Ränder gezogen): erst die Tastenhinweise, dann der Name kürzen, nie über den Rand hinaus */
+.statusline { overflow: hidden; }
+.statusline > #ask-pill { flex: 0 1 auto; min-width: 48px; }
+#ask-text { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .pill { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; cursor: pointer; color: var(--muted); font: inherit; }
 .pill:hover { color: var(--text); }
-.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex: none; }
 .pill.ok .dot { background: var(--ok); }
 .pill.warn .dot { background: var(--warn); }
 .pill.bad .dot { background: var(--bad); }
@@ -398,7 +412,7 @@ body:not(.verbose) .msg.folded { display: none; }
 
 /* Browser · live */
 /* Browser-Bereich für browser (die Seite selbst ist eine WebContentsView über #browser-host) */
-.browser-pane { width: 50%; min-width: 440px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg-2); }
+.browser-pane { width: var(--browser-w, 50%); min-width: 320px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg-2); }
 body.browser-open .sidebar { display: none; }
 body.browser-big .browser-pane { position: fixed; left: 0; right: 0; bottom: 0; top: 45px; width: auto; z-index: 40; border-left: none; }
 .bp-head { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); font: 12.5px var(--mono); }

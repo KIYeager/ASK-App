@@ -194,6 +194,7 @@ await compact(ctx, check, shell, shoot);
   await browserFlow(ctx, check, shell, shoot);
   await scrollFlow(ctx, check, shell, shoot);
   await folderListFlow(ctx, check);
+  await resizeFlow(ctx, check, shell, shoot);
 
   // Sperren gelten auch für die Werkzeuge der App
   const outside = path.join(path.dirname(folder), 'ausserhalb-chat.txt');
@@ -449,6 +450,61 @@ async function scrollFlow(ctx, check, shell) {
     return t.scrollHeight - t.scrollTop - t.clientHeight < 4 && document.getElementById('jump-btn').hidden; })()`));
   await shell('document.getElementById("send-btn").click()'); // Stopp
   await until('gestoppt', () => !agent.running, 20000);
+}
+
+// Ränder ziehen: Chats, Seitenleiste und Browser mit der Maus breiter und schmaler machen
+async function resizeFlow(ctx, check, shell, shoot) {
+  const { appWindow } = ctx;
+  const wc = appWindow.win.webContents;
+  const width = (sel) => shell(`Math.round(document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect().width)`);
+  const drag = async (panel, dx) => {
+    const h = await shell(`(() => { const r = document.querySelector('.resizer[data-panel=${panel}]').getBoundingClientRect(); return { x: Math.round(r.x - 2), y: Math.round(r.y + r.height / 2) }; })()`);
+    wc.sendInputEvent({ type: 'mouseMove', x: h.x, y: h.y });
+    wc.sendInputEvent({ type: 'mouseDown', x: h.x, y: h.y, button: 'left', clickCount: 1 });
+    for (let i = 1; i <= 6; i++) {
+      wc.sendInputEvent({ type: 'mouseMove', x: h.x + Math.round((dx * i) / 6), y: h.y, modifiers: ['leftButtonDown'] });
+      await wait(30);
+    }
+    wc.sendInputEvent({ type: 'mouseUp', x: h.x + dx, y: h.y, button: 'left', clickCount: 1 });
+    await wait(250);
+  };
+  const reset = (panel) => shell(`document.querySelector('.resizer[data-panel=${panel}]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+  if (await shell('!document.getElementById("browser-pane").hidden')) await shell('document.getElementById("bp-close").click()');
+  appWindow.win.focus();
+
+  const chats = await width('#chatbar');
+  await drag('chatbar', 80);
+  check('Rand der Chats ziehen: 80 Pixel breiter', Math.abs((await width('#chatbar')) - (chats + 80)) <= 2, `${chats} → ${await width('#chatbar')}`);
+  const side = await width('#sidebar');
+  await drag('sidebar', -100);
+  check('Rand der Seitenleiste ziehen: 100 Pixel breiter', Math.abs((await width('#sidebar')) - (side + 100)) <= 2, `${side} → ${await width('#sidebar')}`);
+  const saved = await shell('JSON.parse(localStorage.getItem("ask.breiten") || "{}")');
+  check('Breiten gespeichert', Math.abs(saved.chatbar - (chats + 80)) <= 2 && Math.abs(saved.sidebar - (side + 100)) <= 2, JSON.stringify(saved));
+  await drag('chatbar', -600);
+  check('Nicht schmaler als 180 Pixel', (await width('#chatbar')) === 180, String(await width('#chatbar')));
+  await reset('chatbar');
+  check('Doppelklick: wieder Standardbreite', (await width('#chatbar')) === 260, String(await width('#chatbar')));
+
+  await shell('document.getElementById("browser-btn").click()');
+  await until('Browser offen', () => appWindow.browserReady(), 5000).catch(() => {});
+  await wait(300);
+  const pane = await width('#browser-pane');
+  await drag('browser', 150);
+  await wait(200);
+  const host = await shell('document.getElementById("browser-host").getBoundingClientRect().width');
+  const view = appWindow.browser.getBounds().width;
+  const zoom = wc.getZoomFactor();
+  check('Rand des Browsers ziehen: 150 Pixel schmaler, die Seite folgt', Math.abs((await width('#browser-pane')) - (pane - 150)) <= 2 && Math.abs(view - host * zoom) <= 3,
+    `${pane} → ${await width('#browser-pane')}, Seite ${view} bei ${host} × ${zoom}`);
+  await drag('browser', -3000);
+  check('Der Chat bleibt mindestens 360 Pixel breit', (await width('.chat-area')) >= 359, String(await width('.chat-area')));
+  const foot = await shell(`(() => { const s = document.querySelector('.statusline'); const a = document.querySelector('.chat-area').getBoundingClientRect();
+    return { right: Math.max(...[...s.children].map((c) => c.getBoundingClientRect().right).filter((r, i) => getComputedStyle(s.children[i]).display !== 'none')), area: a.right }; })()`);
+  check('Schmaler Chat: Statuszeile bleibt im Chat', foot.right <= foot.area + 1, JSON.stringify(foot));
+  await shoot('17-breiten');
+  await shell('document.getElementById("bp-close").click()');
+  for (const p of ['chatbar', 'sidebar', 'browser']) await reset(p);
+  check('Zurückgesetzt: nichts mehr gespeichert', (await shell('localStorage.getItem("ask.breiten")')) === '{}');
 }
 
 // Ordner-Menü: gelöschter Ordner ist markiert und lässt sich entfernen
