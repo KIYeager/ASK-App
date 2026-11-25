@@ -172,14 +172,46 @@ async function convertCopy(source, target) {
   }
 }
 
-// Wandelt eine Datei des Arbeitsordners um. Ziel: .ask/pdf/<name>.pdf. Aufträge laufen nacheinander.
-function convertToPdf(root, source) {
+// Ziel der Umwandlung: .ask/pdf/<name>.pdf
+function pdfTarget(root, source) {
+  const ext = path.extname(source).toLowerCase();
+  return path.join(root, '.ask', 'pdf', `${path.basename(source, ext)}${ext === '.docx' ? '' : ext.replace('.', '-')}.pdf`);
+}
+
+// Wandelt eine Datei des Arbeitsordners um. Aufträge laufen nacheinander. fresh: ein PDF, das jünger ist als
+// die Datei, gilt als aktuell (Vorschau beim Anklicken, ohne Office jedes Mal neu zu starten).
+function convertToPdf(root, source, { fresh = false } = {}) {
   const ext = path.extname(source).toLowerCase();
   if (!EXTENSIONS.has(ext)) return Promise.resolve({ fehler: 'Nur .docx, .xlsx und .pptx werden umgewandelt.' });
-  const target = path.join(root, '.ask', 'pdf', `${path.basename(source, ext)}${ext === '.docx' ? '' : ext.replace('.', '-')}.pdf`);
+  const target = pdfTarget(root, source);
+  if (fresh) {
+    try {
+      if (fs.statSync(target).mtimeMs >= fs.statSync(source).mtimeMs) return Promise.resolve({ ok: true, target, cached: true });
+    } catch { /* noch kein PDF */ }
+  }
   const job = queue.then(() => convertCopy(source, target)).then((res) => (res.ok ? { ok: true, target } : res));
   queue = job.catch(() => {});
   return job;
 }
 
-module.exports = { convertToPdf };
+// Ist Word, Excel bzw. PowerPoint installiert? Einmal pro Programm in der Registrierung nachsehen.
+const PROGRAMS = { '.docx': 'Word.Application', '.xlsx': 'Excel.Application', '.pptx': 'PowerPoint.Application' };
+const installed = new Map();
+function officeInstalled(ext, { platform = process.platform, run = regQuery } = {}) {
+  const prog = PROGRAMS[String(ext).toLowerCase()];
+  if (!prog || platform !== 'win32') return Promise.resolve(false);
+  if (!installed.has(prog)) installed.set(prog, run(`HKCR\\${prog}\\CLSID`).catch(() => false));
+  return installed.get(prog);
+}
+
+function regQuery(key) {
+  return new Promise((resolve) => {
+    const reg = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'reg.exe');
+    const child = spawn(reg, ['query', key], { windowsHide: true, stdio: 'ignore' });
+    const timer = setTimeout(() => { child.kill(); resolve(false); }, 10000);
+    child.on('error', () => { clearTimeout(timer); resolve(false); });
+    child.on('exit', (code) => { clearTimeout(timer); resolve(code === 0); });
+  });
+}
+
+module.exports = { convertToPdf, officeInstalled, pdfTarget };

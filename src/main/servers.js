@@ -86,6 +86,7 @@ class Servers extends EventEmitter {
     this.servers = new Map(); // id → Eintrag
     this.timer = null;
     this.polling = false;
+    this.starting = new Map(); // Befehl → Promise der noch laufenden Starts (reserviert den Platz vor dem ersten await)
   }
 
   snapshot(s) {
@@ -128,7 +129,20 @@ class Servers extends EventEmitter {
     if (!cmd) throw new Error('Kein Befehl angegeben.');
     const same = this.running().find((s) => s.command === cmd);
     if (same) return { ...this.snapshot(same), existing: true };
-    if (this.running().length >= MAX_SERVERS) throw new Error(`Es laufen schon ${MAX_SERVERS} Server. Zuerst einen stoppen.`);
+    // Zweiter Start desselben Befehls, während der erste noch läuft: auf dessen Ergebnis warten statt nochmals starten
+    const pending = this.starting.get(cmd);
+    if (pending) return { ...(await pending), existing: true };
+    if (this.running().length + this.starting.size >= MAX_SERVERS) throw new Error(`Es laufen schon ${MAX_SERVERS} Server. Zuerst einen stoppen.`);
+    const job = this.launch(cmd, name, by);
+    this.starting.set(cmd, job);
+    try {
+      return await job;
+    } finally {
+      this.starting.delete(cmd);
+    }
+  }
+
+  async launch(cmd, name, by) {
     // wait=0: sofort zurück (ohne wait wartet open-terminal bis zu 60 s auf das Ende)
     const res = await this.request('POST', '/execute?wait=0', { command: cmd });
     if (res.status !== 200 || !res.json?.id) {
@@ -157,7 +171,12 @@ class Servers extends EventEmitter {
       return;
     }
     if (s.state !== 'startet') return;
-    if (s.port && !s.ready && await this.probe(s.port)) s.ready = true;
+    if (s.port && !s.ready) {
+      const ok = await this.probe(s.port);
+      // Während der Probe kann stop() den Server beendet haben: den Zustand nicht überschreiben
+      if (s.state !== 'startet' || s.stopping) return;
+      if (ok) s.ready = true;
+    }
     if (s.ready || (!s.port && this.now() - s.started >= READY_WITHOUT_URL_MS)) s.state = 'läuft';
   }
 
@@ -184,7 +203,7 @@ class Servers extends EventEmitter {
 
   schedule() {
     if (this.timer || !this.running().length) return;
-    this.timer = setTimeout(() => { this.timer = null; this.poll().finally(() => this.schedule()); }, this.pollMs);
+    this.timer = setTimeout(() => { this.timer = null; this.poll().catch(() => {}).finally(() => this.schedule()); }, this.pollMs);
   }
 
   async poll() {

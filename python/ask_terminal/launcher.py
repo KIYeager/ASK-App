@@ -45,7 +45,9 @@ def build_env(cfg: dict) -> dict:
         "PYTHONUNBUFFERED": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONUSERBASE": user_base,
-        "PIP_USER": "1",
+        # Kein PIP_USER: In einer .venv scheitert `pip install` damit («Can not perform a '--user' install»).
+        # Ist site-packages nicht beschreibbar (Low Integrity), weicht pip selbst auf eine Benutzerinstallation
+        # aus; sie landet dank PYTHONUSERBASE in runtime/python-benutzer.
         "PIP_DISABLE_PIP_VERSION_CHECK": "1",
         "PIP_NO_WARN_SCRIPT_LOCATION": "1",
         "MPLCONFIGDIR": os.path.join(runtime, "matplotlib"),

@@ -336,3 +336,96 @@ test('Werkzeuge github_branch und github_pr', async () => {
     fs.rmSync(a, { recursive: true, force: true });
   }
 });
+
+// Wie setup(), aber mit eigenem fetch (z. B. das hängt) und kurzer Zeitgrenze
+function setupWith(fetchWrap, extra = {}) {
+  const mock = createMockGitHub();
+  const fetchImpl = async (url, options) => {
+    const r = mock.handle(options.method, url.replace('https://api.example', ''),
+      { authorization: options.headers.Authorization }, options.body ? JSON.parse(options.body) : null);
+    return { ok: r.status < 300, status: r.status, text: async () => JSON.stringify(r.body) };
+  };
+  let token = TOKEN;
+  const gh = new GitHub({ api: 'https://api.example', web: 'https://github.example', store: { get: () => token, set: (t) => { token = t; } },
+    fetchImpl: fetchWrap ? (url, options) => fetchWrap(fetchImpl, url, options) : fetchImpl, ...extra });
+  return { mock, gh };
+}
+
+test('Branch auf GitHub weg: kein leerer Stand, lokale Dateien bleiben', async () => {
+  const { gh } = setup();
+  await gh.connect(TOKEN);
+  const a = folder({ 'index.html': 'eins', 'b/c.txt': 'C' });
+  try {
+    await gh.create(a, 'weg');
+    const link = gh.readLink(a);
+    // Der Branch existiert auf GitHub nicht (mehr), das Repository aber schon
+    gh.writeLink(a, { ...link, branch: 'feature-alt' });
+    await assert.rejects(gh.pull(a), /Den Branch feature-alt gibt es auf GitHub nicht mehr\. Wähle im Reiter GitHub einen anderen Branch\./);
+    await assert.rejects(gh.status(a), /nicht mehr/);
+    await assert.rejects(gh.push(a, 'x'), /nicht mehr/);
+    assert.strictEqual(read(a, 'index.html'), 'eins');
+    assert.strictEqual(read(a, 'b/c.txt'), 'C');
+    // Repository umbenannt oder Zugriff verloren
+    gh.writeLink(a, { ...link, repo: 'lea-test/umbenannt' });
+    await assert.rejects(gh.pull(a), /Repository lea-test\/umbenannt gibt es auf GitHub nicht mehr/);
+    assert.strictEqual(read(a, 'index.html'), 'eins');
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+});
+
+test('Ein leeres Repository holen löscht hier nichts', async () => {
+  const { mock, gh } = setup();
+  await gh.connect(TOKEN);
+  mock.handle('POST', '/user/repos', { authorization: `Bearer ${TOKEN}` }, { name: 'leer2', private: true, auto_init: false });
+  const a = folder({ 'a.txt': 'A' });
+  try {
+    await gh.clone(a, 'lea-test/leer2');
+    const link = gh.readLink(a);
+    gh.writeLink(a, { ...link, files: { 'a.txt': blobSha(Buffer.from('A')) } });
+    const r = await gh.pull(a);
+    assert.deepStrictEqual(r.removed, []);
+    assert.strictEqual(read(a, 'a.txt'), 'A');
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+});
+
+test('Anfrage ohne Antwort bricht nach der Zeitgrenze ab und gibt den Abgleich frei', async () => {
+  const hang = (real, url, options) => new Promise((_, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason)));
+  const { gh } = setupWith(hang, { timeoutMs: 30 });
+  const a = folder({ 'a.txt': 'A' });
+  try {
+    await assert.rejects(gh.request('GET', '/repos/x/y'), /GitHub antwortet nicht/);
+    await assert.rejects(gh.exclusive(a, () => gh.request('GET', '/repos/x/y')), /GitHub antwortet nicht/);
+    assert.strictEqual(gh.locked(a), false);
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+});
+
+test('Ausschlussliste: Muster mit vielen * brauchen keine Rechenzeit, Regeln bleiben richtig', () => {
+  const evil = [`${'*a'.repeat(40)}*b`, `${'**/'.repeat(40)}x`, `${'*'.repeat(60)}.log`, `${'a*'.repeat(30)}[!x]?`].join('\n');
+  const a = folder({ ['.git' + 'ignore']: `${evil}\n*.tmp\nbuild/\n/wurzel.txt\ndocs/**/geheim.md\n`,
+    [`${'a'.repeat(80)}.txt`]: '1', 'x.tmp': '2', 'build/o.js': '3', 'wurzel.txt': '4', 'sub/wurzel.txt': '5',
+    'docs/a/b/geheim.md': '6', 'docs/geheim.md': '7', 'docs/ok.md': '8' });
+  try {
+    const start = process.hrtime.bigint();
+    const names = listLocal(a).map((f) => f.path).sort();
+    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    assert.ok(ms < 1000, `zu langsam: ${ms} ms`);
+    assert.deepStrictEqual(names, ['.git' + 'ignore', `${'a'.repeat(80)}.txt`, 'docs/ok.md', 'sub/wurzel.txt'].sort());
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+});
+
+test('Ballast-Ordner werden in jeder Tiefe übergangen', () => {
+  const a = folder({ 'app.js': '1', 'app/node_modules/x/index.js': '2', 'a/b/.git/config': '3', 'py/.venv/lib.py': '4',
+    'src/__pycache__/m.pyc': '5', 'src/node_modules_neu/k.js': '6', 'node_modules/y.js': '7' });
+  try {
+    assert.deepStrictEqual(listLocal(a).map((f) => f.path).sort(), ['app.js', 'src/node_modules_neu/k.js']);
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+});

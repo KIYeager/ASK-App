@@ -278,3 +278,33 @@ test('Arbeitsschleife: merken als Werkzeug, Skill nur an das Modell, done meldet
     t.done();
   }
 });
+
+test('Gedächtnis: gesperrte Datei wird nicht überschrieben, kaputte beiseitegelegt, halbe Änderungen gibt es nicht', () => {
+  const t = temp();
+  try {
+    new Memory({ file: t.file }).add({ text: 'Mag Antworten in Stichworten.', scope: 'konto' });
+    const locked = new Memory({ file: t.file });
+    const read = fs.readFileSync;
+    fs.readFileSync = (f, ...rest) => { if (f === t.file) throw Object.assign(new Error('gesperrt'), { code: 'EBUSY' }); return read(f, ...rest); };
+    try {
+      assert.deepStrictEqual(locked.list(), []);
+      assert.throws(() => locked.add({ text: 'Neuer Eintrag hier.', scope: 'konto' }), /nicht lesen/);
+    } finally {
+      fs.readFileSync = read;
+    }
+    assert.strictEqual(new Memory({ file: t.file }).list().length, 1, 'alter Eintrag noch da');
+    assert.strictEqual(locked.list().length, 1, 'danach liest sie wieder');
+
+    const m = new Memory({ file: t.file });
+    const item = m.list()[0];
+    assert.throws(() => m.update(item.id, { text: 'Neuer Text dazu', scope: 'projekt' }), /Projekt/);
+    assert.strictEqual(m.get(item.id).text, 'Mag Antworten in Stichworten.', 'Text unverändert');
+
+    fs.writeFileSync(t.file, '{"version":1,"items":[{"id":"m1","te');
+    const broken = new Memory({ file: t.file });
+    assert.deepStrictEqual(broken.list(), []);
+    assert.ok(fs.readdirSync(t.dir).some((f) => f.startsWith('gedaechtnis.json.defekt-')), 'kaputte Datei aufgehoben');
+  } finally {
+    t.done();
+  }
+});

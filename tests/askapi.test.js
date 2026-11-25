@@ -231,6 +231,73 @@ test('Denkaufwand: abgelehnte Stufe durch die nächste erlaubte ersetzen', async
   assert.deepStrictEqual(sent, ['high', 'xhigh', 'xhigh'], 'einmal abgelehnt, danach gleich die erlaubte Stufe');
 });
 
+test('Werkzeugaufrufe ohne index oder mit demselben index für verschiedene Aufrufe bleiben getrennt', () => {
+  const { Completion } = require('../src/main/askapi');
+  const c = new Completion();
+  const chunk = (tc) => c.add({ choices: [{ delta: { tool_calls: [tc] } }] });
+  chunk({ id: 'a', function: { name: 'read_file', arguments: '{"path":' } });
+  chunk({ function: { arguments: '"a.txt"}' } });
+  chunk({ id: 'b', function: { name: 'read_file', arguments: '{"path":"b.txt"}' } });
+  chunk({ index: 0, id: 'c', function: { name: 'list_files', arguments: '' } });
+  chunk({ index: 0, function: { arguments: '{}' } });
+  const calls = c.end().calls.map((x) => [x.id, x.name, x.arguments]);
+  assert.deepStrictEqual(calls, [['a', 'read_file', '{"path":"a.txt"}'], ['b', 'read_file', '{"path":"b.txt"}'], ['c', 'list_files', '{}']]);
+  // ganze Antwort (ohne Strom, ohne index und Kennung): der Reihe nach
+  const w = new Completion();
+  w.add({ choices: [{ message: { tool_calls: [{ function: { name: 'x', arguments: '{}' } }, { function: { name: 'y', arguments: '{}' } }] } }] });
+  assert.deepStrictEqual(w.end().calls.map((x) => x.name), ['x', 'y']);
+});
+
+test('Fehler in einer Antwort mit Status 200 bekommen einen Status', () => {
+  const { inbandError, Completion } = require('../src/main/askapi');
+  const make = (chunk) => { const c = new Completion(); c.add(chunk); return inbandError(c); };
+  assert.strictEqual(make({ error: { message: 'This model\'s maximum context length is 8192 tokens' } }).status, 400);
+  assert.strictEqual(make({ error: { message: 'Server overloaded, try again' } }).status, 503);
+  assert.strictEqual(make({ error: { message: 'x', code: 429 } }).status, 429);
+  assert.strictEqual(make({ error: 'Rate limit exceeded' }).status, 429);
+});
+
+test('Abgelehnte Zusätze gelten nur für das Modell, das sie abgelehnt hat; JSON-Fehler und abgebrochene Ströme', async () => {
+  const ask = new AskSession();
+  ask.base = 'https://ask.example.ch';
+  ask.token = 't';
+  const sent = [];
+  const json = (status, body) => ({ ok: status < 300, status, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(body), json: async () => body });
+  const stream = (text) => {
+    const bytes = new TextEncoder().encode(text);
+    let done = false;
+    return { ok: true, status: 200, headers: { get: () => 'text/event-stream' },
+      body: { getReader: () => ({ read: async () => (done ? { done: true } : (done = true, { done: false, value: bytes })) }) } };
+  };
+  let next = null;
+  ask.session = {
+    fetch: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      sent.push([body.model, body.reasoning_effort]);
+      if (next) { const r = next; next = null; return r; }
+      if (body.model === 'a' && body.reasoning_effort) return json(400, { detail: 'Unrecognized request argument: reasoning_effort' });
+      return json(200, { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] });
+    },
+  };
+  await ask.chat({ model: 'a', messages: [], thinking: 'hoch' });
+  await ask.chat({ model: 'b', messages: [], thinking: 'hoch' });
+  assert.deepStrictEqual(sent, [['a', 'high'], ['a', undefined], ['b', 'high']]);
+
+  next = json(200, { error: { message: 'maximum context length is 8192 tokens' } });
+  await assert.rejects(ask.chat({ model: 'b', messages: [] }), (err) => err.status === 400 && /context length/.test(err.message));
+
+  next = stream('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"x","function":{"name":"write_file","arguments":"{\\"pa"}}]}}]}\n');
+  await assert.rejects(ask.chat({ model: 'b', messages: [] }), (err) => err.status === 502);
+
+  next = stream('data: {"choices":[{"delta":{"content":"Hal"}}]}\n');
+  const cut = await ask.chat({ model: 'b', messages: [] });
+  assert.strictEqual(cut.content, 'Hal');
+  assert.strictEqual(cut.incomplete, true);
+
+  next = stream('data: {"choices":[{"delta":{"content":"Hallo"}}]}\ndata: [DONE]\n');
+  assert.strictEqual((await ask.chat({ model: 'b', messages: [] })).incomplete, undefined);
+});
+
 // Nachgebaute ASK-Seite (WebContents) für check()
 function fakePage({ url = 'https://ask.example.ch/auth', read }) {
   const handlers = {};

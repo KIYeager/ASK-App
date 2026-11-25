@@ -196,10 +196,26 @@ export function PreviewBody({ entry, big = false }) {
   const [p, setP] = useState(null);
   const [status, setStatus] = useState('');
   const [pdf, setPdf] = useState(null);
+  // Office-Datei als PDF zeigen (preview: ein aktuelles PDF von früher genügt). alive: Ergebnis einer anderen
+  // Datei nicht mehr anzeigen, wenn inzwischen eine andere gewählt ist.
+  const showPdf = async (path, preview, alive = () => true) => {
+    setStatus(preview ? 'Vorschau wird mit Office erstellt …' : 'Wird mit Office in PDF umgewandelt …');
+    const res = await api().toPdf(path, preview);
+    if (!alive()) return;
+    if (!res.ok) { setStatus(res.fehler || 'Umwandeln nicht möglich.'); return; }
+    const r = await api().preview(res.path);
+    if (alive()) { setStatus(''); setPdf(r.url); }
+  };
   useEffect(() => {
     let alive = true;
     setP(null); setPdf(null); setStatus('');
-    if (entry) api().preview(entry.path).then((r) => { if (alive) setP(r); });
+    if (entry) {
+      api().preview(entry.path).then((r) => {
+        if (!alive) return;
+        setP(r);
+        if (r.kind === 'office' && r.auto && /\.(docx|xlsx|pptx)$/i.test(entry.path)) showPdf(entry.path, true, () => alive);
+      });
+    }
     return () => { alive = false; };
   }, [entry?.path, entry?.modified]);
   if (!entry) return <div className="panel-empty">Klicke im Dateibaum oder im Chat auf eine Datei, um sie hier anzusehen.</div>;
@@ -218,13 +234,7 @@ export function PreviewBody({ entry, big = false }) {
       <div className="btns">
         <button type="button" className="btn primary" onClick={() => api().openFile(entry.path)}>Öffnen</button>
         {office && /\.(docx|xlsx|pptx)$/i.test(entry.path) ? (
-          <button type="button" className="btn" onClick={async () => {
-            setStatus('Wird mit Office in PDF umgewandelt …');
-            const res = await api().toPdf(entry.path);
-            if (!res.ok) { setStatus(res.fehler || 'Umwandeln nicht möglich.'); return; }
-            const r = await api().preview(res.path);
-            setPdf(r.url);
-          }}>Als PDF anzeigen</button>
+          <button type="button" className="btn" onClick={() => showPdf(entry.path, false)}>Als PDF anzeigen</button>
         ) : null}
         <button type="button" className="btn" onClick={() => api().showFile(entry.path)}>Im Explorer zeigen</button>
       </div>

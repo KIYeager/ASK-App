@@ -222,6 +222,17 @@ function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal, onUsa
         </label>
       </div>
       <div className="setting">
+        <div><div className="s-title">Hilfsagenten</div>
+          <div className="s-text">ASK kann Teilfragen an Hilfsagenten abgeben, die nur lesen und recherchieren (bis 3 gleichzeitig). Ein schnelles Modell spart Zeit.</div></div>
+        <label className="s-select">
+          <select id="helper-model" value={state.helperModel || ''} onChange={(e) => api().setSettings({ helperModel: e.target.value })} aria-label="Modell für Hilfsagenten">
+            <option value="">Wie im Chat</option>
+            {(state.models || []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+          <Icon name="chevDown" size={13} />
+        </label>
+      </div>
+      <div className="setting">
         <div><div className="s-title">Frühere Chats</div><div className="s-text">ASK darf frühere Chats im selben Projekt durchsuchen und lesen (/chats).</div></div>
         <Segmented name="Frühere Chats" value={state.chatMemory ? 'an' : 'aus'} onChange={(v) => api().setChatMemory(v === 'an')}
           options={[['aus', 'Aus'], ['an', 'An']]} />

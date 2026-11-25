@@ -91,7 +91,8 @@ class AppWindow {
         click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) });
       items.push({ type: 'separator' });
     }
-    if (params.linkURL) {
+    // Nur Webadressen ins System geben: file:, search-ms:, ms-msdt: und andere Protokolle starten unter Windows Programme
+    if (params.linkURL && /^https?:\/\//i.test(params.linkURL)) {
       items.push({ label: 'Link im Browser öffnen', click: () => shell.openExternal(params.linkURL) });
       items.push({ label: 'Link kopieren', click: () => clipboard.writeText(params.linkURL) });
       items.push({ type: 'separator' });

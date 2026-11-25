@@ -11,7 +11,7 @@ const { AskSession, THINKING_LEVELS, sameOrigin } = require('./askapi');
 const { Agent, NEW } = require('./agent');
 const { Workspace } = require('./workspace');
 const { AppWindow, BROWSER_PARTITION } = require('./window');
-const { convertToPdf } = require('./office');
+const { convertToPdf, officeInstalled } = require('./office');
 const { cleanupOldVersions, isPortable } = require('./portable');
 const { Updater } = require('./updater');
 const { GitHub } = require('./github');
@@ -28,6 +28,7 @@ const usage = require('./usage');
 const { Servers } = require('./servers');
 const { request: terminalRequest } = require('./tools');
 const { Knowledge } = require('./knowledge');
+const { restoreLabel } = require('./lowlabel');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -197,6 +198,10 @@ function makeAgent(folder, rt) {
     getImageUrl: (attachment) => imageUrl(folder, attachment, nativeResize(nativeImage)),
     getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
     getSnapshots: () => snapshotsFor(folder),
+    // Hilfsagenten (ENTSCHEIDE E55): eigenes Modell aus den Einstellungen, sonst das Modell des Chats
+    getHelperModel: () => { const wanted = settings.get('helperModel'); return ask.models.some((m) => m.id === wanted) ? wanted : ''; },
+    // Andere Chats, die gerade im selben Ordner arbeiten (Warnung, ENTSCHEIDE E46)
+    getSiblings: () => [...rt.agents].filter((x) => x !== a && x.running).map((x) => x.chat.title || 'ohne Titel'),
     servers: rt.servers || null,
     // Modus im Eingabefeld: Auto lässt ASK jeden Befehl prüfen (review.js), Nachfragen fragt vor jedem
     getApprovalMode: () => 'alle',
@@ -220,6 +225,7 @@ function runtime(folder) {
   const key = path.resolve(folder).toLowerCase();
   let rt = runtimes.get(key);
   if (rt) return rt;
+  migrateProject(folder);
   rt = { folder, terminal: makeTerminal(), workspace: new Workspace(), agents: new Set() };
   // Entwicklungsserver (ENTSCHEIDE E48) über die Terminal-API dieses Projekts; die Ports der Terminals gibt der
   // Browser nie frei
@@ -293,19 +299,32 @@ function applyTheme() {
 // Datei oder Ordner der App zu einem Arbeitsordner, ausserhalb davon (paths.projectDataDir). Frühere
 // Versionen legten Sicherung und GitHub-Verbindung in .ask ab: einmal übernehmen. Was von dort kommt,
 // prüfen snapshot.js und github.js beim Lesen, denn das Modell konnte es ändern.
+// Nur beim ersten Blick der App auf den Ordner (Marke «.uebernommen-<name>»), bevor ein Auftrag darin lief:
+// Sonst könnte das Modell später eine eigene .ask/github.json anlegen und so bestimmen, wohin hochgeladen wird.
 function projectFile(folder, name, legacy) {
   const target = path.join(paths.projectDataDir(folder), name);
   const old = path.join(folder, legacy);
+  const marker = path.join(paths.projectDataDir(folder), `.uebernommen-${name}`);
   try {
-    if (!fs.existsSync(target) && fs.existsSync(old)) {
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.cpSync(old, target, { recursive: true });
+    if (!fs.existsSync(marker)) {
+      if (!fs.existsSync(target) && fs.existsSync(old)) {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.cpSync(old, target, { recursive: true });
+      }
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, '');
     }
     if (fs.existsSync(old)) fs.rmSync(old, { recursive: true, force: true });
   } catch {
     // nicht übernommen: Die App beginnt eine neue Ablage
   }
   return target;
+}
+
+// Alte Ablagen eines Ordners übernehmen, sobald die App ihn öffnet (vor dem ersten Auftrag)
+function migrateProject(folder) {
+  projectFile(folder, 'github.json', path.join('.ask', 'github.json'));
+  projectFile(folder, 'sicherung', path.join('.ask', 'sicherung'));
 }
 
 // Sicherung des Arbeitsordners (snapshot.js), eine Instanz pro Ordner
@@ -414,6 +433,7 @@ function state() {
     approvals: approvalMode(),
     mode: chatMode(),
     reviewModel: s.reviewModel || '',
+    helperModel: s.helperModel || '',
     theme: THEMES[s.theme] ? s.theme : 'system',
     project: settings.findProject(s.folder),
   };
@@ -610,13 +630,19 @@ function forgetFolder(f) {
     return false;
   }
   settings.removeRecent(f);
+  let stopped = rt ? null : Promise.resolve(); // Marke «Low» erst entfernen, wenn kein Terminal des Ordners mehr läuft
   if (current) {
     workspace.close();
-    if (rt) stopRuntime(rt); else terminal.stop();
+    stopped = rt ? stopRuntime(rt) : terminal.stop();
     terminal = makeTerminal();
     workspace = new Workspace();
     agent = makeAgent('', { terminal, workspace, agents: new Set() });
     if (rt) runtimes.delete(path.resolve(f).toLowerCase());
+  }
+  if (stopped) {
+    const others = settings.load().projects.map((p) => p.folder);
+    Promise.resolve(stopped).then(() => restoreLabel(f, { otherFolders: others }))
+      .catch((e) => console.error('Marke «Low» nicht entfernt:', e?.message || e));
   }
   pushState();
   appWindow?.send('chat:changed', agent.state());
@@ -696,10 +722,10 @@ function setupIpc() {
   ipcMain.handle('update:action', () => updater.action());
   ipcMain.handle('update:later', () => updater.postpone());
   ipcMain.handle('update:beta', (_e, on, tell) => setBeta(on, !!tell));
-  ipcMain.handle('file:pdf', async (_e, rel) => {
+  ipcMain.handle('file:pdf', async (_e, rel, preview) => {
     const source = workspace.resolve(rel);
     if (!source) return { fehler: 'Datei nicht gefunden.' };
-    const res = await convertToPdf(workspace.root, source);
+    const res = await convertToPdf(workspace.root, source, { fresh: !!preview });
     return res.ok ? { ok: true, path: path.relative(workspace.root, res.target) } : res;
   });
   ipcMain.handle('state:get', () => state());
@@ -728,6 +754,7 @@ function setupIpc() {
     if (APPROVAL_MODES.includes(v.approvals)) patch.approvals = v.approvals;
     if (CHAT_MODES.includes(v.mode)) patch.mode = v.mode;
     if (typeof v.reviewModel === 'string') patch.reviewModel = v.reviewModel.slice(0, 200); // '' = Modell des Chats
+    if (typeof v.helperModel === 'string') patch.helperModel = v.helperModel.slice(0, 200); // Hilfsagenten, '' = Modell des Chats
     if (THEMES[v.theme]) patch.theme = v.theme;
     settings.set(patch);
     if (patch.theme) applyTheme();
@@ -735,8 +762,10 @@ function setupIpc() {
   });
   knowledge.setupIpc({ ipcMain, dialog, getWindow: () => appWindow?.win, confirm, onSettings: pushState,
     projects: () => settings.load().projects.map((p) => ({ folder: p.folder, name: p.name, color: p.color })) });
-  ipcMain.handle('chat:approve', (_e, id, answer) => allAgents().some((a) => a.answerApproval(id, answer)));
-  ipcMain.handle('chat:answer', (_e, id, text) => allAgents().some((a) => a.answerQuestion(id, text)));
+  // Zuerst der sichtbare Chat: Fragen tragen die Kennung des Werkzeugaufrufs, die bei manchen Modellen in
+  // jedem Chat gleich ist (call_0); die Oberfläche beantwortet immer die Frage des sichtbaren Chats.
+  ipcMain.handle('chat:approve', (_e, id, answer) => agent.answerApproval(id, answer) || allAgents().some((a) => a.answerApproval(id, answer)));
+  ipcMain.handle('chat:answer', (_e, id, text) => agent.answerQuestion(id, text) || allAgents().some((a) => a.answerQuestion(id, text)));
   ipcMain.handle('chat:stop-chat', (_e, folder, id) => {
     const rt = runtimes.get(path.resolve(String(folder || '')).toLowerCase());
     const a = rt && agentFor(rt, String(id || ''));
@@ -835,8 +864,14 @@ function setupIpc() {
   });
   ipcMain.handle('chat:undo', (_e, snapshot) => agent.undo(String(snapshot || '')));
   ipcMain.handle('chat:rewind', () => agent.rewind());
-  ipcMain.handle('chat:rename', (_e, folder, id, title) => agent.rename(String(folder || ''), String(id || ''), title));
-  ipcMain.handle('chat:pin', (_e, folder, id, on) => agent.pin(String(folder || ''), String(id || ''), !!on));
+  // Läuft der Chat (auch im Hintergrund), ändert sein eigener Agent ihn: sonst überschriebe dessen nächstes
+  // Speichern den neuen Titel wieder
+  const chatOwner = (folder, id) => {
+    const rt = runtimes.get(path.resolve(String(folder || '')).toLowerCase());
+    return (rt && agentFor(rt, String(id || ''))) || agent;
+  };
+  ipcMain.handle('chat:rename', (_e, folder, id, title) => chatOwner(folder, id).rename(String(folder || ''), String(id || ''), title));
+  ipcMain.handle('chat:pin', (_e, folder, id, on) => chatOwner(folder, id).pin(String(folder || ''), String(id || ''), !!on));
   // Suche über den Inhalt aller Chats der Ordner in der Liste: [{ folder, id, title, updated, snippets }]
   ipcMain.handle('chat:search', (_e, query) => {
     const hits = [];
@@ -969,7 +1004,7 @@ function setupIpc() {
     if (/^https?:\/\//i.test(String(url))) shell.openExternal(String(url));
   });
   ipcMain.handle('workspace:files', () => workspace.files());
-  ipcMain.handle('file:preview', (_e, rel) => {
+  ipcMain.handle('file:preview', async (_e, rel) => {
     const full = workspace.resolve(rel);
     if (!full) return { kind: 'missing' };
     const ext = path.extname(full).toLowerCase();
@@ -977,7 +1012,8 @@ function setupIpc() {
     const { size, mtimeMs } = fs.statSync(full);
     if (IMAGE_EXT.has(ext)) return { kind: 'image', url: `${url}?v=${Math.round(mtimeMs)}` }; // neue Fassung, nicht die zwischengespeicherte
     if (ext === '.pdf') return { kind: 'pdf', url };
-    if (OFFICE_EXT.has(ext)) return { kind: 'office', name: path.basename(full) };
+    // Mit installiertem Office zeigt die Vorschau ein PDF der Datei, ohne Klick auf «Als PDF anzeigen»
+    if (OFFICE_EXT.has(ext)) return { kind: 'office', name: path.basename(full), auto: await officeInstalled(ext) };
     if (TEXT_EXT.has(ext) || size < 200000) {
       const buf = readStart(full, 200000); // nur den Anfang lesen, auch bei sehr grossen Dateien
       if (!buf.includes(0)) return { kind: 'text', text: buf.toString('utf8'), truncated: size > 200000 };

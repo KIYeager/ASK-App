@@ -145,6 +145,15 @@ test('Werkzeuge skill_lesen und skill_erstellen (mit Rückfrage)', async () => {
     r = await runTool(null, 'skill_erstellen', JSON.stringify({ name: 'github', beschreibung: 'x', anleitung: 'y' }), ctx);
     assert.strictEqual(r.ok, false);
     assert.match(r.output, /Befehl der App/);
+    // Die Rückfrage zeigt die ganze Anleitung; was zu lang dafür ist, legt das Modell nicht an
+    const long = `Anfang\n${'x'.repeat(2000)}\nENDE`;
+    r = await runTool(null, 'skill_erstellen', JSON.stringify({ name: 'lang', beschreibung: 'x', anleitung: long }), ctx);
+    assert.ok(r.ok);
+    assert.ok(asked.at(-1)[1].includes('ENDE'), 'ganze Anleitung in der Rückfrage');
+    const count = asked.length;
+    r = await runTool(null, 'skill_erstellen', JSON.stringify({ name: 'zulang', beschreibung: 'x', anleitung: 'y'.repeat(3001) }), ctx);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(asked.length, count, 'gar nicht erst gefragt');
   } finally {
     t.done();
   }

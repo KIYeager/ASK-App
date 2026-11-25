@@ -348,6 +348,18 @@ function Plan({ entry, ctx }) {
   );
 }
 
+// «Gemerkt: …» mit einem Klick wieder vergessen
+function Remembered({ entry, ctx }) {
+  const [gone, setGone] = useState(false);
+  const forget = async () => { if (await ctx.forgetMemory(entry.memoryId)) setGone(true); };
+  return (
+    <div className="msg notice remembered">
+      <Icon name="merken" size={13} /> <span>{gone ? 'Vergessen: ' : `Gemerkt (${entry.scope}): `}{entry.text}</span>
+      {gone ? null : <button type="button" className="btn small" onClick={forget}>Vergessen</button>}
+    </div>
+  );
+}
+
 function After({ entry, ctx }) {
   switch (entry.k) {
     case 'sources': return <Sources entry={entry} ctx={ctx} />;
@@ -355,6 +367,7 @@ function After({ entry, ctx }) {
     case 'stats': return <Stats entry={entry} />;
     case 'approval': return <Approval entry={entry} ctx={ctx} />;
     case 'error': return <div className="msg error"><Icon name="alert" size={14} /> <span>{entry.text}</span></div>;
+    case 'remembered': return <Remembered entry={entry} ctx={ctx} />;
     case 'notice': return <div className={`msg notice${entry.retry ? ' retry' : ''}`}><Icon name={entry.icon || 'chevRight'} size={13} /> <span>{entry.text}</span></div>;
     case 'tool': return entry.plan ? <Plan entry={entry} ctx={ctx} /> : entry.question ? <Question entry={entry} ctx={ctx} /> : <ToolRow entry={entry} ctx={ctx} />;
     default: return null;

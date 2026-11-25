@@ -19,7 +19,9 @@ const { safeRel, safeJoin, SHA1 } = require('./safe');
 const MAX_FILE = 50 * 1024 * 1024; // GitHub lehnt grössere Dateien ab bzw. warnt
 const MAX_FILES = 3000;
 // Nicht hochladen: Arbeitsdaten der App (Chats, Skripte, Anleitungen) und typische Ballast-Ordner
-const SKIP = /^(\.ask|\.git|node_modules|__pycache__|\.venv)(\/|$)/i;
+const SKIP = /(?:^|\/)(\.ask|\.git|node_modules|__pycache__|\.venv)(\/|$)/i;
+const REQUEST_MS = 30 * 1000; // Zeitgrenze einer Anfrage an GitHub, sonst hängt der Abgleich ewig
+const BLOB_MS = 120 * 1000; // Dateien hoch- und herunterladen darf länger dauern
 const LINK = path.join('.ask', 'github.json');
 
 // Git-Prüfsumme einer Datei, wie git hash-object
@@ -38,25 +40,70 @@ function ignoreRule(line, base) {
   if (!p) return null;
   const anchored = p.includes('/');
   if (p.startsWith('/')) p = p.slice(1);
-  let re = '';
+  // Muster als Liste von Bausteinen, geprüft ohne regulären Ausdruck mit verschachtelten Wiederholungen:
+  // Das Modell schreibt .gitignore, und ein Muster wie «*a*a*a*a*b» würde den Hauptprozess sonst festfahren.
+  const tokens = [];
+  if (!anchored) tokens.push({ t: 'gslash' });
   for (let i = 0; i < p.length; i++) {
     const c = p[i];
     if (c === '*' && p[i + 1] === '*') {
-      if (p[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
-    } else if (c === '*') re += '[^/]*';
-    else if (c === '?') re += '[^/]';
+      let end = i + 2;
+      while (p[end] === '*') end++; // mehrere * hintereinander wie eines
+      if (p[end] === '/') {
+        i = end;
+        if (tokens.at(-1)?.t !== 'gslash') tokens.push({ t: 'gslash' }); // mehrere **/ hintereinander wie eines
+      } else {
+        i = end - 1;
+        if (tokens.at(-1)?.t !== 'gstar') tokens.push({ t: 'gstar' });
+      }
+    } else if (c === '*') {
+      while (p[i + 1] === '*') i++;
+      if (tokens.at(-1)?.t !== 'star') tokens.push({ t: 'star' });
+    } else if (c === '?') tokens.push({ t: 'any' });
     else if (c === '[') {
       const end = p.indexOf(']', i + 2);
-      if (end < 0) re += '\\[';
-      else { re += `[${p.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`; i = end; }
-    } else if (c === '\\' && i + 1 < p.length) { re += p[i + 1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); i += 1; }
-    else re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (end < 0) tokens.push({ t: 'lit', c: '[' });
+      else {
+        try {
+          tokens.push({ t: 'cls', re: new RegExp(`^[${p.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]$`) });
+        } catch { return null; }
+        i = end;
+      }
+    } else if (c === '\\' && i + 1 < p.length) { tokens.push({ t: 'lit', c: p[i + 1] }); i += 1; }
+    else tokens.push({ t: 'lit', c });
   }
-  try {
-    return { base, negate, dirOnly, re: new RegExp(`^${anchored ? '' : '(?:.*/)?'}${re}$`) };
-  } catch {
-    return null;
+  return { base, negate, dirOnly, match: (text) => globMatch(tokens, text) };
+}
+
+// Muster gegen einen Pfad, ein Zustandsdurchlauf (Zeit Zeichen × Bausteine, kein Zurückgehen)
+function globMatch(tokens, text) {
+  const n = tokens.length;
+  let cur = new Uint8Array(n + 1);
+  let next = new Uint8Array(n + 1);
+  const close = (set) => {
+    for (let i = 0; i < n; i++) if (set[i] && (tokens[i].t === 'star' || tokens[i].t === 'gstar' || tokens[i].t === 'gslash')) set[i + 1] = 1;
+  };
+  cur[0] = 1;
+  close(cur);
+  for (const ch of text) {
+    next.fill(0);
+    for (let i = 0; i < n; i++) {
+      if (!cur[i]) continue;
+      const tok = tokens[i];
+      switch (tok.t) {
+        case 'lit': if (ch === tok.c) next[i + 1] = 1; break;
+        case 'any': if (ch !== '/') next[i + 1] = 1; break;
+        case 'cls': if (ch !== '/' && tok.re.test(ch)) next[i + 1] = 1; break;
+        case 'star': if (ch !== '/') next[i] = 1; break;
+        case 'gstar': next[i] = 1; break;
+        case 'gslash': next[i] = 1; if (ch === '/') next[i + 1] = 1; break;
+        default: break;
+      }
+    }
+    close(next);
+    [cur, next] = [next, cur];
   }
+  return cur[n] === 1;
 }
 
 function readIgnore(dir, base) {
@@ -72,7 +119,7 @@ function ignored(rules, rel, isDir) {
   for (const r of rules) {
     if (r.dirOnly && !isDir) continue;
     if (r.base && !rel.startsWith(`${r.base}/`)) continue;
-    if (r.re.test(r.base ? rel.slice(r.base.length + 1) : rel)) hit = !r.negate;
+    if (r.match(r.base ? rel.slice(r.base.length + 1) : rel)) hit = !r.negate;
   }
   return hit;
 }
@@ -138,12 +185,13 @@ function validLink(link) {
 class GitHub {
   // store: { get(), set(token) } für das verschlüsselt gespeicherte Token
   // linkFile(root): wo die Verbindung eines Ordners gespeichert ist (in der App ausserhalb des Ordners)
-  constructor({ api = 'https://api.github.com', web = 'https://github.com', store, fetchImpl = fetch, linkFile = (root) => path.join(root, LINK) }) {
+  constructor({ api = 'https://api.github.com', web = 'https://github.com', store, fetchImpl = fetch, timeoutMs = REQUEST_MS, linkFile = (root) => path.join(root, LINK) }) {
     this.linkFile = linkFile;
     this.api = api.replace(/\/$/, '');
     this.web = web.replace(/\/$/, '');
     this.store = store;
     this.fetch = fetchImpl;
+    this.timeoutMs = timeoutMs;
     this.login = '';
     this.busy = new Set(); // Ordner, in denen der Bereich «GitHub» gerade abgleicht (main.js)
   }
@@ -172,16 +220,28 @@ class GitHub {
     return !!this.store.get();
   }
 
-  async request(method, url, body) {
+  async request(method, url, body, timeoutMs = this.timeoutMs) {
     const token = this.store.get();
     if (!token) throw new Error('Nicht mit GitHub verbunden. Die Person kann in der App mit /github ein Token eintragen.');
-    const res = await this.fetch(`${this.api}${url}`, {
-      method,
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28',
-        ...(body ? { 'Content-Type': 'application/json' } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const text = await res.text();
+    let res;
+    let text;
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(Object.assign(new Error('Zeit abgelaufen'), { name: 'TimeoutError' })), timeoutMs);
+    try {
+      res = await this.fetch(`${this.api}${url}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28',
+          ...(body ? { 'Content-Type': 'application/json' } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: abort.signal,
+      });
+      text = await res.text();
+    } catch (err) {
+      if (err?.name === 'TimeoutError' || err?.name === 'AbortError') throw new Error(`GitHub antwortet nicht (nach ${Math.round(timeoutMs / 1000)} s abgebrochen). Internetverbindung prüfen und nochmals versuchen.`);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { /* kein JSON */ }
     if (!res.ok) {
@@ -243,7 +303,7 @@ class GitHub {
     try {
       head = (await this.request('GET', `/repos/${link.repo}/git/ref/heads/${refPath(link.branch)}`)).object.sha;
     } catch (err) {
-      if (err.status === 404 || err.status === 409) return { commit: null, files: {}, modes: {}, others: [] };
+      if (err.status === 404 || err.status === 409) return this.noBranch(link, err);
       throw err;
     }
     const tree = await this.request('GET', `/repos/${link.repo}/git/trees/${head}?recursive=1`);
@@ -256,6 +316,22 @@ class GitHub {
       else if (e.type === 'commit') others.push({ path: e.path, mode: e.mode || '160000', type: 'commit', sha: e.sha });
     }
     return { commit: head, files, modes, others };
+  }
+
+  // Der Branch liess sich nicht lesen. Nur ein Repository ohne jeden Branch ist wirklich leer; sonst wurde der
+  // Branch gelöscht (z. B. nach einem Pull Request), das Repository umbenannt oder das Token verlor den Zugriff.
+  // Ein leerer Stand würde beim Holen alle Dateien hier löschen.
+  async noBranch(link, cause) {
+    let list;
+    try {
+      await this.request('GET', `/repos/${link.repo}`);
+      list = await this.request('GET', `/repos/${link.repo}/branches?per_page=1`);
+    } catch (err) {
+      if (err.status === 404) throw new Error(`Das Repository ${link.repo} gibt es auf GitHub nicht mehr (umbenannt oder gelöscht) oder das Token hat keinen Zugriff darauf.`);
+      throw err;
+    }
+    if (Array.isArray(list) && list.length === 0 && (cause.status === 409 || cause.status === 404)) return { commit: null, files: {}, modes: {}, others: [] };
+    throw new Error(`Den Branch ${link.branch} gibt es auf GitHub nicht mehr. Wähle im Reiter GitHub einen anderen Branch.`);
   }
 
   // Was hat sich seit dem letzten Abgleich hier geändert?
@@ -332,7 +408,7 @@ class GitHub {
       // Hier gelöscht, auf GitHub unverändert: gelöscht lassen (wird beim Hochladen auch dort gelöscht)
       if (mine === undefined && known[p] === sha) continue;
       if (mine === undefined || mine === known[p]) {
-        const blob = await this.request('GET', `/repos/${link.repo}/git/blobs/${sha}`);
+        const blob = await this.request('GET', `/repos/${link.repo}/git/blobs/${sha}`, undefined, Math.max(this.timeoutMs, BLOB_MS));
         fs.mkdirSync(path.dirname(full), { recursive: true });
         fs.writeFileSync(full, Buffer.from(blob.content, 'base64'));
         files[p] = sha;
@@ -341,7 +417,8 @@ class GitHub {
         conflicts.push(p); // hier und auf GitHub verschieden geändert
       }
     }
-    for (const p of Object.keys(known)) {
+    // Ohne Commit auf GitHub (leeres Repository) wird hier nie etwas gelöscht
+    for (const p of remote.commit ? Object.keys(known) : []) {
       if (remote.files[p] || SKIP.test(p)) continue;
       const mine = local.get(p);
       if (mine === undefined || mine === known[p]) {
@@ -378,7 +455,7 @@ class GitHub {
     for (const [p, sha] of local) {
       if (base.files[p] !== sha) {
         const content = fs.readFileSync(path.join(root, ...p.split('/'))).toString('base64');
-        await this.request('POST', `/repos/${link.repo}/git/blobs`, { content, encoding: 'base64' });
+        await this.request('POST', `/repos/${link.repo}/git/blobs`, { content, encoding: 'base64' }, Math.max(this.timeoutMs, BLOB_MS));
         uploaded++;
       }
       tree.push({ path: p, mode: base.modes[p] || '100644', type: 'blob', sha }); // ausführbar bleibt ausführbar
@@ -494,7 +571,7 @@ class GitHub {
   async initEmpty(link, root, local) {
     const [first] = [...local.keys()];
     const content = first ? fs.readFileSync(path.join(root, ...first.split('/'))).toString('base64') : Buffer.from('# Projekt\n').toString('base64');
-    await this.request('PUT', `/repos/${link.repo}/contents/${encodeURI(first || 'README.md')}`, { message: 'Erste Datei', content, branch: link.branch });
+    await this.request('PUT', `/repos/${link.repo}/contents/${encodeURI(first || 'README.md')}`, { message: 'Erste Datei', content, branch: link.branch }, Math.max(this.timeoutMs, BLOB_MS));
   }
 }
 
