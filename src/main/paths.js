@@ -1,5 +1,6 @@
 // Pfade zu mitgelieferten Teilen, getrennt nach Entwicklung (npm start) und installierter App.
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { app } = require('electron');
 const { buildDir } = require('./build-dir');
 
@@ -22,6 +23,16 @@ module.exports = {
   iconFile: () => resources('icon.ico'),
   rendererDir: () => path.join(repoRoot, 'src', 'renderer'),
   preloadDir: () => path.join(repoRoot, 'src', 'preload'),
+  // Daten der App zu einem Arbeitsordner, die das Modell nicht ändern darf (Sicherung für «Rückgängig»,
+  // Verbindung mit GitHub). Liegt darum nicht im Arbeitsordner und nicht im Laufzeitordner des
+  // Terminals: Beide sind für das Terminal beschreibbar.
+  projectDataDir: (folder) => {
+    const base = (!app.isPackaged && process.env.ASK_TEST_USER_DATA)
+      ? path.join(process.env.ASK_TEST_USER_DATA, 'projekte')
+      : path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'ASK-Desktop', 'projekte');
+    const key = crypto.createHash('sha1').update(path.resolve(folder).toLowerCase()).digest('hex').slice(0, 20);
+    return path.join(base, key);
+  },
   // Laufzeitdaten des Terminals (temporäre Dateien, Logs). Muss lokal sein, nicht im Roaming-Profil.
   runtimeDir: () => (!app.isPackaged && process.env.ASK_RUNTIME_DIR)
     || path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'ASK-Desktop', 'laufzeit'),

@@ -7,7 +7,7 @@ const settings = require('./settings');
 const paths = require('./paths');
 const { checkFolder } = require('./folders');
 const { Terminal } = require('./terminal');
-const { AskSession, THINKING_LEVELS } = require('./askapi');
+const { AskSession, THINKING_LEVELS, sameOrigin } = require('./askapi');
 const { Agent, NEW } = require('./agent');
 const { Workspace } = require('./workspace');
 const { AppWindow, BROWSER_PARTITION } = require('./window');
@@ -43,6 +43,7 @@ const testMode = !app.isPackaged && !!process.env.ASK_TEST_SCRIPT;
 // GitHub-Token verschlüsselt mit dem Windows-Konto (DPAPI) in den Einstellungen; nur hier lesbar.
 const github = new GitHub({
   api: (testMode && process.env.ASK_TEST_GITHUB_API) || undefined,
+  linkFile: (folder) => projectFile(folder, 'github.json', path.join('.ask', 'github.json')),
   store: {
     get() {
       const stored = settings.get('githubToken');
@@ -121,11 +122,31 @@ const agent = new Agent({
   getSnapshots: () => snapshotsFor(agent.getFolder()),
 });
 
+// Datei oder Ordner der App zu einem Arbeitsordner, ausserhalb davon (paths.projectDataDir). Frühere
+// Versionen legten Sicherung und GitHub-Verbindung in .ask ab: einmal übernehmen. Was von dort kommt,
+// prüfen snapshot.js und github.js beim Lesen, denn das Modell konnte es ändern.
+function projectFile(folder, name, legacy) {
+  const target = path.join(paths.projectDataDir(folder), name);
+  const old = path.join(folder, legacy);
+  try {
+    if (!fs.existsSync(target) && fs.existsSync(old)) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.cpSync(old, target, { recursive: true });
+    }
+    if (fs.existsSync(old)) fs.rmSync(old, { recursive: true, force: true });
+  } catch {
+    // nicht übernommen: Die App beginnt eine neue Ablage
+  }
+  return target;
+}
+
 // Sicherung des Arbeitsordners (snapshot.js), eine Instanz pro Ordner
 let snapshots = null;
 function snapshotsFor(folder) {
   if (!folder) return null;
-  if (!snapshots || !sameFolder(snapshots.root, folder)) snapshots = new Snapshots(folder);
+  if (!snapshots || !sameFolder(snapshots.root, folder)) {
+    snapshots = new Snapshots(folder, projectFile(folder, 'sicherung', path.join('.ask', 'sicherung')));
+  }
   return snapshots;
 }
 
@@ -147,6 +168,12 @@ const TEXT_EXT = new Set(['.txt', '.md', '.csv', '.json', '.py', '.js', '.html',
   '.yaml', '.ini', '.toml', '.bat', '.ps1', '.sql', '.tsv', '.java', '.c', '.cpp', '.h', '.ts']);
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const OFFICE_EXT = new Set(['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.odt', '.ods', '.odp']);
+// Dateiarten, die ein Doppelklick ohne Rückfrage im zugehörigen Programm öffnet: Dokumente, Bilder, Medien,
+// Text. Alles andere (exe, bat, cmd, lnk, js, vbs, hta, ps1, py, msi, reg, Makro-Dokumente, Unbekanntes) fragt nach.
+const SAFE_OPEN_EXT = new Set(['.txt', '.md', '.csv', '.tsv', '.json', '.xml', '.yml', '.yaml', '.ini', '.toml', '.log', '.css', '.sql', '.html', '.htm', '.svg',
+  '.pdf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.rtf',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tif', '.tiff',
+  '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm', '.mov', '.zip']);
 
 function readInstruction(name, folder, chat = 'allgemein') {
   try {
@@ -232,7 +259,12 @@ async function openChat(folder, id) {
   return res;
 }
 
+// Solange das Modell arbeitet, bleibt der Ordner: Sonst schreibt der laufende Auftrag seinen Chat in den
+// neuen Ordner, und seine Befehle treffen ein Terminal, das gerade neu startet.
+const BUSY = 'Das Modell arbeitet noch. Zuerst stoppen (Esc), dann den Ordner wechseln.';
+
 async function openFolder(folder) {
+  if (agent.running) return { ok: false, reason: BUSY };
   const result = checkFolder(folder);
   if (!result.ok) return result;
   settings.addRecent(result.path);
@@ -243,6 +275,10 @@ async function openFolder(folder) {
   }
   pushState();
   startTerminal();
+  // Alte Sicherungen aufräumen, mit derselben Instanz, die auch sichert, und nicht beim Öffnen bremsen
+  setTimeout(() => {
+    try { if (sameFolder(settings.get('folder'), result.path)) snapshotsFor(result.path).prune(); } catch { /* beim nächsten Mal */ }
+  }, 5000);
   return { ok: true, path: result.path };
 }
 
@@ -297,6 +333,10 @@ function browserAddress(text) {
 // Ordner aus der Liste nehmen. Beim aktuellen Ordner auch Terminal und Beobachtung beenden.
 function forgetFolder(f) {
   const current = sameFolder(f, settings.get('folder'));
+  if (current && agent.running) {
+    appWindow?.send('folder:error', BUSY);
+    return;
+  }
   settings.removeRecent(f);
   if (current) {
     workspace.close();
@@ -356,10 +396,7 @@ function setupIpc() {
     return openFolder(target);
   });
   ipcMain.handle('folder:open', (_e, folder) => openFolder(folder));
-  ipcMain.handle('folder:forget', (_e, folder) => {
-    settings.removeRecent(folder);
-    pushState();
-  });
+  ipcMain.handle('folder:forget', (_e, folder) => forgetFolder(String(folder || '')));
   ipcMain.handle('folder:menu', () => {
     Menu.buildFromTemplate(folderMenuItems()).popup({ window: appWindow.win });
   });
@@ -377,7 +414,7 @@ function setupIpc() {
   ipcMain.handle('ask:set-url', (_e, url) => {
     let parsed;
     try {
-      parsed = new URL(url.trim());
+      parsed = new URL(String(url).trim());
     } catch {
       return { ok: false, reason: 'Das ist keine gültige Adresse.' };
     }
@@ -462,7 +499,7 @@ function setupIpc() {
   ipcMain.handle('ask:reload', () => {
     const wc = appWindow.view.webContents;
     const url = settings.get('askUrl');
-    if (url && !wc.getURL().startsWith(new URL(url).origin)) wc.loadURL(url);
+    if (url && !sameOrigin(wc.getURL(), url)) wc.loadURL(url);
     else wc.reload();
   });
   ipcMain.handle('ui:chatbar', (_e, open) => {
@@ -515,10 +552,22 @@ function setupIpc() {
     }
     return { kind: 'other', name: path.basename(full) };
   });
-  ipcMain.handle('file:open', (_e, rel) => {
+  // Öffnen mit dem zugehörigen Programm läuft mit den normalen Rechten der Person, nicht im geschützten
+  // Terminal. Programme und Skripte (auch solche, die das Modell angelegt hat) darum nie ohne Rückfrage.
+  ipcMain.handle('file:open', async (_e, rel) => {
     const full = workspace.resolve(rel);
-    if (full) return shell.openPath(full);
-    return 'nicht gefunden';
+    if (!full) return 'nicht gefunden';
+    if (!SAFE_OPEN_EXT.has(path.extname(full).toLowerCase())) {
+      const res = testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? { response: 0 } : await dialog.showMessageBox(appWindow.win, {
+        type: 'warning', buttons: ['Im Explorer zeigen', 'Trotzdem öffnen', 'Abbrechen'], defaultId: 0, cancelId: 2,
+        message: `«${path.basename(full)}» öffnen?`,
+        detail: 'Diese Datei kann ein Programm oder Skript sein. Beim Öffnen läuft sie mit deinen Rechten auf dem ganzen Laptop, '
+          + 'nicht nur im Arbeitsordner. Öffne sie nur, wenn du weisst, was sie tut. Hat das Modell sie angelegt, lass sie lieber vom Modell im Chat ausführen.',
+      });
+      if (res.response === 0) { shell.showItemInFolder(full); return ''; }
+      if (res.response !== 1) return '';
+    }
+    return shell.openPath(full);
   });
   ipcMain.handle('file:show', (_e, rel) => {
     const full = workspace.resolve(rel);

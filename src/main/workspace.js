@@ -5,7 +5,6 @@ const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const paths = require('./paths');
 const { cleanupWorkDirs, hideFolder } = require('./cleanup');
-const { Snapshots } = require('./snapshot');
 
 const ASK_DIR = '.ask';
 const MAX_ENTRIES = 300;
@@ -112,10 +111,7 @@ class Workspace extends EventEmitter {
     this.root = folder;
     fs.mkdirSync(path.join(folder, ASK_DIR), { recursive: true });
     hideFolder(path.join(folder, ASK_DIR));
-    setTimeout(() => { // nicht beim Öffnen bremsen
-      cleanupWorkDirs(folder);
-      try { new Snapshots(folder).prune(); } catch { /* beim nächsten Mal */ }
-    }, 2000);
+    setTimeout(() => cleanupWorkDirs(folder), 2000); // nicht beim Öffnen bremsen; die Sicherung räumt main.js auf
     fs.rmSync(path.join(folder, ASK_DIR, 'auftraege'), { recursive: true, force: true });
     this.syncSkills();
     try {
@@ -183,7 +179,7 @@ class Workspace extends EventEmitter {
     if (!this.root) return null;
     try {
       const text = fs.readFileSync(path.join(this.root, ASK_DIR, 'tasks.json'), 'utf8');
-      return normalizeTasks(JSON.parse(text.replace(/^﻿/, '')));
+      return normalizeTasks(JSON.parse(text.replace(/^\uFEFF/, '')));
     } catch (err) {
       return err.code === 'ENOENT' ? null : { fehler: 'tasks.json ist gerade nicht lesbar', aufgaben: [] };
     }

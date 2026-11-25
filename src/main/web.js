@@ -26,22 +26,83 @@ function decodeEntities(text) {
 
 // HTML → lesbarer Text: ohne Skripte, Stile, Navigation, Kopf- und Fussbereich; Überschriften mit #,
 // Listenpunkte mit -, Tabellenzellen mit |. Links bleiben nur als Text, damit er kurz bleibt.
-function htmlToText(html) {
-  let h = String(html);
-  const title = decodeEntities((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(h)?.[1] || '').replace(/\s+/g, ' ').trim());
-  h = h.replace(/<!--[\s\S]*?-->/g, ' ');
-  h = h.replace(/<(script|style|noscript|svg|template|iframe|head|nav|footer|form|button|select)\b[\s\S]*?<\/\1\s*>/gi, ' ');
-  const main = /<(main|article)\b[^>]*>([\s\S]*?)<\/\1\s*>/i.exec(h);
-  if (main && main[2].replace(/<[^>]+>/g, '').trim().length > 400) h = main[2];
-  else h = h.replace(/<header\b[\s\S]*?<\/header\s*>/gi, ' ');
-  h = h.replace(/<h([1-6])\b[^>]*>/gi, (m, n) => `\n\n${'#'.repeat(Number(n))} `).replace(/<\/h[1-6]\s*>/gi, '\n\n');
-  h = h.replace(/<li\b[^>]*>/gi, '\n- ').replace(/<br\s*\/?>/gi, '\n');
-  h = h.replace(/<\/(p|div|section|article|tr|table|ul|ol|blockquote|pre|dd|dt|figure|main)\s*>/gi, '\n');
-  h = h.replace(/<(td|th)\b[^>]*>/gi, ' | ');
-  h = h.replace(/<[^>]+>/g, ' ');
-  const text = decodeEntities(h).replace(/[ \t\f\v ]+/g, ' ').split('\n').map((l) => l.trim())
-    .filter((l, i, all) => l || (all[i - 1] && all[i - 1].trim())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  return { title, text };
+// Ein Durchgang über den Text: Auch eine kaputte oder böswillige Seite (tausende offene Tags) darf den
+// Hauptprozess nicht blockieren. Formulare bleiben drin: Manche Seiten stecken ganz in einem <form>.
+const RAW = new Set(['script', 'style']); // Inhalt ist kein HTML, endet erst beim schliessenden Tag
+const DROP = new Set(['script', 'style', 'noscript', 'svg', 'template', 'iframe', 'head', 'nav', 'footer', 'button', 'select']);
+const BREAK = new Set(['p', 'div', 'section', 'article', 'tr', 'table', 'ul', 'ol', 'blockquote', 'pre', 'dd', 'dt', 'figure', 'main']);
+
+function htmlToText(html, strict = true) {
+  const h = String(html);
+  const lower = h.toLowerCase();
+  const out = { all: [], main: [], body: [] }; // main: Inhalt von <main>/<article>; body: ohne <header>
+  let title = '';
+  let dropped = []; // offene Tags, deren Inhalt wegfällt
+  let inMain = 0;
+  let inHeader = 0;
+  let inTitle = false;
+  const emit = (text) => {
+    if (inTitle) { title += text; return; }
+    if (dropped.length) return;
+    out.all.push(text);
+    if (inMain) out.main.push(text);
+    if (!inHeader) out.body.push(text);
+  };
+  let i = 0;
+  let gt = -1; // Position des nächsten «>», damit nicht jedes «<» den Rest neu absucht
+  const ends = new Map(); // «</script» usw.: einmal nicht gefunden heisst nie mehr suchen
+  const closing = (name, from) => {
+    const key = `</${name}`;
+    if (ends.get(key) === -1) return -1;
+    const at = lower.indexOf(key, from);
+    ends.set(key, at);
+    return at;
+  };
+  while (i < h.length) {
+    const lt = h.indexOf('<', i);
+    if (lt < 0) { emit(h.slice(i)); break; }
+    if (lt > i) emit(h.slice(i, lt));
+    if (h.startsWith('<!--', lt)) {
+      const end = ends.get('-->') === -1 ? -1 : h.indexOf('-->', lt + 4);
+      ends.set('-->', end);
+      if (end < 0) break; // offener Kommentar: der Rest gehört dazu
+      i = end + 3;
+      continue;
+    }
+    if (gt < lt && gt !== -2) { gt = h.indexOf('>', lt); if (gt < 0) gt = -2; }
+    if ((h[lt + 1] === '!' || h[lt + 1] === '?') && gt >= 0) { i = gt + 1; continue; } // <!DOCTYPE …>, <?xml …?>
+    const m = /^<(\/?)([a-zA-Z][a-zA-Z0-9]*)/.exec(h.slice(lt, lt + 40));
+    if (!m || gt === -2) { emit(m ? '' : '<'); if (m) break; i = lt + 1; continue; } // kein Tag, oder Tag ohne Ende
+    const close = m[1] === '/';
+    const name = m[2].toLowerCase();
+    i = gt + 1;
+    if (!close && RAW.has(name)) {
+      const end = closing(name, i);
+      if (end < 0) break;
+      i = end;
+      continue;
+    }
+    if (name === 'title') { inTitle = !close && !title; continue; }
+    if (DROP.has(name) && (strict || name === 'head')) {
+      if (!close) { if (h[gt - 1] !== '/') dropped.push(name); } else if (dropped.includes(name)) dropped = dropped.slice(0, dropped.lastIndexOf(name));
+      emit(' ');
+      continue;
+    }
+    if (name === 'main' || name === 'article') inMain = Math.max(0, inMain + (close ? -1 : 1));
+    if (name === 'header') { inHeader = Math.max(0, inHeader + (close ? -1 : 1)); emit(' '); continue; }
+    if (/^h[1-6]$/.test(name)) emit(close ? '\n\n' : `\n\n${'#'.repeat(Number(name[1]))} `);
+    else if (name === 'li' && !close) emit('\n- ');
+    else if (name === 'br') emit('\n');
+    else if ((name === 'td' || name === 'th') && !close) emit(' | ');
+    else if (BREAK.has(name) && close) emit('\n');
+    else emit(' ');
+  }
+  const clean = (parts) => decodeEntities(parts.join('')).replace(/[ \t\f\v\u00a0]+/g, ' ').split('\n').map((l) => l.trim())
+    .filter((l, n, all) => l || (all[n - 1] && all[n - 1].trim())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  // Ein Bereich wie <nav> wurde nie geschlossen: Dann fiele der ganze Rest weg. Nochmals, ohne Bereiche auszulassen.
+  if (strict && dropped.some((name) => name !== 'head')) return htmlToText(h, false);
+  const main = clean(out.main);
+  return { title: decodeEntities(title.replace(/\s+/g, ' ').trim()), text: main.length > 400 ? main : clean(out.body) };
 }
 
 // Ergebnisse von lite.duckduckgo.com: Links sind teils Weiterleitungen (…/l/?uddg=<Adresse>)
@@ -71,8 +132,13 @@ function checkUrl(raw, allowLocal = false) {
   }
   if (!/^https?:$/.test(url.protocol)) throw new Error('Nur http- und https-Adressen.');
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  const local = host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host === '::1' || host.startsWith('fe80:')
-    || /^(127|10|0)\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+  // IPv4 in IPv6-Schreibweise (::ffff:7f00:1 ist 127.0.0.1) zählt wie die IPv4-Adresse
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  const v4 = mapped ? [parseInt(mapped[1], 16) >> 8, parseInt(mapped[1], 16) & 255, parseInt(mapped[2], 16) >> 8, parseInt(mapped[2], 16) & 255].join('.') : host;
+  const local = host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.lan')
+    || host === '::1' || host === '::' || /^fe[89ab][0-9a-f]:/.test(host)
+    || /^(127|10|0)\./.test(v4) || /^192\.168\./.test(v4) || /^169\.254\./.test(v4) || /^172\.(1[6-9]|2\d|3[01])\./.test(v4)
+    || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(v4) // gemeinsam genutzter Bereich von Anbietern und VPN
     || /^(fc|fd)[0-9a-f]{2}:/.test(host) || !host.includes('.') && !host.includes(':');
   if (local && !allowLocal) throw new Error('Adressen im lokalen Netz oder auf diesem Rechner sind gesperrt.');
   return url;

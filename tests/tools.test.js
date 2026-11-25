@@ -12,6 +12,11 @@ test('Programme mit Fenster werden abgelehnt', () => {
     'excel.exe a.xlsx',
     'python a.py && POWERPNT vortrag.pptx',
     'explorer ausgabe',
+    'cmd /c start notepad',
+    'cmd.exe /d /c "start bericht.docx"',
+    'call start bericht.docx',
+    '@start bericht.docx',
+    'if exist a.docx (start a.docx)',
   ]) assert.ok(blockedCommand(command), command);
 });
 
@@ -24,5 +29,9 @@ test('normale Befehle laufen', () => {
     'python restart.py',
     'dir C:\\Windows\\explorer.exe',
     'type ausgabe\\notepad.txt',
+    'python -c "print(start)"',
+    'git commit -m "fix (start) of loop"',
+    'python -c "x = 1 | 2; print(excel)"',
+    'cmd /c dir',
   ]) assert.strictEqual(blockedCommand(command), '', command);
 });
