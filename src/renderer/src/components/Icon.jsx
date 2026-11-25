@@ -71,5 +71,5 @@ export const TOOL_ICONS = {
   view_file: 'eye', bild_erstellen: 'image', chat_search: 'history', chat_read: 'history', goal_done: 'target',
   github_status: 'github', github_clone: 'github', github_pull: 'github', github_push: 'github', github_create: 'github', github_branch: 'branch', github_pr: 'pr',
   frage_stellen: 'help', plan_vorlegen: 'map', server_starten: 'server', server_stoppen: 'server', server_liste: 'server',
-  merken: 'pin', vergessen: 'trash', skill_lesen: 'read', skill_erstellen: 'plus', // Gedächtnis und Skills (memorytools.js)
+  hilfsagent: 'spark', merken: 'pin', vergessen: 'trash', skill_lesen: 'read', skill_erstellen: 'plus', // Gedächtnis und Skills (memorytools.js)
 };

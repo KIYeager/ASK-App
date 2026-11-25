@@ -5,7 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
-const { toolSpecs, runTool, describe, clip } = require('./tools');
+const { toolSpecs, runTool, describe, clip, cleanArgs } = require('./tools');
+const { HELPER, HELPER_TOOL, runHelper, pool } = require('./helpers');
 const { parseTextToolCalls } = require('./askapi');
 const { assessRisk } = require('./approvals');
 const { MEMORY_TOOLS } = require('./memorytools');
@@ -63,7 +64,7 @@ const PLAN_TOOL = {
   },
 };
 // Werkzeuge, die im Planmodus erlaubt sind: nichts, was den Ordner oder etwas ausserhalb verändert
-const PLAN_ALLOWED = new Set(['read_file', 'list_files', 'find_files', 'search_text', 'view_file', 'web_search', 'web_fetch',
+const PLAN_ALLOWED = new Set(['read_file', 'list_files', 'find_files', 'search_text', 'view_file', 'web_search', 'web_fetch', HELPER,
   'chat_search', 'chat_read', 'github_status', 'server_liste', 'skill_lesen', 'update_tasks', 'frage_stellen', 'plan_vorlegen']);
 const PLAN_PROMPT = '\n\n# Planmodus\nDie Person will zuerst einen Plan sehen. Ändere nichts: keine Befehle, keine Dateien schreiben. '
   + 'Sieh dir mit den Lese- und Suchwerkzeugen an, was du brauchst, frag bei Unklarem mit frage_stellen, '
@@ -108,19 +109,6 @@ const { WORK_DIRS } = require('./cleanup'); // unter .ask, je ein Unterordner pr
 
 const normRel = (p) => String(p || '').trim().replace(/^\.?[\\/]+/, '').replaceAll('\\', '/').toLowerCase();
 const newId = () => `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${crypto.randomBytes(3).toString('hex')}`;
-
-// Argumente eines Werkzeugaufrufs: «null», eine Zahl oder eine Liste werden zu {}, damit kein Schritt daran
-// scheitert. Unlesbares JSON bleibt, wie es ist: runTool meldet dem Modell den Fehler.
-function cleanArgs(raw) {
-  const text = typeof raw === 'string' ? raw : raw && typeof raw === 'object' ? JSON.stringify(raw) : '';
-  if (!text.trim()) return '{}';
-  try {
-    const v = JSON.parse(text);
-    return v && typeof v === 'object' && !Array.isArray(v) ? text : '{}';
-  } catch {
-    return text;
-  }
-}
 
 // Steckt das Modell in einer Schleife? Betrachtet nur den laufenden Auftrag (seit der letzten Eingabe).
 function loopReason(messages) {
@@ -230,13 +218,14 @@ function apiMessages(system, messages, textMode = false, imageUrl = null, budget
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer, getMode, retryWaits, servers, review, knowledge, getSiblings }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer, getMode, retryWaits, servers, review, knowledge, getSiblings, getHelperModel }) {
     super();
     // Modus «Auto»: Prüfer in ASK (review.js), beurteilt Befehle und heikle Schritte
     this.review = review || null;
     this.reviewedSafe = new Set(); // in diesem Chat schon als harmlos beurteilte Schritte
     this.getMode = getMode || (() => 'nachfragen'); // auto | nachfragen | plan (Eingabefeld)
     this.getSiblings = getSiblings || (() => []);
+    this.getHelperModel = getHelperModel || (() => ''); // '' = Modell des Chats (Hilfsagenten, helpers.js)
     this.retryWaits = retryWaits || RETRY_WAITS;
     this.getContextLimit = getContextLimit || (() => 0); // Kontextfenster des Modells in Token, 0: unbekannt
     this.onContextLimit = onContextLimit || (() => {}); // ASK hat die Grenze in einer Fehlermeldung genannt
@@ -605,7 +594,7 @@ class Agent extends EventEmitter {
     const remember = !this.knowledge?.memoryOn || !!this.knowledge.memoryOn();
     const offered = (name) => (memory || !name.startsWith('chat_')) && (flux || name !== 'bild_erstellen') && (remember || !MEMORY_TOOLS.includes(name));
     const plan = this.getMode() === 'plan';
-    let specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => offered(s.function.name)), QUESTION_TOOL, ...(goal ? [GOAL_TOOL] : [])];
+    let specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => offered(s.function.name)), QUESTION_TOOL, HELPER_TOOL, ...(goal ? [GOAL_TOOL] : [])];
     if (plan) specs = [...specs, PLAN_TOOL].filter((s) => PLAN_ALLOWED.has(s.function.name));
     let sentImages = false;
     const attempt = () => {
@@ -709,13 +698,22 @@ class Agent extends EventEmitter {
     const seen = []; // Bilder aus view_file und browser, gehen danach als Nachricht an das Modell
     const canSee = this.canSee();
     let planned = false;
-    for (const call of toolCalls) {
+    const helperRuns = new Map(); // Hilfsagenten dieses Schritts: Kennung → Ergebnis (Promise)
+    for (const [ci, call] of toolCalls.entries()) {
       if (signal.aborted) {
         this.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: 'Von der Person abgebrochen.', ok: false, summary: 'abgebrochen', textMode });
         continue;
       }
+      // Hilfsagenten, die direkt hintereinander aufgerufen werden, laufen gleichzeitig (höchstens 3, helpers.js)
+      if (call.function.name === HELPER && !helperRuns.has(call.id)) {
+        const batch = [];
+        for (let j = ci; j < toolCalls.length && toolCalls[j].function.name === HELPER; j++) batch.push(toolCalls[j]);
+        for (const b of batch) this.event({ type: 'tool-start', id: b.id, name: HELPER, ...this.describeCall(b) });
+        const all = pool(batch.map((b) => () => this.runHelperCall(b, signal)));
+        batch.forEach((b, k) => helperRuns.set(b.id, all.then((r) => r[k])));
+      }
       const started = Date.now();
-      this.event({ type: 'tool-start', id: call.id, name: call.function.name, ...this.describeCall(call) });
+      if (!helperRuns.has(call.id)) this.event({ type: 'tool-start', id: call.id, name: call.function.name, ...this.describeCall(call) });
       const name = call.function.name;
       // Ein Fehler in der App darf den Verlauf nicht kaputt machen: Jeder Aufruf bekommt ein Ergebnis,
       // sonst lehnt ASK jede weitere Anfrage dieses Chats ab (tool_calls ohne Antwort)
@@ -733,6 +731,8 @@ class Agent extends EventEmitter {
           ? this.finishGoal(call.function.arguments)
           : call.function.name === 'frage_stellen'
           ? await this.askQuestion(call, signal)
+          : helperRuns.has(call.id)
+          ? await helperRuns.get(call.id)
           : await runTool(this.terminal, call.function.name, call.function.arguments, {
             signal,
             onProgress: (output) => this.event({ type: 'tool-progress', id: call.id, output: clip(output, 4000) }),
@@ -1002,9 +1002,19 @@ class Agent extends EventEmitter {
     return { ok: true, output: 'Ziel als erreicht markiert. Schreib jetzt die kurze Schlussantwort.', summary: summary || 'Ziel erreicht' };
   }
 
+  // Einen Hilfsagenten ausführen (helpers.js), mit eigenem Modell aus den Einstellungen
+  runHelperCall(call, signal) {
+    return runHelper(call.function.arguments, {
+      ask: this.ask, model: this.getHelperModel() || this.getModel(), thinking: this.getThinking?.(), terminal: this.terminal, web: this.web,
+      folder: this.getFolder(), chat: this.chat.id, textMode: this.textMode, apiMessages, textModePrompt, signal,
+      onProgress: (output) => this.event({ type: 'tool-progress', id: call.id, output: clip(output, 4000) }),
+    }).catch((err) => ({ ok: false, output: `Fehler im Hilfsagenten: ${err?.message || err}`, summary: 'Fehler' }));
+  }
+
   describeCall(call) {
     let args = {};
     try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* roh */ }
+    if (call.function.name === HELPER) return { label: 'Hilfsagent', detail: clip(String(args.titel || args.auftrag || ''), 120) };
     if (call.function.name === 'frage_stellen') {
       const optionen = Array.isArray(args.optionen) ? args.optionen.map((o) => String(o).trim()).filter(Boolean).slice(0, 6) : [];
       return { label: 'Frage', detail: String(args.frage || ''), optionen };

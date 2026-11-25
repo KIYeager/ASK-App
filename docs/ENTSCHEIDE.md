@@ -392,3 +392,15 @@ Eine Durchsicht am 25.11.2026 fand vor allem Lücken in der Rückfrage (E41) und
 - **Weiter.** Entwicklungsserver: Stoppen während der Probe und zwei gleichzeitige Starts. Kontextmenü im Browser öffnet nur Webadressen im System. Beim Wechsel des Chats landete Text des alten Chats im neuen. Die Kennzeichnung «Low» entfernt die App, wenn ein Projekt aus der Liste kommt (nicht bei verschachtelten Projekten), `pip install` geht in einer `.venv`, und Office-Dateien zeigt die Vorschau als PDF, wenn Office installiert ist. Diese drei sind unter Windows noch nicht getestet.
 
 Tests: `tests/approvals.test.js`, `rueckfrage.test.js`, `askapi.test.js`, `github.test.js`, `servers.test.js`, `memory.test.js`, `skills.test.js`, `chatmodel.test.js`, `lowlabel.test.js`, `dateien.test.js`.
+
+## E54 Hilfsagenten
+
+Grosse Suchen füllten den Verlauf eines Chats mit Dateiinhalten, die danach niemand mehr brauchte, und mehrere unabhängige Recherchen liefen nacheinander. Jetzt kann das Modell mit dem Werkzeug `hilfsagent` (Titel und vollständiger Auftrag) einen Hilfsagenten starten, wie das Agent-Werkzeug in Claude Code (`src/main/helpers.js`). Er hat eine eigene kleine Arbeitsschleife mit eigenem Verlauf und gibt nur seine Schlussantwort zurück (höchstens 8000 Zeichen).
+
+- **Nur lesen.** Hilfsagenten bekommen `read_file`, `list_files`, `find_files`, `search_text`, `web_search` und `web_fetch`, keine Befehle, kein Schreiben, keine Fragen an die Person und keine weiteren Hilfsagenten. Darum brauchen sie keine Rückfrage, können gleichzeitig laufen, ohne sich im Ordner in die Quere zu kommen, und sind auch im Planmodus erlaubt. Einen Aufruf eines anderen Werkzeugs beantwortet die App mit der Liste der erlaubten.
+- **Gleichzeitig.** Ruft das Modell mehrere Hilfsagenten direkt hintereinander im selben Schritt auf, laufen höchstens drei gleichzeitig; die Ergebnisse gehen in der Reihenfolge der Aufrufe zurück. Mehr gleichzeitig hätte ASK für alle Lernenden stärker belastet.
+- **Modell.** Einstellung «Hilfsagenten» (`helperModel`), Standard wie im Chat, wie die Prüfung im Modus «Auto». Ist das gewählte Modell in ASK nicht mehr vorhanden, nimmt die App das Modell des Chats.
+- **Grenzen.** Nach 20 Schritten muss der Hilfsagent ohne Werkzeuge zusammenfassen. Stoppen bricht auch die Hilfsagenten ab. Im Textmodus beschreibt die App ihnen die Werkzeuge im Systemprompt wie dem Chat. Was ein Hilfsagent verbraucht, steht in seiner Zeile (Schritte und Token), nicht in der Tokenzeile des Auftrags.
+- **Anzeige.** Jeder Hilfsagent ist eine Zeile in der Karte der Arbeitsschritte; während er arbeitet, steht dort sein letzter Schritt, ein Klick zeigt alle Schritte und das Ergebnis.
+
+Tests: `tests/helpers.test.js`.

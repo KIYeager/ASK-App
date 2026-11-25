@@ -198,6 +198,8 @@ function makeAgent(folder, rt) {
     getImageUrl: (attachment) => imageUrl(folder, attachment, nativeResize(nativeImage)),
     getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
     getSnapshots: () => snapshotsFor(folder),
+    // Hilfsagenten (ENTSCHEIDE E54): eigenes Modell aus den Einstellungen, sonst das Modell des Chats
+    getHelperModel: () => { const wanted = settings.get('helperModel'); return ask.models.some((m) => m.id === wanted) ? wanted : ''; },
     // Andere Chats, die gerade im selben Ordner arbeiten (Warnung, ENTSCHEIDE E46)
     getSiblings: () => [...rt.agents].filter((x) => x !== a && x.running).map((x) => x.chat.title || 'ohne Titel'),
     servers: rt.servers || null,
@@ -431,6 +433,7 @@ function state() {
     approvals: approvalMode(),
     mode: chatMode(),
     reviewModel: s.reviewModel || '',
+    helperModel: s.helperModel || '',
     theme: THEMES[s.theme] ? s.theme : 'system',
     project: settings.findProject(s.folder),
   };
@@ -751,6 +754,7 @@ function setupIpc() {
     if (APPROVAL_MODES.includes(v.approvals)) patch.approvals = v.approvals;
     if (CHAT_MODES.includes(v.mode)) patch.mode = v.mode;
     if (typeof v.reviewModel === 'string') patch.reviewModel = v.reviewModel.slice(0, 200); // '' = Modell des Chats
+    if (typeof v.helperModel === 'string') patch.helperModel = v.helperModel.slice(0, 200); // Hilfsagenten, '' = Modell des Chats
     if (THEMES[v.theme]) patch.theme = v.theme;
     settings.set(patch);
     if (patch.theme) applyTheme();

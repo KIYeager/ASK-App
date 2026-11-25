@@ -858,6 +858,19 @@ function describe(name, args) {
   return { label: tool?.label || name, detail: String(detail || '').replace(/\s+/g, ' ').slice(0, 200) };
 }
 
+// Argumente eines Werkzeugaufrufs: «null», eine Zahl oder eine Liste werden zu {}, damit kein Schritt daran
+// scheitert. Unlesbares JSON bleibt, wie es ist: runTool meldet dem Modell den Fehler.
+function cleanArgs(raw) {
+  const text = typeof raw === 'string' ? raw : raw && typeof raw === 'object' ? JSON.stringify(raw) : '';
+  if (!text.trim()) return '{}';
+  try {
+    const v = JSON.parse(text);
+    return v && typeof v === 'object' && !Array.isArray(v) ? text : '{}';
+  } catch {
+    return text;
+  }
+}
+
 // Führt einen Werkzeugaufruf aus. Fehler gehen als Text an das Modell zurück.
 async function runTool(terminal, name, rawArgs, ctx = {}) {
   const tool = byName.get(name);
@@ -871,4 +884,4 @@ async function runTool(terminal, name, rawArgs, ctx = {}) {
   }
 }
 
-module.exports = { TOOLS, toolSpecs, runTool, describe, parseArgs, clip, request, blockedCommand };
+module.exports = { TOOLS, toolSpecs, runTool, describe, parseArgs, clip, request, blockedCommand, cleanArgs };
