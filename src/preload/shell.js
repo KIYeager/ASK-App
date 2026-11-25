@@ -107,4 +107,18 @@ contextBridge.exposeInMainWorld('ask', {
   updateAction: () => ipcRenderer.invoke('update:action'),
   updateLater: () => ipcRenderer.invoke('update:later'),
   setBetaUpdates: (on, tell) => ipcRenderer.invoke('update:beta', on, tell),
+  // Gedächtnis und eigene Skills (src/main/knowledge.js)
+  memoryList: () => ipcRenderer.invoke('memory:list'),
+  memoryAdd: (item) => ipcRenderer.invoke('memory:add', item),
+  memoryUpdate: (id, patch) => ipcRenderer.invoke('memory:update', id, patch),
+  memoryRemove: (id) => ipcRenderer.invoke('memory:remove', id),
+  memoryClear: () => ipcRenderer.invoke('memory:clear'),
+  setMemoryEnabled: (on) => ipcRenderer.invoke('memory:enable', on),
+  onMemoryChanged: on('memory:changed'),
+  skillsList: () => ipcRenderer.invoke('skills:list'),
+  skillsGet: (name) => ipcRenderer.invoke('skills:get', name),
+  skillsSave: (skill, previous) => ipcRenderer.invoke('skills:save', skill, previous),
+  skillsRemove: (name) => ipcRenderer.invoke('skills:remove', name),
+  skillsExport: (name) => ipcRenderer.invoke('skills:export', name),
+  skillsImport: () => ipcRenderer.invoke('skills:import'),
 });

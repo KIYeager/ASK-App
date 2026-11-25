@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar.jsx';
 import Composer from './components/Composer.jsx';
 import RightPanel, { norm } from './components/RightPanel.jsx';
 import Dialogs, { activeDialog } from './components/Dialogs.jsx';
+import { useSkillCommands } from './components/Knowledge.jsx';
 import { Turn } from './components/Chat.jsx';
 import { applyEvent, buildTurns, emptyChat, fromTranscript, lastTasks } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
@@ -374,6 +375,8 @@ export default function App() {
     await send(arg, []);
   };
 
+  const skillCommands = useSkillCommands({ composer, stateRef, notice }); // eigene Skills als /name (ENTSCHEIDE E51)
+
   const commands = [
     { cmd: '/neu', text: 'Neuen Chat beginnen', run: () => newChat() },
     { cmd: '/projekt', text: 'Neues Projekt anlegen', run: () => setDialog({ name: 'project' }) },
@@ -396,6 +399,9 @@ export default function App() {
     { cmd: '/beta', text: 'Beta-Versionen erhalten ein- oder ausschalten', run: () => api().setBetaUpdates(!state.update?.beta, true) },
     { cmd: '/neustart', text: 'Terminal neu starten', run: () => api().restartTerminal() },
     { cmd: '/abmelden', text: 'Bei ASK abmelden', run: () => api().logout() },
+    { cmd: '/gedaechtnis', text: 'Gedächtnis: was ASK sich über dich und deine Projekte merkt', run: () => setDialog({ name: 'memory' }) },
+    { cmd: '/skills', text: 'Eigene Skills ansehen, erstellen, teilen', run: () => setDialog({ name: 'skills' }) },
+    ...skillCommands,
   ];
 
   // ---------- Tastatur ----------

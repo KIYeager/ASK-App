@@ -374,6 +374,10 @@ http.createServer((req, res) => {
     req.on('end', async () => {
       const data = JSON.parse(body);
       if ((data.tool_ids || []).includes('flux_bild')) return fluxAnswer(data, res);
+      // Gedächtnis (src/main/memory.js): nach jedem Auftrag eine Anfrage im Hintergrund, nichts merken
+      if (/^Du pflegst ein kleines Gedächtnis/.test(data.messages[0]?.content || '')) {
+        return json(res, 200, { choices: [{ message: { role: 'assistant', content: '{"neu":[],"veraltet":[]}' }, finish_reason: 'stop' }] });
+      }
       // Prüfer des Modus «Auto» (src/main/review.js): eigene kurze Antwort, nicht im chatLog der Arbeitsschleife
       if (/^Du prüfst einen einzelnen Arbeitsschritt/.test(data.messages[0]?.content || '')) {
         reviewLog.push(textOf(data.messages[1]?.content));
