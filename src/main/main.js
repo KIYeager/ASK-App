@@ -18,7 +18,7 @@ const { saveAttachments, imageUrl, nativeResize } = require('./attachments');
 const { Snapshots } = require('./snapshot');
 const { Visual } = require('./visual');
 const { Web } = require('./web');
-const { historyPrompt } = require('./history');
+const { historyPrompt, search: searchChats } = require('./history');
 const { Images } = require('./bild');
 
 app.setAppUserModelId('ch.tfbern.ask');
@@ -120,6 +120,9 @@ const agent = new Agent({
   getImageUrl: (attachment) => imageUrl(agent.getFolder(), attachment, nativeResize(nativeImage)),
   getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
   getSnapshots: () => snapshotsFor(agent.getFolder()),
+  // Kontextfenster: was ASK zum Modell angibt, sonst was ASK einmal in einer Fehlermeldung genannt hat
+  getContextLimit: (model) => ask.models.find((m) => m.id === model)?.context || Number((settings.get('contextLimits') || {})[model]) || 0,
+  onContextLimit: (model, limit) => settings.set({ contextLimits: { ...(settings.get('contextLimits') || {}), [model]: limit } }),
 });
 
 // Datei oder Ordner der App zu einem Arbeitsordner, ausserhalb davon (paths.projectDataDir). Frühere
@@ -224,7 +227,16 @@ function state() {
     thinking: thinkingLevel(),
     webSearchAvailable: !!ask.webSearch,
     chat: agent.state(),
+    prefs: prefs(),
+    version: app.getVersion(),
   };
+}
+
+// Einstellungen der Oberfläche, die sich die App merkt (Dialog «Einstellungen»)
+const PREFS = { verbose: false, todoCollapsed: false };
+function prefs() {
+  const stored = settings.get('prefs') || {};
+  return Object.fromEntries(Object.entries(PREFS).map(([k, v]) => [k, typeof stored[k] === typeof v ? stored[k] : v]));
 }
 
 function currentModel() {
@@ -449,14 +461,26 @@ function setupIpc() {
     pushState();
   });
   // Anhänge zuerst nach .ask/anhaenge/<Chat>/ speichern; scheitert das, geht nichts an das Modell.
-  ipcMain.handle('chat:send', (_e, text, files) => {
+  // kept: Anhänge einer zurückgenommenen Eingabe (chat:rewind), die schon dort liegen.
+  ipcMain.handle('chat:send', (_e, text, files, kept) => {
     if (agent.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' };
     let attachments = [];
+    for (const k of Array.isArray(kept) ? kept.slice(0, 10) : []) {
+      const rel = String(k?.path || '');
+      const folder = agent.getFolder();
+      // nur Dateien, die wirklich bei den Anhängen dieses Chats liegen
+      if (!folder || !new RegExp(`^\\.ask/anhaenge/${agent.chat.id}/[^/\\\\]+$`).test(rel) || /\/\.{1,2}$/.test(rel)) continue;
+      try {
+        const size = fs.statSync(path.join(folder, ...rel.split('/'))).size;
+        attachments.push({ path: rel, name: path.basename(rel), size, image: /\.(png|jpe?g|gif|webp)$/i.test(rel) });
+      } catch { /* inzwischen gelöscht */ }
+    }
+    const before = attachments;
     if (Array.isArray(files) && files.length) {
       const folder = agent.getFolder();
       if (!folder) return { ok: false, reason: 'Zuerst einen Arbeitsordner wählen.' };
       try {
-        attachments = saveAttachments(folder, files, agent.chat.id);
+        attachments = [...before, ...saveAttachments(folder, files, agent.chat.id)];
       } catch (err) {
         return { ok: false, reason: `Anhänge nicht gespeichert: ${err.message}` };
       }
@@ -465,6 +489,25 @@ function setupIpc() {
     return { ok: true };
   });
   ipcMain.handle('chat:undo', (_e, snapshot) => agent.undo(String(snapshot || '')));
+  ipcMain.handle('chat:rewind', () => agent.rewind());
+  ipcMain.handle('chat:rename', (_e, folder, id, title) => agent.rename(String(folder || ''), String(id || ''), title));
+  ipcMain.handle('chat:pin', (_e, folder, id, on) => agent.pin(String(folder || ''), String(id || ''), !!on));
+  // Suche über den Inhalt aller Chats der Ordner in der Liste: [{ folder, id, title, updated, snippets }]
+  ipcMain.handle('chat:search', (_e, query) => {
+    const hits = [];
+    for (const group of chatGroups()) {
+      try {
+        for (const h of searchChats(group.folder, String(query || ''), null)) hits.push({ folder: group.folder, name: group.name, ...h });
+      } catch { /* leere Anfrage oder Ordner nicht lesbar */ }
+    }
+    return hits.sort((a, b) => b.score - a.score || b.updated - a.updated).slice(0, 30);
+  });
+  ipcMain.handle('prefs:set', (_e, values) => {
+    const next = { ...prefs() };
+    for (const [k, v] of Object.entries(values || {})) if (k in PREFS && typeof v === typeof PREFS[k]) next[k] = v;
+    settings.set({ prefs: next });
+    pushState();
+  });
   ipcMain.handle('chat:stop', () => agent.stop());
   ipcMain.handle('chat:goal', (_e, text) => agent.setGoal(text));
   ipcMain.handle('github:status', async () => {
@@ -536,7 +579,6 @@ function setupIpc() {
     if (/^https?:\/\//i.test(String(url))) shell.openExternal(String(url));
   });
   ipcMain.handle('workspace:files', () => workspace.files());
-  ipcMain.handle('workspace:tasks', () => workspace.tasks());
   ipcMain.handle('file:preview', (_e, rel) => {
     const full = workspace.resolve(rel);
     if (!full) return { kind: 'missing' };
@@ -617,7 +659,6 @@ function wireEvents() {
   });
   workspace.on('auftrag', (file) => handleOrder(file));
   workspace.on('files', (files) => appWindow?.send('files', files));
-  workspace.on('tasks', (tasks) => appWindow?.send('tasks', tasks));
 }
 
 app.on('second-instance', () => {

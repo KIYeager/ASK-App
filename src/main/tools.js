@@ -296,7 +296,7 @@ const TOOLS = [
     name: 'update_tasks',
     label: 'Aufgaben',
     describe: (a) => a.auftrag || '',
-    description: 'Legt die Aufgabenliste an oder aktualisiert sie. Die Person sieht sie in der Seitenleiste. Bei Aufträgen mit mehr als zwei Schritten zuerst anlegen und nach jedem Schritt aktualisieren.',
+    description: 'Legt die Aufgabenliste dieses Chats an oder aktualisiert sie. Die Person sieht sie über dem Eingabefeld. Bei Aufträgen mit mehr als zwei Schritten zuerst anlegen und nach jedem Schritt aktualisieren.',
     parameters: {
       type: 'object',
       properties: {
@@ -313,9 +313,11 @@ const TOOLS = [
       required: ['aufgaben'],
     },
     async run(terminal, args) {
-      const tasks = { auftrag: String(args.auftrag || ''), aufgaben: Array.isArray(args.aufgaben) ? args.aufgaben : [] };
-      const res = await request(terminal, 'POST', '/files/write', { path: '.ask/tasks.json', content: JSON.stringify(tasks, null, 2) });
-      if (res.status !== 200) throw fail(res);
+      // Die Liste gehört zum Chat und steht dort im Ergebnis dieses Aufrufs (früher: eine Datei für den ganzen Ordner)
+      const status = (s) => (['offen', 'in_arbeit', 'erledigt'].includes(s) ? s : 'offen');
+      const tasks = { auftrag: String(args.auftrag || ''),
+        aufgaben: (Array.isArray(args.aufgaben) ? args.aufgaben : []).filter((t) => t && String(t.titel || '').trim())
+          .slice(0, 100).map((t) => ({ titel: String(t.titel).trim().slice(0, 300), status: status(t.status) })) };
       const done = tasks.aufgaben.filter((t) => t.status === 'erledigt').length;
       return { ok: true, output: 'Aufgabenliste gespeichert.', tasks: tasks.aufgaben, summary: `${done} von ${tasks.aufgaben.length} erledigt` };
     },

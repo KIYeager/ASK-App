@@ -215,6 +215,15 @@ function isStaleTerminal(s) {
   return s?.name === 'ASK Desktop' && s?.key === 'ask-desktop' && /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(String(s?.url));
 }
 
+// Kontextfenster eines Modells aus den Angaben von /api/models. Je nach Modellserver steht es an anderer Stelle
+// (Ollama: num_ctx, vLLM: max_model_len, andere: context_length oder context_window).
+function contextOf(m) {
+  const candidates = [m?.info?.params?.num_ctx, m?.context_length, m?.context_window, m?.max_model_len, m?.info?.meta?.context_length,
+    m?.openai?.context_length, m?.openai?.context_window, m?.openai?.max_model_len, m?.top_provider?.context_length];
+  const n = candidates.map(Number).find((v) => Number.isFinite(v) && v >= 1000);
+  return n ? Math.round(n) : 0;
+}
+
 async function errorOf(res) {
   const text = await res.text().catch(() => '');
   let detail = text;
@@ -391,7 +400,8 @@ class AskSession extends EventEmitter {
     this.models = (data.data || data || [])
       .filter((m) => m && m.id && !m.info?.meta?.hidden)
       // vision: true/false, wenn ASK angibt, ob das Modell Bilder versteht; sonst undefined
-      .map((m) => ({ id: m.id, name: m.name || m.id, vision: m.info?.meta?.capabilities?.vision }));
+      // context: Grösse des Kontextfensters in Token, falls ASK oder der Modellserver sie nennt; sonst 0
+      .map((m) => ({ id: m.id, name: m.name || m.id, vision: m.info?.meta?.capabilities?.vision, context: contextOf(m) }));
     this.emit('models', this.models);
     return this.models;
   }
@@ -470,4 +480,4 @@ class AskSession extends EventEmitter {
   }
 }
 
-module.exports = { sameOrigin, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS };
+module.exports = { sameOrigin, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS };

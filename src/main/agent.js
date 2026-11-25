@@ -136,8 +136,10 @@ function apiMessages(system, messages, textMode = false, imageUrl = null, budget
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit }) {
     super();
+    this.getContextLimit = getContextLimit || (() => 0); // Kontextfenster des Modells in Token, 0: unbekannt
+    this.onContextLimit = onContextLimit || (() => {}); // ASK hat die Grenze in einer Fehlermeldung genannt
     this.images = images || null; // bild_erstellen mit Flux (bild.js), nur wenn ASK das Werkzeug anbietet
     this.getChatMemory = getChatMemory || (() => false); // Schalter «Chats»: frühere Chats lesen (history.js)
     this.web = web || null; // web_search und web_fetch (web.js)
@@ -189,7 +191,24 @@ class Agent extends EventEmitter {
   }
 
   state() {
-    return { id: this.chat.id, title: this.chat.title, running: this.running, textMode: this.textMode, goal: this.chat.goal || null };
+    return { id: this.chat.id, title: this.chat.title, running: this.running, textMode: this.textMode, goal: this.chat.goal || null,
+      pinned: !!this.chat.pinned, context: this.context() };
+  }
+
+  // Wie voll ist das Kontextfenster? Aus den Tokenzahlen der letzten Antwort (Eingabe und Ausgabe); liefert ASK
+  // keine, grob aus der Länge des Verlaufs geschätzt. limit 0: Die App kennt die Grösse des Fensters nicht.
+  context() {
+    const last = this.chat.messages.findLast((m) => m.role === 'assistant' && m.stats);
+    const limit = Number(this.getContextLimit(this.getModel())) || 0;
+    if (last?.stats.promptTokens) return { tokens: last.stats.promptTokens + (last.stats.tokens || 0), estimated: false, limit };
+    if (!last) return { tokens: 0, estimated: true, limit };
+    const n = this.chat.messages.length;
+    if (!this.sized || this.sized.chat !== this.chat.id || this.sized.n !== n) {
+      const chars = this.chat.messages.reduce((sum, m) => (m.role === 'note' ? sum : sum + String(m.content || '').length
+        + (m.tool_calls || []).reduce((c, t) => c + String(t.function?.arguments || '').length, 0)), 0);
+      this.sized = { chat: this.chat.id, n, tokens: Math.round(chars / 3.6) };
+    }
+    return { tokens: this.sized.tokens, estimated: true, limit };
   }
 
   // /goal: Ziel des Chats. Das Modell arbeitet weiter, bis es goal_done aufruft (siehe send).
@@ -240,13 +259,77 @@ class Agent extends EventEmitter {
         const cached = this.summaries.get(file);
         if (cached && cached.mtime === mtime) return cached.summary;
         const c = JSON.parse(fs.readFileSync(file, 'utf8'));
-        const summary = { id: c.id, title: c.title || '(ohne Titel)', updated: c.updated, count: c.messages.filter((m) => m.role === 'user').length };
+        const summary = { id: c.id, title: c.title || '(ohne Titel)', updated: c.updated, pinned: !!c.pinned,
+          count: c.messages.filter((m) => m.role === 'user' && !m.auto).length };
         this.summaries.set(file, { mtime, summary });
         return summary;
       } catch {
         return null;
       }
-    }).filter(Boolean).sort((a, b) => b.updated - a.updated);
+    }).filter(Boolean).sort((a, b) => (b.pinned - a.pinned) || (b.updated - a.updated)); // angeheftete zuerst
+  }
+
+  // Titel oder Anheften eines gespeicherten Chats ändern (auch in einem anderen Ordner als dem offenen).
+  patch(folder, id, change) {
+    if (!/^[\w-]+$/.test(String(id)) || !folder) return false;
+    const current = id === this.chat.id && path.resolve(folder).toLowerCase() === path.resolve(this.getFolder() || '').toLowerCase();
+    try {
+      if (current) {
+        change(this.chat);
+        this.save();
+      } else {
+        const file = path.join(folder, CHAT_DIR, `${id}.json`);
+        const chat = JSON.parse(fs.readFileSync(file, 'utf8'));
+        change(chat);
+        fs.writeFileSync(`${file}.tmp`, JSON.stringify(chat));
+        fs.renameSync(`${file}.tmp`, file);
+      }
+    } catch {
+      return false;
+    }
+    this.emit('changed');
+    return true;
+  }
+
+  rename(folder, id, title) {
+    const clean = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    return !!clean && this.patch(folder, id, (chat) => { chat.title = clean; });
+  }
+
+  pin(folder, id, on) {
+    return this.patch(folder, id, (chat) => { if (on) chat.pinned = true; else delete chat.pinned; });
+  }
+
+  // Letzte Eingabe zurücknehmen, um sie zu ändern oder neu zu schicken: Der Chat endet wieder davor, und der
+  // Ordner geht (nach Rückfrage) auf den Stand vor diesem Auftrag. Liefert Text und Anhänge für das Eingabefeld.
+  async rewind() {
+    if (this.running) return { ok: false, reason: 'Es läuft gerade ein Auftrag.' };
+    const index = this.chat.messages.findLastIndex((m) => m.role === 'user' && !m.auto);
+    if (index < 0) return { ok: false, reason: 'In diesem Chat gibt es keine Eingabe.' };
+    const message = this.chat.messages[index];
+    const snapshots = this.getSnapshots();
+    let restored = null;
+    if (message.snapshot && snapshots && !message.undone) {
+      let d = null;
+      try { d = await snapshots.diff(message.snapshot); } catch { /* Sicherung gibt es nicht mehr: nur den Chat zurücknehmen */ }
+      const total = d ? d.changed.length + d.added.length + d.removed.length : 0;
+      if (total) {
+        const names = [...d.changed, ...d.added, ...d.removed];
+        const answer = await this.confirm('Auch die Dateien auf den Stand vor dieser Eingabe zurücksetzen?',
+          `Seit dieser Eingabe geändert, angelegt oder gelöscht:\n${names.slice(0, 12).map((f) => `  ${f}`).join('\n')}${names.length > 12 ? `\n  … und ${names.length - 12} weitere` : ''}`
+          + '\n\nJa: Der Ordner ist danach wie vor der Eingabe. Nein: Die Eingabe wird nicht zurückgenommen.');
+        if (!answer) return { ok: false, cancelled: true };
+        restored = await snapshots.restore(message.snapshot);
+      }
+    }
+    this.chat.messages = this.chat.messages.slice(0, index);
+    if (!this.chat.messages.length) this.chat.title = ''; // der Titel kam aus dieser Eingabe
+    if (this.chat.goal?.done) this.chat.goal = { ...this.chat.goal, done: false };
+    this.sized = null;
+    if (this.chat.messages.length) this.save();
+    else { try { fs.rmSync(path.join(this.chatDir(), `${this.chat.id}.json`), { force: true }); } catch { /* bleibt */ } }
+    this.emit('changed');
+    return { ok: true, text: message.content || '', attachments: message.attachments || [], failed: restored?.failed || [] };
   }
 
   newChat() {
@@ -393,6 +476,8 @@ class Agent extends EventEmitter {
     } catch (err) {
       this.keepPartial(err);
       // Der Verlauf ist zu lang für das Modell: ältere Schritte stärker kürzen und nochmals
+      const limit = err.status >= 400 && TOO_LONG.test(err.message) ? Number(/(?:context length|context window|maximum)[^\d]{0,40}(\d{4,8})/i.exec(err.message)?.[1]) : 0;
+      if (limit) this.onContextLimit(model, limit); // für die Anzeige, wie voll der Verlauf ist
       if (err.status >= 400 && TOO_LONG.test(err.message) && !this.tightFor.has(this.chat.id)) {
         this.tightFor.add(this.chat.id);
         this.event({ type: 'notice', text: 'Der Chat ist für das Modell zu lang geworden. Ältere Arbeitsschritte gehen ab jetzt stark gekürzt an das Modell; für ein neues Thema besser einen neuen Chat beginnen (/neu).' });

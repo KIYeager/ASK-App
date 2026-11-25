@@ -111,3 +111,49 @@ test('Abgebrochene Werkzeugaufrufe gelten als fehlgeschlagen', async () => {
     t.done();
   }
 });
+
+test('Letzte Eingabe zurücknehmen: Chat endet davor, Text und Anhänge kommen zurück', async () => {
+  const t = setup(['Antwort eins', 'Antwort zwei']);
+  try {
+    await t.agent.send('eins');
+    await t.agent.send('zwei', [{ path: `.ask/anhaenge/${t.agent.chat.id}/bild.png`, name: 'bild.png', size: 3, image: true }]);
+    const r = await t.agent.rewind();
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(r.text, 'zwei');
+    assert.strictEqual(r.attachments[0].name, 'bild.png');
+    assert.deepStrictEqual(t.agent.transcript().map((i) => i.content), ['eins', 'Antwort eins']);
+    const file = path.join(t.folder, '.ask', 'chats', `${t.agent.chat.id}.json`);
+    assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).messages.length, 2);
+    assert.strictEqual((await t.agent.rewind()).text, 'eins');
+    assert.strictEqual(t.agent.chat.title, '');
+    assert.ok(!fs.existsSync(file), 'leerer Chat wird nicht gespeichert');
+    assert.strictEqual((await t.agent.rewind()).ok, false);
+  } finally {
+    t.done();
+  }
+});
+
+test('Umbenennen und Anheften, auch für einen nicht geöffneten Chat; Kontext aus den Tokenzahlen', async () => {
+  const t = setup(['a', 'b']);
+  try {
+    await t.agent.send('erster Chat');
+    const first = t.agent.chat.id;
+    t.agent.newChat();
+    await new Promise((r) => setTimeout(r, 10)); // damit die Reihenfolge nach Zeit eindeutig ist
+    await t.agent.send('zweiter Chat');
+    assert.deepStrictEqual(t.agent.list().map((c) => c.title), ['zweiter Chat', 'erster Chat']);
+    assert.strictEqual(t.agent.pin(t.folder, first, true), true);
+    assert.strictEqual(t.agent.rename(t.folder, first, '  Bericht   Proxmox '), true);
+    assert.deepStrictEqual(t.agent.list().map((c) => [c.title, c.pinned]), [['Bericht Proxmox', true], ['zweiter Chat', false]]);
+    assert.strictEqual(t.agent.rename(t.folder, t.agent.chat.id, 'offen'), true);
+    assert.strictEqual(t.agent.state().title, 'offen');
+    assert.strictEqual(t.agent.rename(t.folder, first, '   '), false);
+    assert.strictEqual(t.agent.rename(t.folder, '../x', 'y'), false);
+    const context = t.agent.state().context;
+    assert.ok(context.tokens > 0 && context.estimated === true && context.limit === 0);
+    t.agent.chat.messages.at(-1).stats.promptTokens = 1200;
+    assert.deepStrictEqual(t.agent.state().context, { tokens: 1200 + t.agent.chat.messages.at(-1).stats.tokens, estimated: false, limit: 0 });
+  } finally {
+    t.done();
+  }
+});
