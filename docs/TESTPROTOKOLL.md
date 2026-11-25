@@ -174,6 +174,16 @@ Erst möglich, wenn Flux in ASK für dein Konto läuft (beim Bau nur im Beta-Arb
 
 Erst möglich, wenn ASK-Releases, das Secret und die Schreibrechte der Workflows eingerichtet sind (README, «Neue Version veröffentlichen», Einmal einrichten). Stand 25.11.2026: v0.2.1 ist so entstanden (PR mit Label `release`); Installer und `latest.yml` sind geprüft (Grösse und SHA-512 stimmen, `app-update.yml` zeigt auf ASK-Releases).
 
+
+Durchgeführt am 25.11.2026 auf Windows 11 (Laptop des Entwicklers):
+
+| Update | Ergebnis |
+|---|---|
+| 0.2.1 → 0.2.2 | Klappte, dauerte aber über 3 Minuten ohne Anzeige (still, 12'000 Dateien); ein Klick auf die Verknüpfung in dieser Zeit bot an, sie zu löschen (E39). |
+| 0.2.2 → 0.2.3-beta.2 | Klappte; noch einmal langsam und still, weil 0.2.2 den alten Ablauf ausführt; danach einmal «Python wird eingerichtet». Download nur unten in der Statuszeile sichtbar (E40). |
+| 0.2.3-beta.2 → 0.2.3 | Klappte, «einigermassen schnell», mit Fortschrittsfenster des Installers; kein erneutes Entpacken von Python. |
+| 0.2.3 → 0.2.4 | Erster Test mit Balken oben und Countdown (E40). |
+
 1. Den Link `…/releases/latest/download/ASK-Setup.exe` aus dem README öffnen und installieren. Erwartet: In den Einstellungen steht die aktuelle Version (z. B. «Version 0.2.1»).
 2. Einen PR mit Label `release` mergen. Erwartet: Die Prüfung «Release-Art gewählt» nennt vorher die neue Version; nach dem Merge läuft im Reiter «Actions» «Release» durch (Jobs «version» und «release»), in ASK-Releases steht die neue Version als Latest mit sechs Dateien, auf `main` liegt ein Commit «Version …».
 3. ASK neu starten. Erwartet: nach etwa 20 Sekunden «ASK <neue Version> ist da. Jetzt aktualisieren?» mit «Neu:» und dem Release-Text; «Jetzt aktualisieren», oben ein Balken «Update … wird geladen … %» (auch in der Taskleiste), dann «ASK startet in 10 s neu» mit Countdown; ASK schliesst sich, ein Fenster zeigt das Installieren, ASK startet von selbst mit der neuen Version, Chats und Ordner sind noch da. Ab der ersten Version mit Python-Archiv (E39): Das Installieren dauert Sekunden, nicht Minuten; nur beim ersten Start danach steht unten «Python wird eingerichtet (einmalig) … %».
