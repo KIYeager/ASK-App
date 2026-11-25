@@ -74,7 +74,6 @@ export default function App() {
   const [verbose, setVerbose] = useState(false);
   const [query, setQuery] = useState('');
   const [renaming, setRenaming] = useState(null);
-  const [askFailed, setAskFailed] = useState(null);
   const [activity, setActivity] = useState('Denkt nach …');
   const [browser, setBrowser] = useState(BROWSER0);
   const [browserBig, setBrowserBig] = useState(false);
@@ -199,8 +198,6 @@ export default function App() {
       a.onMenuNewFolder(() => setDialog({ name: 'project' })),
       a.onMenuGithub(() => setDialog({ name: 'github' })),
       a.onFolderError((reason) => setDialog({ name: 'terminal', text: reason })),
-      a.onAskLoaded(() => setAskFailed(null)),
-      a.onAskLoadFailed((info) => setAskFailed(info)),
       a.onBrowserState((s) => setBrowser((b) => ({ ...b, ...s }))),
       a.onServers?.((list) => setServers(list || [])),
       a.onBrowserNotice((text) => setBrowser((b) => ({ ...b, log: [...b.log, { text, level: 'warning' }].slice(-6) }))),
@@ -288,6 +285,15 @@ export default function App() {
   const ask = state?.ask || {};
   const needsLogin = !!state?.askUrl && !!state?.warningAccepted && ['nicht-angemeldet', 'unbekannt', 'pruefen'].includes(ask.state);
   const showAskPage = ask.state === 'nicht-angemeldet';
+  const loadFailed = ask.loadError || null; // Ladefehler der ASK-Seite, aus dem Status (askapi.js)
+  const [slow, setSlow] = useState(false); // «Verbinde mit ASK …» dauert ungewöhnlich lange
+  const waiting = needsLogin && !showAskPage && !loadFailed;
+  useEffect(() => {
+    setSlow(false);
+    if (!waiting) return undefined;
+    const t = setTimeout(() => setSlow(true), 15000);
+    return () => clearTimeout(t);
+  }, [waiting]);
   const leftOpen = state?.chatbarOpen !== false;
   const rightOpen = state?.sidebarOpen !== false;
   const browserActive = rightOpen && tab === 'browser' && !dialogName && !needsLogin;
@@ -455,12 +461,12 @@ export default function App() {
       api().setAskBounds({ x: r.x, y: r.y, width: r.width, height: r.height });
     };
     report();
-    api().setAskVisible(needsLogin && showAskPage && !dialogName && !askFailed);
+    api().setAskVisible(needsLogin && showAskPage && !dialogName && !loadFailed);
     const ro = new ResizeObserver(report);
     if (askHost.current) ro.observe(askHost.current);
     window.addEventListener('resize', report);
     return () => { ro.disconnect(); window.removeEventListener('resize', report); };
-  }, [needsLogin, showAskPage, dialogName, askFailed]);
+  }, [needsLogin, showAskPage, dialogName, loadFailed]);
 
   // ---------- Breiten ----------
 
@@ -581,11 +587,18 @@ export default function App() {
               </div>
               <div id="ask-host" ref={askHost} className="ask-host">
                 <div id="ask-placeholder" className="ask-placeholder">
-                  {askFailed ? (
-                    <div>
-                      <p>ASK ist nicht erreichbar ({askFailed.description}).</p>
-                      <p>Internetverbindung prüfen und dann erneut laden.</p>
+                  {loadFailed ? (
+                    <div id="ask-unreachable">
+                      <p>ASK ist nicht erreichbar ({loadFailed.description}).</p>
+                      <p>Internetverbindung prüfen und dann erneut laden. Die App versucht es auch von selbst wieder.</p>
                       <button type="button" className="btn primary" onClick={() => api().reloadAsk()}>Erneut laden</button>
+                    </div>
+                  ) : slow ? (
+                    <div id="ask-slow">
+                      <p><span className="spin" aria-hidden="true" /> {ask.state === 'pruefen' ? 'Anmeldung wird geprüft …' : 'Verbinde mit ASK …'}</p>
+                      <p>Das dauert ungewöhnlich lange. Internetverbindung prüfen und die Seite neu laden.</p>
+                      {ask.detail ? <p className="muted small">{ask.detail}</p> : null}
+                      <button type="button" className="btn primary" onClick={() => { setSlow(false); api().reloadAsk(); }}>Seite neu laden</button>
                     </div>
                   ) : <><span className="spin" aria-hidden="true" /> {ask.state === 'pruefen' ? 'Anmeldung wird geprüft …' : 'Verbinde mit ASK …'}</>}
                 </div>

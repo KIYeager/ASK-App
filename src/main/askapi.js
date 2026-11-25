@@ -254,6 +254,7 @@ function sameOrigin(url, base) {
   try { return !!url && !!base && new URL(url).origin === new URL(base).origin; } catch { return false; }
 }
 
+const RETRY_LOAD_MS = 15000; // so oft lädt die ASK-Seite nach einem Ladefehler von selbst neu
 const STALL_MS = 5 * 60 * 1000; // so lange darf ASK mitten in einer Antwort schweigen
 
 const RECHECK_MS = { 'nicht-angemeldet': 3000, unbekannt: 1000, pruefen: 500, fehler: 30000, angemeldet: 120000 };
@@ -280,14 +281,38 @@ class AskSession extends EventEmitter {
     // Konnte die ASK-Seite nicht laden (offline, Proxy, Zertifikat), meldet getURL() trotzdem die Adresse von ASK,
     // aber in der Seite steckt die Fehlerseite von Chromium: Token lesen geht dort nicht. Dann nicht prüfen, sonst
     // wird daraus «ASK: Fehler», und die Oberfläche blendet den Anmeldebereich mit «ASK ist nicht erreichbar» aus.
+    // Der Ladefehler steht im Status (loadError), nicht in einem Ereignis: Scheitert das Laden gleich beim Start,
+    // ist die Oberfläche noch nicht bereit und verpasst ein Ereignis; den Status holt sie beim Start ab (ENTSCHEIDE E53).
     this.loadFailed = false;
-    wc.on('did-fail-load', (_e, code, _desc, _url, isMainFrame) => { if (isMainFrame && code !== -3) this.loadFailed = true; });
-    wc.on('did-start-navigation', (details) => { if (details?.isMainFrame !== false) this.loadFailed = false; });
-    wc.on('did-finish-load', () => { this.loadFailed = false; this.check(true); });
+    wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
+      if (!isMainFrame || code === -3) return;
+      this.loadFailed = true;
+      this.failedAt = Date.now();
+      if (this.status.state !== 'angemeldet') this.publish({ ...this.status, loadError: { code, description, url } });
+    });
+    wc.on('did-start-navigation', (details) => { if (details?.isMainFrame !== false && !details?.isSameDocument) this.loadFailed = false; });
+    // Nach einem Ladefehler kommt für die Fehlerseite von Chromium trotzdem did-finish-load: dann bleibt der Fehler
+    wc.on('did-finish-load', () => {
+      if (this.loadFailed) return;
+      if (this.status.loadError) { const { loadError: _gone, ...rest } = this.status; this.publish(rest); }
+      this.check(true);
+    });
     wc.on('did-navigate', (_e, url) => this.navigated(url));
     wc.on('did-navigate-in-page', (_e, url) => this.navigated(url));
     clearInterval(this.timer);
-    this.timer = setInterval(() => this.check(), 2000);
+    this.timer = setInterval(() => this.tick(), 2000);
+  }
+
+  // Alle 2 Sekunden: prüfen; konnte die Seite nicht laden, alle 15 Sekunden von selbst nochmals laden
+  // (z. B. WLAN oder VPN beim Start der App noch nicht bereit)
+  tick() {
+    const wc = this.view?.webContents;
+    if (this.loadFailed && wc && !wc.isDestroyed() && this.base && Date.now() - (this.failedAt || 0) > RETRY_LOAD_MS) {
+      this.failedAt = Date.now();
+      wc.loadURL(this.base).catch(() => {}); // scheitert es wieder, meldet das did-fail-load
+      return;
+    }
+    this.check();
   }
 
   setBase(url) {
@@ -314,7 +339,13 @@ class AskSession extends EventEmitter {
     if (this.busy && force) this.again = true; // nach der laufenden Prüfung gleich nochmals
     if (!this.view || !this.base || this.busy) return this.status;
     const wc = this.view.webContents;
-    if (wc.isDestroyed() || wc.isLoading() || this.loadFailed || !sameOrigin(wc.getURL(), this.base)) return this.status;
+    if (wc.isDestroyed() || wc.isLoading() || this.loadFailed) return this.status;
+    if (!sameOrigin(wc.getURL(), this.base)) {
+      // Fertig geladen, aber nicht auf ASK (z. B. gleich zur Microsoft-Anmeldung weitergeleitet, oder eine Seite des
+      // Netzes): die Seite zeigen, statt hinter «Verbinde mit ASK …» zu warten. Angemeldet ist man dort nicht.
+      if (['unbekannt', 'pruefen'].includes(this.status.state) && /^https?:/i.test(wc.getURL())) this.publish({ state: 'nicht-angemeldet' });
+      return this.status;
+    }
     const interval = RECHECK_MS[this.status.state] ?? 30000;
     if (!force && Date.now() - this.lastCheck < interval) return this.status;
     this.lastCheck = Date.now();
@@ -323,8 +354,12 @@ class AskSession extends EventEmitter {
       let token;
       try {
         token = await wc.executeJavaScript('localStorage.token || ""', true);
-      } catch {
-        return this.status; // Seite (noch) nicht lesbar, z. B. Fehlerseite: kein Fehler von ASK, später nochmals
+      } catch (err) {
+        // Seite (noch) nicht lesbar, z. B. Fehlerseite: kein Fehler von ASK, später nochmals. Den Grund im Status
+        // mitgeben, damit die Oberfläche ihn zeigen kann, wenn das Warten zu lange dauert.
+        const detail = `Die ASK-Seite lässt sich nicht lesen: ${err?.message || err}`;
+        if (this.status.state !== 'angemeldet' && this.status.detail !== detail) this.publish({ ...this.status, detail });
+        return this.status;
       }
       if (!token) {
         this.token = '';
