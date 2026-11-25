@@ -217,3 +217,58 @@ test('Werkzeuge server_starten, server_liste, server_stoppen', async () => {
   const none = await runTool(null, 'server_starten', { befehl: 'npm run dev' }, {});
   assert.match(none.output, /nicht verfügbar/);
 });
+
+test('stop() während der Probe: apply überschreibt gestoppt nicht mit läuft', async () => {
+  const t = fakeTerminal();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const s = make(t, { probe: () => gate.then(() => true) });
+  const started = await s.start('npm run dev');
+  t.add(started.id, '  ➜  Local:   http://localhost:5173/\n');
+  const polling = s.poll(); // bleibt in der Probe hängen
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(await s.stop(started.id));
+  assert.strictEqual(s.get(started.id).state, 'gestoppt');
+  release();
+  await polling;
+  assert.strictEqual(s.get(started.id).state, 'gestoppt');
+  assert.strictEqual(s.get(started.id).ready, false);
+  assert.strictEqual(s.allowedPorts().size, 0);
+  await s.stopAll();
+});
+
+test('Zwei gleichzeitige Starts desselben Befehls starten nur einen Prozess', async () => {
+  const t = fakeTerminal();
+  const s = make(t);
+  const [a, b] = await Promise.all([s.start('node a.js'), s.start('node a.js')]);
+  assert.strictEqual(a.id, b.id);
+  assert.ok(a.existing || b.existing);
+  assert.strictEqual(t.calls.filter((c) => c.startsWith('POST /execute')).length, 1);
+  assert.strictEqual(s.running().length, 1);
+  // Gleichzeitige Starts zählen auch gegen die Höchstzahl
+  const many = await Promise.allSettled(Array.from({ length: 7 }, (_, i) => s.start(`node s${i}.js`)));
+  assert.strictEqual(many.filter((r) => r.status === 'rejected').length, 3);
+  assert.strictEqual(s.running().length, 5);
+  await s.stopAll();
+});
+
+test('Ein Fehler in einem Zuhörer löst keine unbehandelte Ablehnung aus', async () => {
+  const t = fakeTerminal();
+  const s = make(t);
+  const rejected = [];
+  const onRejected = (err) => rejected.push(err);
+  process.on('unhandledRejection', onRejected);
+  try {
+    const started = await s.start('node a.js');
+    s.on('changed', () => { throw new Error('Zuhörer kaputt'); });
+    t.add(started.id, 'Zeile\n');
+    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(rejected, []);
+    assert.strictEqual(s.polling, false);
+  } finally {
+    process.off('unhandledRejection', onRejected);
+    s.removeAllListeners('changed');
+    await s.stopAll();
+  }
+});
