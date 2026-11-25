@@ -277,7 +277,13 @@ class AskSession extends EventEmitter {
     this.view = view;
     this.session = view.webContents.session;
     const wc = view.webContents;
-    wc.on('did-finish-load', () => this.check(true));
+    // Konnte die ASK-Seite nicht laden (offline, Proxy, Zertifikat), meldet getURL() trotzdem die Adresse von ASK,
+    // aber in der Seite steckt die Fehlerseite von Chromium: Token lesen geht dort nicht. Dann nicht prüfen, sonst
+    // wird daraus «ASK: Fehler», und die Oberfläche blendet den Anmeldebereich mit «ASK ist nicht erreichbar» aus.
+    this.loadFailed = false;
+    wc.on('did-fail-load', (_e, code, _desc, _url, isMainFrame) => { if (isMainFrame && code !== -3) this.loadFailed = true; });
+    wc.on('did-start-navigation', (details) => { if (details?.isMainFrame !== false) this.loadFailed = false; });
+    wc.on('did-finish-load', () => { this.loadFailed = false; this.check(true); });
     wc.on('did-navigate', (_e, url) => this.navigated(url));
     wc.on('did-navigate-in-page', (_e, url) => this.navigated(url));
     clearInterval(this.timer);
@@ -308,13 +314,18 @@ class AskSession extends EventEmitter {
     if (this.busy && force) this.again = true; // nach der laufenden Prüfung gleich nochmals
     if (!this.view || !this.base || this.busy) return this.status;
     const wc = this.view.webContents;
-    if (wc.isDestroyed() || wc.isLoading() || !sameOrigin(wc.getURL(), this.base)) return this.status;
+    if (wc.isDestroyed() || wc.isLoading() || this.loadFailed || !sameOrigin(wc.getURL(), this.base)) return this.status;
     const interval = RECHECK_MS[this.status.state] ?? 30000;
     if (!force && Date.now() - this.lastCheck < interval) return this.status;
     this.lastCheck = Date.now();
     this.busy = true;
     try {
-      const token = await wc.executeJavaScript('localStorage.token || ""', true);
+      let token;
+      try {
+        token = await wc.executeJavaScript('localStorage.token || ""', true);
+      } catch {
+        return this.status; // Seite (noch) nicht lesbar, z. B. Fehlerseite: kein Fehler von ASK, später nochmals
+      }
       if (!token) {
         this.token = '';
         if (this.status.state !== 'nicht-angemeldet') this.publish({ state: 'nicht-angemeldet' });

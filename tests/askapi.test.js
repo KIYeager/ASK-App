@@ -230,3 +230,35 @@ test('Denkaufwand: abgelehnte Stufe durch die nächste erlaubte ersetzen', async
   await ask.chat({ model: 'm', messages: [], thinking: 'hoch' });
   assert.deepStrictEqual(sent, ['high', 'xhigh', 'xhigh'], 'einmal abgelehnt, danach gleich die erlaubte Stufe');
 });
+
+// Nachgebaute ASK-Seite (WebContents) für check()
+function fakePage({ url = 'https://ask.example.ch/auth', read }) {
+  const handlers = {};
+  const wc = {
+    on: (name, fn) => { handlers[name] = fn; },
+    isDestroyed: () => false, isLoading: () => false, getURL: () => url,
+    executeJavaScript: async () => read(),
+  };
+  const ask = new AskSession();
+  ask.setBase('https://ask.example.ch');
+  ask.attach({ webContents: { ...wc, session: {} } });
+  clearInterval(ask.timer);
+  return { ask, handlers };
+}
+
+test('ASK-Seite lädt nicht: kein «Fehler», Status bleibt, damit der Anmeldebereich «nicht erreichbar» zeigt', async () => {
+  const { ask, handlers } = fakePage({ read: () => { throw new Error('Script failed to execute'); } });
+  const seen = [];
+  ask.on('status', (s) => seen.push(s.state));
+  handlers['did-fail-load']({}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://ask.example.ch/', true);
+  assert.strictEqual((await ask.check(true)).state, 'unbekannt');
+  // auch ohne Meldung des Ladefehlers: Token nicht lesbar ist kein Fehler von ASK
+  handlers['did-start-navigation']({ isMainFrame: true });
+  assert.strictEqual((await ask.check(true)).state, 'unbekannt');
+  assert.deepStrictEqual(seen, []);
+});
+
+test('ASK-Seite geladen, ohne Token: nicht angemeldet', async () => {
+  const { ask } = fakePage({ read: () => '' });
+  assert.strictEqual((await ask.check(true)).state, 'nicht-angemeldet');
+});
