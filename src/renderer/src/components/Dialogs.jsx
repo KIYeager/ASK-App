@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
-import { baseName } from '../lib/format.js';
+import { baseName, formatCount, formatDuration } from '../lib/format.js';
 import { PreviewBody } from './RightPanel.jsx';
+import Tour from './Tour.jsx';
 
 function Dialog({ id, title, wide, full, children, actions, onClose }) {
   return (
@@ -199,7 +200,7 @@ function Segmented({ value, options, onChange, name }) {
   );
 }
 
-function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal }) {
+function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal, onUsage, onTour }) {
   const u = state.update || {};
   return (
     <Dialog id="dlg-settings" title="Einstellungen" onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Fertig</button>}>
@@ -228,6 +229,10 @@ function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal }) {
         <button type="button" className="btn" onClick={onGithub}><Icon name="github" size={15} /> GitHub …</button>
       </div>
       <div className="setting">
+        <div><div className="s-title">Nutzung</div><div className="s-text">Aufträge, Token und Dateien pro Projekt (/nutzung).</div></div>
+        <button type="button" id="settings-usage" className="btn" onClick={onUsage}><Icon name="chart" size={15} /> Nutzung …</button>
+      </div>
+      <div className="setting">
         <div><div className="s-title">Ansicht</div><div className="s-text">Gedanken und alle Details zeigen (Ctrl+O), Aufgabenliste nach dem Auftrag einklappen.</div></div>
         <div className="checks">
           <label className="check"><input type="checkbox" id="pref-verbose" checked={!!state.prefs?.verbose} onChange={(e) => onVerbose(e.target.checked)} /> Details</label>
@@ -241,12 +246,108 @@ function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal }) {
         {u.enabled ? <button type="button" id="settings-update" className="btn" onClick={() => api().updateAction()}>Nach Updates suchen</button> : null}
       </div>
       <div className="setting">
-        <div><div className="s-title">Mehr</div><div className="s-text">Meldungen des Terminals, Anmeldungen im Browser der App.</div></div>
+        <div><div className="s-title">Mehr</div><div className="s-text">Kurze Einführung, Meldungen des Terminals, Anmeldungen im Browser der App.</div></div>
         <div className="checks">
+          <button type="button" id="settings-tour" className="btn small" onClick={onTour}>Einführung zeigen</button>
           <button type="button" className="btn small" onClick={onTerminal}>Terminal …</button>
           <button type="button" className="btn small" onClick={() => api().browserClear()}>Browser-Anmeldungen löschen</button>
         </div>
       </div>
+    </Dialog>
+  );
+}
+
+// Nutzung (ENTSCHEIDE E49): Zahlen aus den Chats aller Projekte, Balken der letzten 30 Tage, Tabelle pro Projekt.
+// Der Abschnitt ASK erscheint nur, wenn ASK etwas liefert (nicht mit dem echten ASK geprüft).
+const dayLabel = (date, long) => new Date(`${date}T12:00:00`).toLocaleDateString('de-CH', long ? { weekday: 'short', day: '2-digit', month: '2-digit' } : { day: '2-digit', month: '2-digit' });
+
+function UsageChart({ days, measure }) {
+  const [hover, setHover] = useState(-1);
+  const values = days.map((d) => d[measure] || 0);
+  const max = Math.max(...values, 1);
+  const unit = measure === 'tasks' ? (v) => `${formatCount(v)} ${v === 1 ? 'Auftrag' : 'Aufträge'}` : (v) => `${formatCount(v)} Token`;
+  const sum = values.reduce((a, b) => a + b, 0);
+  const h = days[hover];
+  return (
+    <div className="u-chart">
+      <div className="u-plot" role="img" aria-label={`Letzte 30 Tage: ${unit(sum)}, höchstens ${unit(max)} an einem Tag`} onMouseLeave={() => setHover(-1)}>
+        <span className="u-max">{formatCount(max)}</span>
+        {days.map((d, i) => (
+          <div key={d.date} className={`u-col${i === hover ? ' on' : ''}`} onMouseEnter={() => setHover(i)}>
+            {values[i] ? <span className="u-bar" style={{ height: `${Math.max(2, (values[i] / max) * 100)}%` }} /> : null}
+          </div>
+        ))}
+        {h ? (
+          <div className="u-tip" style={{ left: `${((hover + 0.5) / days.length) * 100}%` }}>
+            <strong>{dayLabel(h.date, true)}</strong> {unit(h[measure])}
+            {measure === 'tasks' && h.tokens ? <span className="muted"> · {formatCount(h.tokens)} Token</span> : null}
+          </div>
+        ) : null}
+      </div>
+      <div className="u-axis"><span>{dayLabel(days[0].date)}</span><span>{dayLabel(days[Math.floor(days.length / 2)].date)}</span><span>Heute</span></div>
+    </div>
+  );
+}
+
+function UsageDialog({ onClose }) {
+  const [u, setU] = useState(null);
+  const [measure, setMeasure] = useState('tasks');
+  useEffect(() => {
+    let alive = true;
+    // zuerst nur lokal (schnell), dann mit der Anfrage an ASK
+    api().usageGet(false).then((r) => { if (alive) setU((old) => old || r); }).catch(() => {});
+    api().usageGet(true).then((r) => { if (alive && r) setU(r); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const t = u?.total;
+  const approx = (p) => (p.estimatedTokens > 0 ? '≈ ' : '');
+  const files = (p) => p.files.added + p.files.changed;
+  const a = u?.ask;
+  return (
+    <Dialog id="dlg-usage" title="Nutzung" wide onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Schliessen</button>}>
+      {!u ? <p className="muted">Lädt …</p> : (
+        <>
+          <div className="u-tiles">
+            <div className="u-tile"><div className="u-label">Aufträge</div><div className="u-num">{formatCount(t.tasks)}</div><div className="u-sub">in {formatCount(t.chats)} {t.chats === 1 ? 'Chat' : 'Chats'}</div></div>
+            <div className="u-tile"><div className="u-label">Token</div><div className="u-num">{approx(t)}{formatCount(t.tokens)}</div><div className="u-sub">{formatCount(t.steps)} Arbeitsschritte</div></div>
+            <div className="u-tile"><div className="u-label">Dateien</div><div className="u-num">{formatCount(files(t))}</div><div className="u-sub">{formatCount(t.files.added)} neu, {formatCount(t.files.changed)} geändert</div></div>
+            <div className="u-tile"><div className="u-label">Zeit</div><div className="u-num">{formatDuration(t.modelMs)}</div><div className="u-sub">Modell</div></div>
+          </div>
+          <div className="u-head">
+            <h2>Letzte 30 Tage</h2>
+            <Segmented name="Wert" value={measure} onChange={setMeasure} options={[['tasks', 'Aufträge'], ['tokens', 'Token']]} />
+          </div>
+          {u.days.some((d) => d.tasks || d.tokens) ? <UsageChart days={u.days} measure={measure} /> : <p className="muted small">In den letzten 30 Tagen noch kein Auftrag.</p>}
+          <h2>Projekte</h2>
+          {u.projects.length ? (
+            <table className="u-table">
+              <thead><tr><th>Projekt</th><th>Chats</th><th>Aufträge</th><th>Schritte</th><th>Token</th><th>Dateien</th><th>Zeit</th></tr></thead>
+              <tbody>
+                {u.projects.map((p) => (
+                  <tr key={p.folder} className={p.missing ? 'missing' : ''}>
+                    <td title={p.folder}><span className="u-proj"><span className="swatch" style={{ background: p.color || 'var(--dim)' }} /><span className="ell">{p.name}</span>{p.missing ? <span className="small">Ordner fehlt</span> : null}</span></td>
+                    <td>{formatCount(p.chats)}</td><td>{formatCount(p.tasks)}</td><td>{formatCount(p.steps)}</td>
+                    <td>{approx(p)}{formatCount(p.tokens)}</td><td>{formatCount(files(p))}</td><td>{formatDuration(p.modelMs)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <p className="muted small">Noch keine Projekte.</p>}
+          {a ? (
+            <>
+              <h2>ASK-Webseite</h2>
+              <div className="u-ask">
+                {a.webChats !== undefined ? <span><strong>{formatCount(a.webChats)}{a.more ? '+' : ''}</strong> Chats{a.webChats30 ? `, ${formatCount(a.webChats30)} in den letzten 30 Tagen` : ''}</span> : null}
+                {a.messages !== undefined ? <span><strong>{formatCount(a.messages)}</strong> Nachrichten</span> : null}
+                {a.tokens !== undefined ? <span><strong>{formatCount(a.tokens)}</strong> Token</span> : null}
+                {a.tokens === undefined && (a.inputTokens !== undefined || a.outputTokens !== undefined)
+                  ? <span><strong>{formatCount((a.inputTokens || 0) + (a.outputTokens || 0))}</strong> Token</span> : null}
+              </div>
+            </>
+          ) : null}
+          <p className="muted small">Gezählt aus den Chats in deinen Projektordnern, nur auf diesem Laptop.{t.estimatedTokens > 0 ? ' ≈ heisst teilweise geschätzt.' : ''}{a ? ' ASK-Webseite: Angaben von ASK.' : ''}</p>
+        </>
+      )}
     </Dialog>
   );
 }
@@ -259,19 +360,24 @@ function BigPreview({ entry, onClose }) {
   );
 }
 
-// Welcher Dialog offen ist: erst die Pflichtschritte (Hinweis, Adresse, erstes Projekt), sonst der gewählte
+// Welcher Dialog offen ist: erst die Pflichtschritte (Hinweis, Adresse, erstes Projekt), sonst der gewählte.
+// Danach einmal die Einführung (E49), sobald die Anmeldung bei ASK durch ist.
+const LOGIN_PENDING = ['nicht-angemeldet', 'unbekannt', 'pruefen'];
 export function activeDialog(state, dialog) {
   if (!state) return null;
   if (!state.warningAccepted) return 'warning';
   if (!state.askUrl) return 'url';
   if (!state.folder) return 'start';
-  return dialog?.name || null;
+  if (dialog?.name) return dialog.name;
+  if (state.prefs && state.prefs.tourDone === false && !LOGIN_PENDING.includes(state.ask?.state)) return 'tour';
+  return null;
 }
 
 export default function Dialogs({ state, dialog, setDialog, selected, startError, onVerbose }) {
   const name = activeDialog(state, dialog);
   if (!name) return null;
   const close = () => setDialog(null);
+  if (name === 'tour') return <Tour state={state} onDone={() => { api().setPrefs({ tourDone: true }); close(); }} />;
   return (
     <div id="overlay" className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && dialog && name === dialog.name) close(); }}>
       {name === 'warning' ? <WarningDialog /> : null}
@@ -282,7 +388,8 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
       {name === 'terminal' ? <TerminalDialog state={state} text={dialog.text} onClose={close} /> : null}
       {name === 'github' ? <GithubDialog onClose={close} /> : null}
       {name === 'settings' ? <SettingsDialog state={state} onClose={close} onGithub={() => setDialog({ name: 'github' })} onVerbose={onVerbose}
-        onTerminal={() => setDialog({ name: 'terminal' })} /> : null}
+        onTerminal={() => setDialog({ name: 'terminal' })} onUsage={() => setDialog({ name: 'usage' })} onTour={() => setDialog({ name: 'tour' })} /> : null}
+      {name === 'usage' ? <UsageDialog onClose={close} /> : null}
       {name === 'preview' ? <BigPreview entry={selected} onClose={close} /> : null}
     </div>
   );

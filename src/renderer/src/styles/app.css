@@ -484,6 +484,50 @@ button.work-head:hover { background: var(--hover); }
 .segmented button { border: 0; background: none; padding: 5px 11px; border-radius: 7px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
 .segmented button.on { background: var(--pane); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
 
+/* ---------- Nutzung (E49) ---------- */
+.u-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.u-tile { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 14px; min-width: 0; }
+.u-label { color: var(--muted); font-size: 12.5px; }
+.u-num { font-size: 22px; font-weight: 650; line-height: 1.3; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.u-sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.u-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.u-head h2 { margin: 0; }
+.u-chart { display: flex; flex-direction: column; gap: 4px; }
+.u-plot { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 120px; padding-top: 18px; border-bottom: 1px solid var(--line-2); }
+.u-plot::before { content: ""; position: absolute; left: 0; right: 0; top: 18px; border-top: 1px dashed var(--line); pointer-events: none; }
+.u-max { position: absolute; left: 0; top: 0; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.u-col { position: relative; flex: 1; height: 100%; display: flex; align-items: flex-end; border-radius: 4px 4px 0 0; }
+.u-col.on { background: var(--hover); }
+.u-bar { width: 100%; background: var(--acc); border-radius: 4px 4px 0 0; }
+.u-col.on .u-bar { filter: brightness(1.12); }
+.u-tip { position: absolute; bottom: calc(100% - 12px); transform: translateX(-50%); background: var(--pane); border: 1px solid var(--line-2); border-radius: 8px;
+  box-shadow: var(--shadow); padding: 4px 9px; font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 1; }
+.u-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.u-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+.u-table th { text-align: right; font-weight: 500; color: var(--muted); font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.u-table td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.u-table th:first-child, .u-table td:first-child { text-align: left; width: 34%; padding-left: 0; }
+.u-proj { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.u-table tr:last-child td { border-bottom: 0; }
+.u-table tr.missing td { color: var(--dim); }
+.u-ask { display: flex; flex-wrap: wrap; gap: 6px 20px; }
+.u-ask strong { font-variant-numeric: tabular-nums; }
+
+/* ---------- Einführung (E49) ---------- */
+.tour { position: fixed; inset: 0; z-index: 50; }
+.tour.dim { background: rgba(10, 16, 20, .42); }
+.tour-spot { position: fixed; border-radius: 12px; box-shadow: 0 0 0 9999px rgba(10, 16, 20, .42); outline: 2px solid var(--acc); pointer-events: none; transition: all .2s ease; }
+.tour-card { position: fixed; width: 300px; background: var(--pane); border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, .3); padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 6px; }
+.tour-card.center { left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.tour-card h1 { font-size: 16px; margin: 0; font-weight: 650; }
+.tour-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+.tour-count { font-size: 11.5px; color: var(--acc-text); font-weight: 600; letter-spacing: .03em; }
+.tour-actions { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.tour-dots { display: flex; gap: 5px; }
+.tour-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--line-2); }
+.tour-dots span.on { background: var(--acc); }
+@media (prefers-reduced-motion: reduce) { .tour-spot { transition: none; } }
+
 @media (max-width: 1100px) {
   .tabs .tab { max-width: 150px; }
   .examples { grid-template-columns: 1fr; }
@@ -570,6 +614,7 @@ button.work-head:hover { background: var(--hover); }
 
 /* Aus dem zusammengeführten Stand: Update-Balken, Chat-Menü, Treffer im Inhalt, Kontext, Bearbeiten */
 .app { grid-template-rows: 46px auto 1fr; }
+.app > .layout { grid-row: 3; } /* ohne Update-Balken bleibt die Zeile leer, statt dass die Arbeitsfläche nur so hoch wie ihr Inhalt ist */
 .update-bar { display: flex; align-items: center; gap: 10px; padding: 7px 14px; background: var(--acc-soft); color: var(--acc-text); font-size: 13px; border-bottom: 1px solid var(--acc-line); min-width: 0; }
 .update-track { width: 140px; height: 5px; border-radius: 3px; background: var(--acc-line); overflow: hidden; flex: none; }
 .update-track span { display: block; height: 100%; background: var(--acc); }

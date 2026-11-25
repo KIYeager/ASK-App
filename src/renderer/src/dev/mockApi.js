@@ -18,7 +18,7 @@ let state = {
   models: [{ id: 'qwen3-coder', name: 'Qwen3 Coder' }, { id: 'gpt-oss', name: 'GPT-OSS 120B' }], model: 'qwen3-coder',
   webSearch: false, chatMemory: false, thinking: 'mittel', webSearchAvailable: true, approvals: 'heikel', theme: 'system',
   version: '0.2.3', update: { state: params.get('update') || 'verfügbar', current: '0.2.3', version: '0.2.4', percent: 42, countdown: 7, beta: false, enabled: true, portable: false, postponed: false },
-  prefs: { verbose: false, todoCollapsed: true },
+  prefs: { verbose: false, todoCollapsed: true, tourDone: !params.get('tour') }, // ?tour=1 zeigt die Einführung
   chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null, pinned: false, context: { tokens: 18400, estimated: false, limit: 131072 } },
 };
 if (params.get('leer')) state.chat = { id: 'neu1', title: '', running: false, goal: null };
@@ -62,6 +62,23 @@ const saved = [
   { role: 'tool', id: 't5', ok: true, summary: 'Tabelle und Diagramm geprüft', output: '' },
   { role: 'assistant', content: 'Fertig. In `auswertung.xlsx` stehen die Summen pro Kategorie und ein Balkendiagramm.\n\n| Kategorie | CHF |\n|---|---:|\n| ÖV-Abo | 500.00 |\n| Freizeit | 460.75 |\n| Bücher | 411.15 |\n| Material | 266.95 |\n| Handy | 150.00 |\n| Verpflegung | 145.70 |\n| **Total** | **1’934.55** |\n\nDen alten Entwurf `entwurf_alt.xlsx` habe ich nach deiner Bestätigung gelöscht.', stats: stats(300), calls: [] },
 ];
+
+// Nutzung (E49): 30 Tage mit Beispielwerten, drei Projekte, Angaben von ASK
+function mockUsage() {
+  const days = Array.from({ length: 30 }, (_, i) => {
+    const d = new Date(now - (29 - i) * 86400000);
+    const weekend = d.getDay() === 0 || d.getDay() === 6;
+    const tasks = weekend ? (i % 3 === 0 ? 1 : 0) : [3, 5, 2, 0, 7, 4, 6, 1, 8, 3][i % 10];
+    return { date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, tasks, tokens: tasks * 2350 + (tasks ? 410 : 0) };
+  });
+  const p = (i, chats, tasks, steps, tokens, est, added, changed, removed, min) => ({ folder: projects[i].folder, name: projects[i].name, color: projects[i].color, missing: false,
+    chats, tasks, steps, tokens, estimatedTokens: est, modelMs: min * 60000, files: { added, changed, removed }, last: now - i * 86400000 });
+  const list = [p(0, 14, 61, 412, 148200, 0, 23, 17, 4, 96), p(1, 9, 38, 301, 99650, 12400, 31, 22, 6, 71), p(2, 4, 11, 46, 18800, 0, 3, 5, 0, 14)];
+  const total = list.reduce((t, x) => ({ chats: t.chats + x.chats, tasks: t.tasks + x.tasks, steps: t.steps + x.steps, tokens: t.tokens + x.tokens, estimatedTokens: t.estimatedTokens + x.estimatedTokens,
+    modelMs: t.modelMs + x.modelMs, files: { added: t.files.added + x.files.added, changed: t.files.changed + x.files.changed, removed: t.files.removed + x.files.removed }, last: Math.max(t.last, x.last) }),
+  { chats: 0, tasks: 0, steps: 0, tokens: 0, estimatedTokens: 0, modelMs: 0, files: { added: 0, changed: 0, removed: 0 }, last: 0 });
+  return { projects: list, total, days };
+}
 
 let transcriptItems = params.get('leer') || params.get('erst') ? [] : saved;
 const push = () => emit('state', { ...state });
@@ -113,6 +130,7 @@ export function install() {
     setSettings: async (v) => { state = { ...state, ...v }; push(); },
     updateAction: async () => {}, updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
     setPrefs: async (v) => { state = { ...state, prefs: { ...state.prefs, ...v } }; push(); },
+    usageGet: async (withAsk = true) => (withAsk ? (await wait(600), { ...mockUsage(), ask: params.get('ohneask') ? null : { webChats: 42, webChats30: 12 } }) : { ...mockUsage(), ask: null }),
     chatRewind: async () => ({ ok: true, text: 'Räum den Ordner auf', attachments: [] }),
     chatRename: async (_f, id, title) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.title = title; return true; },
     chatPin: async (_f, id, on) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.pinned = on; return true; },

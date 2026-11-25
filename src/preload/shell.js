@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('ask', {
   chatPin: (folder, id, on) => ipcRenderer.invoke('chat:pin', folder, id, on),
   chatSearch: (query) => ipcRenderer.invoke('chat:search', query),
   setPrefs: (values) => ipcRenderer.invoke('prefs:set', values),
+  usageGet: (withAsk = true) => ipcRenderer.invoke('usage:get', withAsk),
   chatUndo: (snapshot) => ipcRenderer.invoke('chat:undo', snapshot),
   chatStop: () => ipcRenderer.invoke('chat:stop'),
   chatApprove: (id, answer) => ipcRenderer.invoke('chat:approve', id, answer),
