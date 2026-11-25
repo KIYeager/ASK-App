@@ -100,6 +100,53 @@ async function demoRun(text) {
 let pendingAnswer = null;
 let pendingApproval = null;
 
+// GitHub: ?github=aus (nicht verbunden), ?github=leer (verbunden, kein Repository), sonst verbunden mit Beispieldaten
+const ghMode = params.get('github') || '';
+const gh = {
+  connected: ghMode !== 'aus', linked: ghMode !== 'aus' && ghMode !== 'leer', repo: 'lea-muster/haushaltsbudget', branch: 'main',
+  branches: ['main', 'diagramm-farben'], changed: ['auswertung.py'], added: ['auswertung.xlsx', 'bilder/diagramm.png'], deleted: ['entwurf_alt.xlsx'],
+  remoteNewer: true, conflicts: [],
+  pulls: [{ number: 3, title: 'Kategorien für 2027 ergänzt', url: 'https://github.com/lea-muster/haushaltsbudget/pull/3', head: 'kategorien-2027', base: 'main', user: 'lea-muster', draft: false }],
+};
+const ghUrl = () => `https://github.com/${gh.repo}`;
+const ghPending = () => gh.changed.length + gh.added.length + gh.deleted.length;
+const ghMock = {
+  githubStatus: async () => {
+    await wait(150);
+    if (!gh.connected) return { ok: true, connected: false, linked: false, login: '' };
+    if (!gh.linked) return { ok: true, connected: true, linked: false, login: 'lea-muster', trusted: [] };
+    return { ok: true, connected: true, linked: true, login: 'lea-muster', repo: gh.repo, branch: gh.branch, url: ghUrl(), changed: gh.changed, added: gh.added,
+      deleted: gh.deleted, remoteNewer: gh.remoteNewer, conflicts: gh.conflicts, trusted: [] };
+  },
+  githubConnect: async () => ({ ok: false, message: 'Nur in der App.' }),
+  githubDisconnect: async () => { gh.connected = false; },
+  githubUntrust: async () => {},
+  githubBranches: async () => ({ ok: true, current: gh.branch, default: 'main', branches: gh.branches, url: ghUrl() }),
+  githubPulls: async () => ({ ok: true, pulls: gh.pulls }),
+  githubPull: async () => { await wait(500); const was = gh.remoteNewer; gh.remoteNewer = false; return { ok: true, written: was ? ['ausgaben.csv'] : [], removed: [], conflicts: [] }; },
+  githubClone: async (repo) => { await wait(500); Object.assign(gh, { linked: true, repo, changed: [], added: [], deleted: [], remoteNewer: false }); return { ok: true, repo, written: ['README.md'], removed: [], conflicts: [] }; },
+  githubCreate: async (name) => { await wait(500); Object.assign(gh, { linked: true, repo: `lea-muster/${name}`, changed: [], added: [], deleted: [], remoteNewer: false, pulls: [] }); return { ok: true, summary: `lea-muster/${name} · 6 Dateien` }; },
+  githubPush: async () => {
+    await wait(500);
+    if (gh.remoteNewer) return { ok: false, output: 'Auf GitHub gibt es neuere Änderungen. Zuerst holen, dann nochmals hochladen.' };
+    Object.assign(gh, { changed: [], added: [], deleted: [] });
+    return { ok: true, summary: `3 hochgeladen · ${gh.repo}` };
+  },
+  githubSwitch: async (branch) => {
+    if (ghPending()) return { ok: false, message: `Nicht gewechselt: Hier gibt es ${ghPending()} Änderungen, die noch nicht hochgeladen sind. Zuerst auf ${gh.branch} hochladen oder dafür einen neuen Branch anlegen.` };
+    const from = gh.branch;
+    gh.branch = branch;
+    return { ok: true, branch, from, written: ['index.html'], removed: [], conflicts: [] };
+  },
+  githubBranchCreate: async (branch) => { gh.branches = [...gh.branches, branch]; gh.branch = branch; return { ok: true, branch, from: 'main' }; },
+  githubPrCreate: async (title) => {
+    const number = gh.pulls.length + 4;
+    const url = `${ghUrl()}/pull/${number}`;
+    gh.pulls = [...gh.pulls, { number, title, url, head: gh.branch, base: 'main', user: 'lea-muster', draft: false }];
+    return { ok: true, number, url, head: gh.branch, base: 'main' };
+  },
+};
+
 export function install() {
   window.ask = {
     getState: async () => ({ ...state }),
@@ -126,7 +173,7 @@ export function install() {
     setChatMemory: async (v) => { state = { ...state, chatMemory: v }; push(); }, setThinking: async (v) => { state = { ...state, thinking: v }; push(); },
     chatSend: async (text) => { demoRun(text); return { ok: true }; }, chatUndo: async () => ({ ok: true }), chatStop: async () => {},
     chatGoal: async () => {}, chatApprove: async (_id, a) => { pendingApproval?.(a); return true; }, chatAnswer: async (_id, t) => { pendingAnswer?.(t); return true; },
-    githubStatus: async () => ({ connected: false }), githubConnect: async () => ({ ok: false, message: 'Nur in der App.' }), githubDisconnect: async () => {}, githubUntrust: async () => {},
+    ...ghMock,
     chatNew: async () => { state = { ...state, chat: { id: `neu${Date.now()}`, title: '', running: false } }; transcriptItems = []; push(); return { ok: true }; },
     chatGroups: async () => projects.map((p) => ({ ...p, current: p.folder === state.folder })),
     chatOpen: async (_f, id) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); state = { ...state, chat: { id, title: c?.title || '', running: false } }; transcriptItems = id === 'c1' ? saved : []; push(); return { ok: true }; },

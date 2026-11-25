@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
+import GithubPane from './GithubPane.jsx';
 import { api } from '../api.js';
 import { baseName, extOf, fileBadge, fileUrl, formatSize } from '../lib/format.js';
 
@@ -282,7 +283,8 @@ function BrowserTab({ browser, active, onClose, onBig, big }) {
 
 // ---------- Panel ----------
 
-export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice }) {
+export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice,
+  running, dialogOpen, onGithub }) {
   const entry = selected ? (files.recent.find((f) => f.path === selected.path) || selected) : null;
   return (
     <aside id="sidebar" className="sidebar">
@@ -292,6 +294,7 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
         <button type="button" role="tab" aria-selected={tab === 'browser'} className={tab === 'browser' ? 'on' : ''} onClick={() => setTab('browser')}>
           <Icon name="browser" size={15} /> Browser{browser.running ? <span className="live-dot" aria-hidden="true" /> : null}
         </button>
+        <button id="tab-github" type="button" role="tab" aria-selected={tab === 'github'} className={tab === 'github' ? 'on' : ''} onClick={() => setTab('github')}><Icon name="github" size={15} /> GitHub</button>
       </div>
       <div className="rp-body">
         {tab === 'dateien' ? (
@@ -316,6 +319,7 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
           </div>
         ) : null}
         {tab === 'browser' ? <BrowserTab browser={browser} active={browserActive} onClose={onBrowserClose} onBig={onBrowserBig} big={browserBig} /> : null}
+        {tab === 'github' ? <GithubPane root={root} files={files} running={running} dialogOpen={dialogOpen} onConnect={onGithub} /> : null}
       </div>
     </aside>
   );

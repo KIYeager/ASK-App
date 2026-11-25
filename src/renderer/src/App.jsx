@@ -613,7 +613,8 @@ export default function App() {
             onSelect={setSelected} onBig={() => setDialog({ name: 'preview' })} browser={browser} browserActive={browserActive}
             onBrowserClose={() => { api().browserClose(); setBrowser(BROWSER0); setBrowserBig(false); setTab('dateien'); }}
             onBrowserBig={() => setBrowserBig(!browserBig)} browserBig={browserBig}
-            onMention={(p) => composer.current?.insert(`\`${String(p).replaceAll('\\', '/')}\``)} notice={notice} />
+            onMention={(p) => composer.current?.insert(`\`${String(p).replaceAll('\\', '/')}\``)} notice={notice}
+            running={running} dialogOpen={!!dialogName} onGithub={() => setDialog({ name: 'github' })} />
         ) : <span />}
       </main>
 
