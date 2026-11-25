@@ -172,3 +172,11 @@ test('Angaben aus dem Text des PRs', () => {
   const template = require('node:fs').readFileSync(path.join(__dirname, '..', '.github', 'pull_request_template.md'), 'utf8');
   assert.deepStrictEqual(fromPrBody(template), { wanted: '', text: '' });
 });
+
+test('Dateiversion der einzelnen EXE: immer vier Zahlen, auch bei Betas', () => {
+  const { viVersion } = require('../scripts/build-portable');
+  assert.strictEqual(viVersion('0.2.3'), '0.2.3.0');
+  assert.strictEqual(viVersion('0.2.3-beta.1'), '0.2.3.1');
+  assert.strictEqual(viVersion('1.10.0-beta.12'), '1.10.0.12');
+  assert.throws(() => viVersion('v1'), /Form/);
+});
