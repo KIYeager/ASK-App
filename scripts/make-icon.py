@@ -1,4 +1,4 @@
-"""Erzeugt resources/icon.png und resources/icon.ico (Schriftzug «ASK» auf Petrol) sowie
+"""Erzeugt resources/icon.png und resources/icon.ico (Sprechblase mit Prompt auf Petrol) sowie
 resources/splash.bmp, das Startbild der einzelnen EXE während des Entpackens."""
 import os
 
@@ -18,15 +18,33 @@ def font(size):
     return ImageFont.load_default()
 
 
+def gradient(top, bottom):
+    g = Image.new("RGBA", (SIZE, SIZE))
+    d = ImageDraw.Draw(g)
+    for y in range(SIZE):
+        t = y / (SIZE - 1)
+        d.line([(0, y), (SIZE, y)], fill=tuple(round(a + (b - a) * t) for a, b in zip(top, bottom)) + (255,))
+    return g
+
+
+def thick_line(d, pts, width, fill):
+    d.line(pts, fill=fill, width=width, joint="curve")
+    r = width / 2
+    for x, y in pts:
+        d.ellipse((x - r, y - r, x + r, y + r), fill=fill)
+
+
+# Icon: weisse Sprechblase mit Prompt «›_» auf Petrol-Verlauf. Nur Formen, keine Schrift,
+# damit das Ergebnis auf jedem Rechner gleich aussieht.
+mask = Image.new("L", (SIZE, SIZE), 0)
+ImageDraw.Draw(mask).rounded_rectangle((32, 32, SIZE - 32, SIZE - 32), radius=220, fill=255)
 img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+img.paste(gradient((18, 132, 140), (8, 78, 84)), (0, 0), mask)
 draw = ImageDraw.Draw(img)
-draw.rounded_rectangle((32, 32, SIZE - 32, SIZE - 32), radius=200, fill=BG)
-f = font(400)
-box = draw.textbbox((0, 0), "ASK", font=f)
-w, h = box[2] - box[0], box[3] - box[1]
-draw.text(((SIZE - w) / 2 - box[0], (SIZE - h) / 2 - box[1] - 20), "ASK", font=f, fill=FG)
-# Kleine Linie als Hinweis auf den Arbeitsordner/Terminal-Cursor
-draw.rounded_rectangle((SIZE / 2 - 150, 760, SIZE / 2 + 150, 800), radius=20, fill=(255, 255, 255, 200))
+draw.rounded_rectangle((200, 230, 824, 700), radius=150, fill=FG)
+draw.polygon([(330, 660), (300, 830), (480, 690)], fill=FG)
+thick_line(draw, [(360, 370), (470, 465), (360, 560)], 70, BG)
+draw.rounded_rectangle((520, 520, 670, 580), radius=24, fill=BG)
 
 img.resize((512, 512), Image.LANCZOS).save(os.path.join(ROOT, "resources", "icon.png"))
 img.save(os.path.join(ROOT, "resources", "icon.ico"), sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
