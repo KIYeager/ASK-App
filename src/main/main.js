@@ -23,6 +23,7 @@ const { Web } = require('./web');
 const { historyPrompt, search: searchChats } = require('./history');
 const { Images } = require('./bild');
 const { MODES: APPROVAL_MODES } = require('./approvals');
+const { makeReviewer } = require('./review');
 const usage = require('./usage');
 const { Servers } = require('./servers');
 const { request: terminalRequest } = require('./tools');
@@ -57,6 +58,13 @@ function makeTerminal() {
 const runtimes = new Map(); // Ordner (klein geschrieben) → { folder, terminal, workspace, servers, agents: Set }
 let terminal = makeTerminal(); // ohne Projekt: ein Terminal, das nie startet
 const ask = new AskSession();
+
+// Prüfer für den Modus «Auto»: eigenes Modell aus den Einstellungen, sonst das Modell des Chats
+const reviewer = makeReviewer({ ask, getModel: () => {
+  const wanted = settings.get('reviewModel');
+  return ask.models.some((m) => m.id === wanted) ? wanted : currentModel();
+} });
+
 let workspace = new Workspace();
 const testMode = !app.isPackaged && !!process.env.ASK_TEST_SCRIPT;
 
@@ -184,9 +192,10 @@ function makeAgent(folder, rt) {
     getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
     getSnapshots: () => snapshotsFor(folder),
     servers: rt.servers || null,
-    // Modus im Eingabefeld: Auto fragt nie nach, Nachfragen nach der Stufe in den Einstellungen
-    getApprovalMode: () => (chatMode() === 'auto' ? 'aus' : approvalMode()),
+    // Modus im Eingabefeld: Auto lässt ASK jeden Befehl prüfen (review.js), Nachfragen fragt vor jedem
+    getApprovalMode: () => 'alle',
     getMode: () => chatMode(),
+    review: reviewer,
     fileExists: (rel) => !!rt.workspace.resolve(String(rel || '')),
     // In automatischen Tests: Rückfragen erlauben, Fragen mit der ersten Antwort beantworten
     autoApprove: testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? async () => 'yes' : null,
@@ -397,6 +406,7 @@ function state() {
     version: app.getVersion(),
     approvals: approvalMode(),
     mode: chatMode(),
+    reviewModel: s.reviewModel || '',
     theme: THEMES[s.theme] ? s.theme : 'system',
     project: settings.findProject(s.folder),
   };
@@ -710,6 +720,7 @@ function setupIpc() {
     const patch = {};
     if (APPROVAL_MODES.includes(v.approvals)) patch.approvals = v.approvals;
     if (CHAT_MODES.includes(v.mode)) patch.mode = v.mode;
+    if (typeof v.reviewModel === 'string') patch.reviewModel = v.reviewModel.slice(0, 200); // '' = Modell des Chats
     if (THEMES[v.theme]) patch.theme = v.theme;
     settings.set(patch);
     if (patch.theme) applyTheme();

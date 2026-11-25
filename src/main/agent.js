@@ -211,8 +211,11 @@ function apiMessages(system, messages, textMode = false, imageUrl = null, budget
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer, getMode, retryWaits, servers }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer, getMode, retryWaits, servers, review }) {
     super();
+    // Modus «Auto»: Prüfer in ASK (review.js), beurteilt Befehle und heikle Schritte
+    this.review = review || null;
+    this.reviewedSafe = new Set(); // in diesem Chat schon als harmlos beurteilte Schritte
     this.getMode = getMode || (() => 'nachfragen'); // auto | nachfragen | plan (Eingabefeld)
     this.retryWaits = retryWaits || RETRY_WAITS;
     this.getContextLimit = getContextLimit || (() => 0); // Kontextfenster des Modells in Token, 0: unbekannt
@@ -428,6 +431,7 @@ class Agent extends EventEmitter {
   newChat() {
     if (this.running || this.undoing) return false;
     this.allowed.clear();
+    this.reviewedSafe.clear();
     this.resetModes();
     this.chat = this.blank();
     this.emit('changed');
@@ -465,6 +469,7 @@ class Agent extends EventEmitter {
     if (this.running || this.undoing || !/^[\w-]+$/.test(id)) return false;
     try {
       this.allowed.clear();
+    this.reviewedSafe.clear();
       this.resetModes();
       this.chat = JSON.parse(fs.readFileSync(path.join(this.chatDir(), `${id}.json`), 'utf8'));
       this.emit('changed');
@@ -725,14 +730,15 @@ class Agent extends EventEmitter {
   async approve(call, signal) {
     let args = {};
     try { args = JSON.parse(call.function.arguments || '{}'); } catch { return 'yes'; } // runTool meldet den Fehler
-    const risk = assessRisk(call.function.name, args, {
-      mode: this.getApprovalMode(),
-      exists: (rel) => this.fileExists(rel),
-      madeThisTurn: (rel) => this.madeThisTurn.has(normRel(rel)),
-    });
+    const ctx = { exists: (rel) => this.fileExists(rel), madeThisTurn: (rel) => this.madeThisTurn.has(normRel(rel)) };
+    // Auto: der Prüfer entscheidet; Nachfragen: Stufe aus den Einstellungen (vor jedem Befehl)
+    const risk = this.getMode() === 'auto'
+      ? await this.autoRisk(call, args, ctx, signal)
+      : assessRisk(call.function.name, args, { ...ctx, mode: this.getApprovalMode() });
+    if (signal.aborted) return 'no';
     if (!risk || this.allowed.has(risk.kind)) return 'yes';
     const id = `frage_${crypto.randomBytes(4).toString('hex')}`;
-    this.event({ type: 'approval', id, kind: risk.kind, title: risk.title, detail: risk.detail, reason: risk.reason });
+    this.event({ type: 'approval', id, kind: risk.kind, title: risk.title, detail: risk.detail, reason: risk.reason, reviewed: !!risk.reviewed });
     let answer;
     if (this.autoApprove) answer = await this.autoApprove(risk);
     else {
@@ -747,6 +753,33 @@ class Agent extends EventEmitter {
     const verdict = answer === 'yes' || answer === 'always' ? 'yes' : 'no';
     this.event({ type: 'approval-end', id, answer: verdict === 'yes' ? answer : 'no' });
     return verdict;
+  }
+
+  // Modus «Auto»: Befehle und heikle Schritte (Löschen, ausserhalb, Überschreiben) prüft ein Modell in
+  // ASK. Harmlos: ohne Rückfrage. Gefährlich: Rückfrage mit dem Grund. Ist die Prüfung nicht möglich
+  // (Fehler, keine verwertbare Antwort), gelten die festen Regeln (approvals.js, Stufe «heikel»).
+  async autoRisk(call, args, ctx, signal) {
+    const name = call.function.name;
+    const rule = assessRisk(name, args, { ...ctx, mode: 'heikel' });
+    const command = name === 'run_command' ? args.command : name === 'server_starten' ? (args.befehl || args.command) : null;
+    if (command === null && !rule) return null; // Lesen, Suchen, neue Dateien im Projekt: ohne Prüfung
+    if (!this.review) return rule;
+    const key = `${name}:${command ?? args.path ?? ''}`;
+    if (this.reviewedSafe.has(key)) return null;
+    this.event({ type: 'review', id: call.id });
+    let verdict = null;
+    try {
+      const task = [...this.chat.messages].reverse().find((m) => m.role === 'user' && !m.auto)?.content || '';
+      verdict = await this.review({ name, args, task, folder: this.getFolder(), signal });
+    } catch {
+      verdict = null;
+    }
+    if (signal.aborted) return null;
+    if (!verdict) return rule && { ...rule, reason: [rule.reason, 'Die Prüfung durch ASK war nicht möglich.'].filter(Boolean).join(' ') };
+    if (!verdict.dangerous) { this.reviewedSafe.add(key); return null; }
+    const detail = rule?.detail || String(command ?? args.path ?? '').replace(/\s+/g, ' ').slice(0, 300);
+    return { kind: rule?.kind ? `${rule.kind}:${key}` : `gefahr:${key}`, title: rule?.title || (command !== null ? 'Diesen Befehl ausführen?' : 'Diesen Schritt ausführen?'),
+      detail, reason: verdict.reason || 'ASK hält den Schritt für gefährlich.', reviewed: true };
   }
 
   // Werkzeug frage_stellen: Frage im Chat zeigen und auf die Antwort warten (answerQuestion)

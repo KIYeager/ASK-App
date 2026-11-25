@@ -173,7 +173,7 @@ export function applyEvent(model, ev) {
       return i < 0 ? model : update(model, i, (e) => ({ question: { ...e.question, open: false, answer: ev.answer } }));
     }
     case 'approval':
-      return add(model, { k: 'approval', id: ev.id, title: ev.title, detail: ev.detail || '', reason: ev.reason || '', answer: null });
+      return add(model, { k: 'approval', id: ev.id, title: ev.title, detail: ev.detail || '', reason: ev.reason || '', reviewed: !!ev.reviewed, answer: null });
     case 'approval-end': {
       const i = findIndex(model, (e) => e.k === 'approval' && e.id === ev.id);
       return i < 0 ? model : update(model, i, { answer: ev.answer || 'no' });

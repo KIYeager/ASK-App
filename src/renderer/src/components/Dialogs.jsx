@@ -210,10 +210,15 @@ function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal, onUsa
           options={[['system', 'System'], ['hell', 'Hell'], ['dunkel', 'Dunkel']]} />
       </div>
       <div className="setting">
-        <div><div className="s-title">Modus «Nachfragen»</div>
-          <div className="s-text">{{ heikel: 'Fragt vor dem Löschen, vor dem Überschreiben und vor Pfaden ausserhalb des Projekts.', alle: 'Fragt zusätzlich vor jedem Befehl und jeder Änderung.' }[state.approvals === 'alle' ? 'alle' : 'heikel']}</div></div>
-        <Segmented name="Nachfragen" value={state.approvals === 'alle' ? 'alle' : 'heikel'} onChange={(approvals) => api().setSettings({ approvals })}
-          options={[['heikel', 'Heikle Schritte'], ['alle', 'Immer']]} />
+        <div><div className="s-title">Prüfung im Modus «Auto»</div>
+          <div className="s-text">Ein Modell in ASK prüft jeden Befehl und fragt nur bei Gefährlichem. Ein schnelles Modell genügt.</div></div>
+        <label className="s-select">
+          <select id="review-model" value={state.reviewModel || ''} onChange={(e) => api().setSettings({ reviewModel: e.target.value })} aria-label="Modell für die Prüfung">
+            <option value="">Wie im Chat</option>
+            {(state.models || []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+          <Icon name="chevDown" size={13} />
+        </label>
       </div>
       <div className="setting">
         <div><div className="s-title">Frühere Chats</div><div className="s-text">ASK darf frühere Chats im selben Projekt durchsuchen und lesen (/chats).</div></div>

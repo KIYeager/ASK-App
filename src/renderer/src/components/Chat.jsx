@@ -276,6 +276,7 @@ function Approval({ entry, ctx }) {
         <div className="title">{entry.title}</div>
         {entry.detail ? <code className="cmdline">{entry.detail}</code> : null}
         {entry.reason ? <div className="reason">{entry.reason}</div> : null}
+        {entry.reviewed ? <div className="reviewed"><Icon name="shield" size={12} /> Von ASK geprüft</div> : null}
         <div className="btns">
           <button type="button" className="btn primary" onClick={() => ctx.approve(entry.id, 'yes')}>Erlauben</button>
           <button type="button" className="btn" onClick={() => ctx.approve(entry.id, 'always')}>Immer in diesem Chat</button>

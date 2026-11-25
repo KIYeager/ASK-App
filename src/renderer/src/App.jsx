@@ -153,6 +153,7 @@ export default function App() {
       case 'tool-start': setAct(ev.name === 'frage_stellen' ? 'Wartet auf deine Antwort' : `${ev.label} …`); break;
       case 'tool-end': setAct('Denkt nach …'); break;
       case 'approval': setAct('Wartet auf deine Entscheidung'); break;
+      case 'review': setAct('Prüft, ob der Schritt sicher ist …'); break;
       case 'approval-end': setAct('Denkt nach …'); break;
       case 'user':
         if (!ev.auto) { followRef.current = true; setFollow(true); }

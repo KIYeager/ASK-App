@@ -79,8 +79,8 @@ function ThinkPicker({ level, onChange }) {
 
 // Modus im Eingabefeld (ENTSCHEIDE E52); Shift+Tab wechselt der Reihe nach
 export const MODES = [
-  { id: 'auto', name: 'Auto', icon: 'bolt', text: 'Arbeitet ohne Rückfragen. Rückgängig bleibt möglich.' },
-  { id: 'nachfragen', name: 'Nachfragen', icon: 'hand', text: 'Fragt vor heiklen Schritten wie Löschen.' },
+  { id: 'auto', name: 'Auto', icon: 'bolt', text: 'ASK prüft jeden Befehl und fragt nur bei Gefährlichem.' },
+  { id: 'nachfragen', name: 'Nachfragen', icon: 'hand', text: 'Fragt vor jedem Befehl und jeder Änderung.' },
   { id: 'plan', name: 'Plan', icon: 'map', text: 'Schaut sich nur um und legt einen Plan vor.' },
 ];
 

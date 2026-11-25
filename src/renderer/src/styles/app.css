@@ -809,3 +809,11 @@ textarea.gh-input { resize: vertical; min-height: 56px; line-height: 1.45; }
 }
 .gh-pane .ghost-btn:disabled, .gh-pane .link:disabled { opacity: .45; cursor: default; }
 .gh-running { margin: 0; padding: 0 4px; }
+
+/* Auswahl in den Einstellungen (Prüfmodell) und Hinweis «geprüft von ASK» an der Rückfrage */
+.s-select { position: relative; display: inline-flex; align-items: center; color: var(--muted); flex: none; }
+.s-select select { appearance: none; border: 1px solid var(--line); border-radius: 8px; background: var(--pane); padding: 6px 28px 6px 10px; font-size: 13px; color: var(--text); max-width: 220px; cursor: pointer; }
+.s-select select:hover { border-color: var(--line-2); }
+.s-select select:focus { outline: none; border-color: var(--acc); }
+.s-select .icon { position: absolute; right: 9px; pointer-events: none; }
+.msg.approval .reviewed { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); margin-top: 6px; }
