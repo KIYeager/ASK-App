@@ -327,7 +327,7 @@ class AskSession extends EventEmitter {
       this.user = { name: user.name || user.email || '', role: user.role };
       this.webSearch = webSearchAllowed(await this.json('/api/config').catch(() => ({})), user);
       this.publish({ state: 'angemeldet', user: this.user.name });
-      if (models.length === 0) this.publish({ state: 'fehler', message: 'ASK bietet diesem Konto kein Modell an.' });
+      if (models.length === 0) this.publish({ state: 'fehler', message: 'ASK bietet diesem Konto kein Modell an. Wer ASK betreut, muss deinem Konto zuerst ein Modell freigeben.' });
       this.cleanStaleTerminal(token);
     } catch (err) {
       if (err instanceof AuthError) this.publish({ state: 'nicht-angemeldet' });

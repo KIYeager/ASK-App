@@ -21,6 +21,7 @@ let state = {
   prefs: { verbose: false, todoCollapsed: true, tourDone: !params.get('tour') }, // ?tour=1 zeigt die Einführung
   chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null, pinned: false, context: { tokens: 18400, estimated: false, limit: 131072 } },
 };
+if (params.get('askfehler')) state = { ...state, ask: { state: 'fehler', user: 'Lea Muster', message: 'ASK bietet diesem Konto kein Modell an. Wer ASK betreut, muss deinem Konto zuerst ein Modell freigeben.' }, models: [], model: '' }; // ?askfehler=1
 if (params.get('leer')) state.chat = { id: 'neu1', title: '', running: false, goal: null };
 if (params.get('erst')) state = { ...state, folder: '', chat: { id: 'neu1', title: '', running: false } };
 
