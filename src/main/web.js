@@ -70,8 +70,15 @@ function checkUrl(raw, allowLocal = false) {
     throw new Error(`Keine gültige Adresse: ${raw}`);
   }
   if (!/^https?:$/.test(url.protocol)) throw new Error('Nur http- und https-Adressen.');
-  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  const local = host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host === '::1' || host.startsWith('fe80:')
+  // Schreibweisen vereinheitlichen: «localhost.» (Punkt am Ende) und IPv4 in IPv6 (::ffff:7f00:1)
+  let host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '');
+  const mapped = /^(?:0*:)*:?ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host) || /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(host);
+  if (mapped) {
+    host = mapped[2] !== undefined
+      ? [parseInt(mapped[1], 16) >> 8, parseInt(mapped[1], 16) & 255, parseInt(mapped[2], 16) >> 8, parseInt(mapped[2], 16) & 255].join('.')
+      : mapped[1];
+  }
+  const local = host === 'localhost' || host === '::' || /^[0:]+$/.test(host) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host) || host.endsWith('.localhost') || host.endsWith('.local') || host === '::1' || host.startsWith('fe80:')
     || /^(127|10|0)\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)
     || /^(fc|fd)[0-9a-f]{2}:/.test(host) || !host.includes('.') && !host.includes(':');
   if (local && !allowLocal) throw new Error('Adressen im lokalen Netz oder auf diesem Rechner sind gesperrt.');

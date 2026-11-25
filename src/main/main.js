@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage, nativeImage, BrowserWindow, session } = require('electron');
+const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage, nativeImage, nativeTheme, BrowserWindow, session } = require('electron');
 const settings = require('./settings');
 const paths = require('./paths');
 const { checkFolder } = require('./folders');
@@ -20,6 +20,9 @@ const { Visual } = require('./visual');
 const { Web } = require('./web');
 const { historyPrompt } = require('./history');
 const { Images } = require('./bild');
+const { MODES: APPROVAL_MODES } = require('./approvals');
+const { Updater } = require('./updater');
+const { appCacheRoot } = require('./portable');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -119,7 +122,27 @@ const agent = new Agent({
   getImageUrl: (attachment) => imageUrl(agent.getFolder(), attachment, nativeResize(nativeImage)),
   getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
   getSnapshots: () => snapshotsFor(agent.getFolder()),
+  getApprovalMode: () => approvalMode(),
+  fileExists: (rel) => !!workspace.resolve(String(rel || '')),
+  // In automatischen Tests: Rückfragen erlauben, Fragen mit der ersten Antwort beantworten
+  autoApprove: testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? async () => 'yes' : null,
+  autoAnswer: testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? async (q) => q.optionen[0] || 'ja' : null,
 });
+
+// Updates (updater.js): Adresse aus resources/app-config.json
+const portable = app.isPackaged && !!appCacheRoot() && path.resolve(process.execPath).toLowerCase().startsWith(appCacheRoot().toLowerCase());
+const updater = new Updater({ version: app.getVersion(), url: settings.appConfig().updateUrl, packaged: app.isPackaged, portable,
+  fetchImpl: (url, options) => net.fetch(url, options) });
+
+function approvalMode() {
+  const mode = settings.get('approvals');
+  return APPROVAL_MODES.includes(mode) ? mode : 'heikel';
+}
+
+const THEMES = { system: 'system', hell: 'light', dunkel: 'dark' };
+function applyTheme() {
+  nativeTheme.themeSource = THEMES[settings.get('theme')] || 'system';
+}
 
 // Sicherung des Arbeitsordners (snapshot.js), eine Instanz pro Ordner
 let snapshots = null;
@@ -147,11 +170,25 @@ const TEXT_EXT = new Set(['.txt', '.md', '.csv', '.json', '.py', '.js', '.html',
   '.yaml', '.ini', '.toml', '.bat', '.ps1', '.sql', '.tsv', '.java', '.c', '.cpp', '.h', '.ts']);
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const OFFICE_EXT = new Set(['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.odt', '.ods', '.odp']);
+const SAFE_OPEN = new Set([...OFFICE_EXT, ...IMAGE_EXT, '.pdf', '.txt', '.md', '.csv', '.json', '.xml', '.log', '.html', '.htm', '.css',
+  '.py', '.java', '.c', '.cpp', '.h', '.ts', '.yml', '.yaml', '.toml', '.ini', '.sql', '.tsv', '.mp3', '.mp4', '.wav', '.zip'].filter((e) => e !== '.svg'));
+
+function readStart(file, bytes) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(bytes);
+    const n = fs.readSync(fd, buf, 0, bytes, 0);
+    return buf.subarray(0, n);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 function readInstruction(name, folder, chat = 'allgemein') {
   try {
     const text = fs.readFileSync(path.join(paths.instructionsDir(), name), 'utf8');
-    return text.replaceAll('{ordner}', folder).replaceAll('{ordnername}', path.basename(folder)).replaceAll('{chat}', chat);
+    // Ersetzen mit Funktion: Ein «$» im Ordnernamen ist sonst ein Ersetzungsmuster
+    return text.replaceAll('{ordner}', () => folder).replaceAll('{ordnername}', () => path.basename(folder)).replaceAll('{chat}', () => chat);
   } catch {
     return '';
   }
@@ -197,6 +234,11 @@ function state() {
     thinking: thinkingLevel(),
     webSearchAvailable: !!ask.webSearch,
     chat: agent.state(),
+    approvals: approvalMode(),
+    theme: THEMES[s.theme] ? s.theme : 'system',
+    version: app.getVersion(),
+    update: updater.status,
+    project: settings.findProject(s.folder),
   };
 }
 
@@ -212,11 +254,15 @@ function pushState() {
 
 const sameFolder = (a, b) => !!a && !!b && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 
-// Linke Leiste: Chats der zuletzt verwendeten Ordner, der aktuelle zuerst.
+// Linke Leiste: Projekte (ein Projekt = ein Arbeitsordner) mit ihren Chats. Ein Ordner, den es nicht
+// mehr gibt, bleibt sichtbar (missing), damit man ihn entfernen kann.
 function chatGroups() {
-  const { folder, recent } = settings.load();
-  const folders = [folder, ...recent.filter((f) => !sameFolder(f, folder))].filter((f) => f && fs.existsSync(f));
-  return folders.map((f) => ({ folder: f, name: path.basename(f), current: sameFolder(f, folder), chats: agent.list(f) }));
+  const { folder, projects } = settings.load();
+  return projects.map((p) => {
+    const exists = fs.existsSync(p.folder);
+    return { folder: p.folder, name: p.name, color: p.color, current: sameFolder(p.folder, folder), missing: !exists,
+      chats: exists ? agent.list(p.folder) : [] };
+  });
 }
 
 // Chat (id oder NEW) in einem Ordner öffnen; bei anderem Ordner zuerst wechseln.
@@ -232,18 +278,48 @@ async function openChat(folder, id) {
   return res;
 }
 
-async function openFolder(folder) {
+// Ordner öffnen (wird Projekt, falls noch keines). Nicht während eines Auftrags: Der laufende Chat
+// würde sonst in den neuen Ordner gespeichert. Erst nach erfolgreicher Vorbereitung als aktuell merken.
+async function openFolder(folder, name = '') {
+  if (agent.running) return { ok: false, reason: 'Das Modell arbeitet noch. Zuerst stoppen, dann das Projekt wechseln.' };
   const result = checkFolder(folder);
   if (!result.ok) return result;
-  settings.addRecent(result.path);
+  const previous = workspace.root;
   try {
     workspace.open(result.path);
   } catch (err) {
+    try { if (previous) workspace.open(previous); else workspace.close(); } catch { workspace.close(); }
     return { ok: false, reason: `Der Ordner kann nicht vorbereitet werden: ${err.message}` };
   }
+  settings.addRecent(result.path, name);
+  if (sameFolder(result.path, chatFolder)) chatFolder = null; // gleicher Ordner neu: letzten Chat wieder öffnen
   pushState();
   startTerminal();
   return { ok: true, path: result.path };
+}
+
+// Neues Projekt: Ordner unter ASK-Projekte mit dem Namen des Projekts
+function projectBase() {
+  return path.join(process.env.USERPROFILE || app.getPath('home'), 'ASK-Projekte');
+}
+
+function safeFolderName(name) {
+  const clean = String(name || '').replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ').replace(/[. ]+$/, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  return /^(con|prn|aux|nul|com\d|lpt\d)$/i.test(clean) ? `${clean}-Projekt` : clean;
+}
+
+async function newProject(name) {
+  const base = projectBase();
+  const title = String(name || '').trim() || `Projekt ${new Date().toISOString().slice(0, 10)}`;
+  const folderName = safeFolderName(title) || 'Projekt';
+  let target = path.join(base, folderName);
+  for (let i = 2; fs.existsSync(target); i++) target = path.join(base, `${folderName} (${i})`);
+  try {
+    fs.mkdirSync(target, { recursive: true });
+  } catch (err) {
+    return { ok: false, reason: `Der Ordner kann nicht angelegt werden: ${err.message}` };
+  }
+  return openFolder(target, title);
 }
 
 function startTerminal() {
@@ -297,26 +373,59 @@ function browserAddress(text) {
 // Ordner aus der Liste nehmen. Beim aktuellen Ordner auch Terminal und Beobachtung beenden.
 function forgetFolder(f) {
   const current = sameFolder(f, settings.get('folder'));
+  if (current && agent.running) return false;
   settings.removeRecent(f);
   if (current) {
     workspace.close();
     terminal.stop();
+    chatFolder = null;
   }
   pushState();
+  appWindow?.send('chat:changed', agent.state());
+  return true;
 }
+
+// Menü eines Projekts in der Seitenleiste (Rechtsklick oder «…»)
+function projectMenu(folder) {
+  const project = settings.findProject(folder);
+  if (!project) return;
+  const exists = fs.existsSync(folder);
+  const items = [];
+  if (exists) items.push({ label: 'Neuer Chat', click: () => openChat(folder, NEW).then((res) => { if (res && res.ok === false && res.reason) appWindow.send('folder:error', res.reason); }) });
+  items.push({ label: 'Umbenennen …', click: () => appWindow.send('project:rename', folder) });
+  items.push({ label: 'Farbe', submenu: settings.PROJECT_COLORS.map((c) => ({ label: COLOR_NAMES[c] || c, type: 'radio', checked: project.color === c,
+    click: () => { settings.updateProject(folder, { color: c }); appWindow.send('chat:groups-changed'); } })) });
+  items.push({ type: 'separator' });
+  if (exists) {
+    items.push({ label: 'Im Explorer öffnen', click: () => shell.openPath(folder) });
+    items.push({ label: 'Projektnotizen bearbeiten', click: () => openNotes(folder) });
+    if (sameFolder(folder, settings.get('folder'))) items.push({ label: 'GitHub …', click: () => appWindow.send('menu:github') });
+    items.push({ type: 'separator' });
+  }
+  items.push({ label: 'Aus der Liste entfernen', click: async () => {
+    if (await confirm('Projekt aus der Liste entfernen?', `${project.name}\n${folder}\n\nDer Ordner und seine Dateien bleiben erhalten. Du kannst ihn später wieder öffnen.`)) {
+      if (!forgetFolder(folder)) appWindow.send('folder:error', 'Das Modell arbeitet noch in diesem Projekt. Zuerst stoppen.');
+      appWindow.send('chat:groups-changed');
+    }
+  } });
+  Menu.buildFromTemplate(items).popup({ window: appWindow.win });
+}
+
+const COLOR_NAMES = { '#0082B4': 'TF Blau', '#F28855': 'Orange', '#4EB68E': 'Grün', '#EE716D': 'Rot', '#60C5E2': 'Hellblau', '#A2CE8D': 'Hellgrün', '#A5ACAE': 'Grau' };
 
 // Ordner-Menü. Ein Ordner, den es nicht mehr gibt, lässt sich nicht öffnen (das Terminal startet nicht):
 // Er ist markiert, und ein Klick bietet an, ihn aus der Liste zu nehmen.
 function folderMenuItems() {
-  const { recent, folder } = settings.load();
+  const { projects, folder } = settings.load();
+  const recent = projects.map((p) => p.folder);
   const items = recent.map((f) => (fs.existsSync(f)
-    ? { label: f, type: 'radio', checked: f === folder,
+    ? { label: f, type: 'radio', checked: sameFolder(f, folder),
       click: () => openFolder(f).then((res) => { if (!res.ok) appWindow.send('folder:error', res.reason); }) }
     : { label: `${f} (nicht gefunden)`,
       click: async () => { if (await confirm('Ordner nicht gefunden', `${f}\n\nDiesen Eintrag aus der Liste entfernen?`)) forgetFolder(f); } }));
   if (items.length) items.push({ type: 'separator' });
   items.push({ label: 'Anderen Ordner wählen …', click: () => ipcMain.emit('folder:choose-from-menu') });
-  items.push({ label: 'Neuen Projektordner anlegen', click: () => appWindow.send('menu:new-folder') });
+  items.push({ label: 'Neues Projekt …', click: () => appWindow.send('menu:new-folder') });
   items.push({ label: 'GitHub …', click: () => appWindow.send('menu:github') });
   if (folder || recent.length) items.push({ type: 'separator' });
   if (folder) {
@@ -347,19 +456,32 @@ function setupIpc() {
     if (res.canceled || !res.filePaths[0]) return { ok: false, canceled: true };
     return openFolder(res.filePaths[0]);
   });
-  ipcMain.handle('folder:new', async () => {
-    const base = path.join(process.env.USERPROFILE || app.getPath('home'), 'ASK-Projekte');
-    const date = new Date().toISOString().slice(0, 10);
-    let target = path.join(base, `Projekt ${date}`);
-    for (let i = 2; fs.existsSync(target); i++) target = path.join(base, `Projekt ${date} (${i})`);
-    fs.mkdirSync(target, { recursive: true });
-    return openFolder(target);
-  });
+  ipcMain.handle('folder:new', (_e, name) => newProject(name));
   ipcMain.handle('folder:open', (_e, folder) => openFolder(folder));
-  ipcMain.handle('folder:forget', (_e, folder) => {
-    settings.removeRecent(folder);
+  ipcMain.handle('folder:forget', (_e, folder) => forgetFolder(String(folder || '')));
+  ipcMain.handle('project:menu', (_e, folder) => projectMenu(String(folder || '')));
+  ipcMain.handle('project:update', (_e, folder, patch) => {
+    const ok = settings.updateProject(String(folder || ''), patch || {});
+    pushState();
+    return ok;
+  });
+  ipcMain.handle('settings:set', (_e, values) => {
+    const v = values || {};
+    const patch = {};
+    if (APPROVAL_MODES.includes(v.approvals)) patch.approvals = v.approvals;
+    if (THEMES[v.theme]) patch.theme = v.theme;
+    settings.set(patch);
+    if (patch.theme) applyTheme();
     pushState();
   });
+  ipcMain.handle('chat:approve', (_e, id, answer) => agent.answerApproval(id, answer));
+  ipcMain.handle('chat:answer', (_e, id, text) => agent.answerQuestion(id, text));
+  ipcMain.handle('update:check', () => updater.check());
+  ipcMain.handle('update:install', () => updater.install());
+  ipcMain.handle('update:download', () => {
+    if (/^https:\/\//i.test(updater.status.download)) shell.openExternal(updater.status.download);
+  });
+  ipcMain.handle('workspace:list', (_e, rel) => workspace.list(String(rel || '')));
   ipcMain.handle('folder:menu', () => {
     Menu.buildFromTemplate(folderMenuItems()).popup({ window: appWindow.win });
   });
@@ -409,11 +531,13 @@ function setupIpc() {
   });
   ipcMain.handle('model:set', (_e, id) => {
     settings.set({ model: String(id) });
+    if (!agent.running) agent.resetModes(); // ein anderes Modell kann Werkzeuge und Bilder wieder
     pushState();
   });
   // Anhänge zuerst nach .ask/anhaenge/<Chat>/ speichern; scheitert das, geht nichts an das Modell.
   ipcMain.handle('chat:send', (_e, text, files) => {
     if (agent.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' };
+    if (agent.undoing) return { ok: false, reason: 'Der Ordner wird gerade zurückgesetzt. Einen Moment.' };
     let attachments = [];
     if (Array.isArray(files) && files.length) {
       const folder = agent.getFolder();
@@ -462,7 +586,7 @@ function setupIpc() {
   ipcMain.handle('ask:reload', () => {
     const wc = appWindow.view.webContents;
     const url = settings.get('askUrl');
-    if (url && !wc.getURL().startsWith(new URL(url).origin)) wc.loadURL(url);
+    if (url && !wc.getURL().startsWith(new URL(url).origin)) wc.loadURL(url).catch(() => {}); // Fehler meldet did-fail-load
     else wc.reload();
   });
   ipcMain.handle('ui:chatbar', (_e, open) => {
@@ -510,15 +634,21 @@ function setupIpc() {
     if (ext === '.pdf') return { kind: 'pdf', url };
     if (OFFICE_EXT.has(ext)) return { kind: 'office', name: path.basename(full) };
     if (TEXT_EXT.has(ext) || size < 200000) {
-      const buf = fs.readFileSync(full).subarray(0, 200000);
+      const buf = readStart(full, 200000); // nur den Anfang lesen, auch bei sehr grossen Dateien
       if (!buf.includes(0)) return { kind: 'text', text: buf.toString('utf8'), truncated: size > 200000 };
     }
     return { kind: 'other', name: path.basename(full) };
   });
+  // Öffnen mit dem zugehörigen Programm nur für Dokumente, Bilder und Text. Programme und Skripte
+  // (.bat, .exe, .lnk, .vbs …) würden sonst ausserhalb der Sperre laufen: die zeigt der Explorer.
   ipcMain.handle('file:open', (_e, rel) => {
     const full = workspace.resolve(rel);
-    if (full) return shell.openPath(full);
-    return 'nicht gefunden';
+    if (!full) return 'nicht gefunden';
+    if (!SAFE_OPEN.has(path.extname(full).toLowerCase())) {
+      shell.showItemInFolder(full);
+      return 'im Explorer gezeigt';
+    }
+    return shell.openPath(full);
   });
   ipcMain.handle('file:show', (_e, rel) => {
     const full = workspace.resolve(rel);
@@ -549,13 +679,18 @@ let chatFolder = null;
 function wireEvents() {
   terminal.on('port', (port) => settings.set({ port }));
   terminal.on('state', (snap) => {
-    if (snap.state === 'läuft' && snap.folder !== chatFolder) {
+    if (snap.state === 'läuft' && !sameFolder(snap.folder, chatFolder)) {
       chatFolder = snap.folder;
       agent.openLatest(pendingChat);
-      pendingChat = null;
     }
+    if (snap.state === 'läuft' || snap.state === 'fehler') pendingChat = null; // nicht in den nächsten Wechsel mitnehmen
     pushState();
   });
+  // Frage oder Rückfrage des Modells: Fenster in der Taskleiste aufblinken lassen, wenn es im Hintergrund ist
+  agent.on('event', (ev) => {
+    if ((ev.type === 'approval' || ev.type === 'question') && appWindow && !appWindow.win.isFocused()) appWindow.win.flashFrame(true);
+  });
+  updater.on('status', () => pushState());
   ask.on('status', (s) => {
     if (s.state === 'angemeldet') images.discover();
     else if (s.state === 'nicht-angemeldet') images.forget();
@@ -579,6 +714,7 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(() => {
+  applyTheme();
   setupProtocol();
   setupIpc();
   appWindow = new AppWindow();
@@ -599,20 +735,31 @@ app.whenReady().then(() => {
     visual.closeRenderer(); // unsichtbare Fenster halten die App sonst offen
     app.quit();
   });
+  appWindow.win.on('focus', () => appWindow?.win.flashFrame(false));
   if (singleInstance) cleanupOldVersions();
+  if (singleInstance) updater.start();
   if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) {
     require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, ask, agent, workspace, settings, openFolder, pushState, folderMenuItems });
   }
 });
+
+// Beim Beenden den laufenden Auftrag stoppen und abwarten, bis er gespeichert ist (höchstens 5 s)
+async function waitForAgent(ms = 5000) {
+  const end = Date.now() + ms;
+  while (agent.running && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+}
 
 app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
   agent.stop();
-  visual.closeRenderer();
-  workspace.close();
-  terminal.stop().finally(() => app.quit());
+  updater.stop();
+  waitForAgent().finally(() => {
+    visual.closeRenderer();
+    workspace.close();
+    terminal.stop().finally(() => app.quit());
+  });
 });
 
 app.on('window-all-closed', () => app.quit());

@@ -80,7 +80,14 @@ class Terminal extends EventEmitter {
   }
 
   // options: { folder, preferredPort, origin, systemPrompt, executeDescription }
-  async start(options) {
+  // Starts nacheinander: Zwei gleichzeitige Aufrufe (Doppelklick, Adresse und Neustart) liessen sonst
+  // einen verwaisten Python-Prozess zurück.
+  start(options) {
+    this.queue = (this.queue || Promise.resolve()).then(() => this.startNow(options), () => this.startNow(options));
+    return this.queue;
+  }
+
+  async startNow(options) {
     await this.stop();
     const generation = ++this.generation;
     this.folder = options.folder;
@@ -132,8 +139,12 @@ class Terminal extends EventEmitter {
       if (this.state === 'fehler') throw new Error(this.error);
       if (!this.backend.running()) throw new Error(this.error || 'Das Terminal hat sich beim Start beendet.');
       try {
-        this.info = await getJson(this.port, '/ask/info', this.key, 1500);
+        const info = await getJson(this.port, '/ask/info', this.key, 1500);
+        if (generation !== this.generation) return; // inzwischen neu gestartet oder gestoppt
+        this.info = info;
+        this.healthFails = 0;
         this.setState('läuft');
+        clearInterval(this.healthTimer);
         this.healthTimer = setInterval(() => this.checkHealth(generation), 10000);
         return;
       } catch {
@@ -143,12 +154,24 @@ class Terminal extends EventEmitter {
     throw new Error('Das Terminal antwortet nicht.');
   }
 
+  // Erst nach drei verpassten Antworten in Folge gilt das Terminal als ausgefallen (es kann mit einer
+  // grossen Umwandlung beschäftigt sein); antwortet es wieder, läuft es wieder.
   async checkHealth(generation) {
-    if (generation !== this.generation || this.state !== 'läuft') return;
+    if (generation !== this.generation) return;
+    if (this.state !== 'läuft' && !(this.state === 'fehler' && this.healthDown)) return;
     try {
-      await getJson(this.port, '/health', null, 3000);
+      await getJson(this.port, '/health', null, 5000);
+      if (generation !== this.generation) return;
+      this.healthFails = 0;
+      if (this.state === 'fehler' && this.healthDown && this.backend.running()) {
+        this.healthDown = false;
+        this.setState('läuft');
+      }
     } catch {
-      if (generation === this.generation && this.state === 'läuft') {
+      if (generation !== this.generation || this.state !== 'läuft') return;
+      this.healthFails = (this.healthFails || 0) + 1;
+      if (this.healthFails >= 3) {
+        this.healthDown = true;
         this.setState('fehler', 'Das Terminal antwortet nicht mehr.');
       }
     }
@@ -156,6 +179,7 @@ class Terminal extends EventEmitter {
 
   async stop() {
     this.generation++;
+    this.healthDown = false;
     clearInterval(this.healthTimer);
     await this.backend.stop();
     if (this.state !== 'gestoppt') this.setState('gestoppt');

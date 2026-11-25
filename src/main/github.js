@@ -16,6 +16,18 @@ const MAX_FILES = 3000;
 const SKIP = /^(\.ask|\.git|node_modules|__pycache__|\.venv)(\/|$)/i;
 const LINK = path.join('.ask', 'github.json');
 
+// Pfad von GitHub sicher in den Ordner übersetzen. Abgelehnt: Rückwärtsstriche, Laufwerke, «..»,
+// Punkte oder Leerzeichen am Ende eines Teils (Windows schneidet sie ab) und alles, was am Ende
+// doch ausserhalb des Ordners oder in .ask landen würde.
+function localPath(root, p) {
+  const parts = String(p).split('/');
+  if (!p || /[\\:\u0000]/.test(p) || parts.some((x) => !x || x === '.' || x === '..' || /[. ]$/.test(x))) return null;
+  const full = path.join(root, ...parts);
+  const rel = path.relative(root, full);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || SKIP.test(rel.split(path.sep).join('/'))) return null;
+  return full;
+}
+
 // Git-Prüfsumme einer Datei, wie git hash-object
 function blobSha(buffer) {
   return crypto.createHash('sha1').update(`blob ${buffer.length}\0`).update(buffer).digest('hex');
@@ -189,13 +201,19 @@ class GitHub {
     const written = [];
     const removed = [];
     const conflicts = [];
+    const skipped = [];
+    // Windows unterscheidet Gross- und Kleinschreibung nicht: lokale Dateien auch so nachschlagen
+    const lower = new Map([...local].map(([k, v]) => [k.toLowerCase(), v]));
     for (const [p, sha] of Object.entries(remote.files)) {
       if (SKIP.test(p)) continue;
-      const mine = local.get(p);
+      const full = localPath(root, p);
+      if (!full) { skipped.push(p); continue; }
+      const mine = local.has(p) ? local.get(p) : lower.get(p.toLowerCase());
       if (mine === sha) { files[p] = sha; continue; }
+      // Hier gelöscht, auf GitHub unverändert: gelöscht lassen (wird beim Hochladen auch dort gelöscht)
+      if (mine === undefined && known[p] === sha) continue;
       if (mine === undefined || mine === known[p]) {
         const blob = await this.request('GET', `/repos/${link.repo}/git/blobs/${sha}`);
-        const full = path.join(root, ...p.split('/'));
         fs.mkdirSync(path.dirname(full), { recursive: true });
         fs.writeFileSync(full, Buffer.from(blob.content, 'base64'));
         files[p] = sha;
@@ -208,7 +226,8 @@ class GitHub {
       if (remote.files[p] || SKIP.test(p)) continue;
       const mine = local.get(p);
       if (mine === undefined || mine === known[p]) {
-        if (mine !== undefined) fs.rmSync(path.join(root, ...p.split('/')), { force: true });
+        const full = localPath(root, p);
+        if (mine !== undefined && full) fs.rmSync(full, { force: true });
         delete files[p];
         if (mine !== undefined) removed.push(p);
       } else {
@@ -216,7 +235,7 @@ class GitHub {
       }
     }
     this.writeLink(root, { ...link, commit: remote.commit, files });
-    return { written, removed, conflicts, commit: remote.commit };
+    return { written, removed, conflicts, skipped, commit: remote.commit };
   }
 
   // Ordner als Commit hochladen. Gibt es auf GitHub Neueres, zuerst pull.
@@ -262,4 +281,4 @@ class GitHub {
   }
 }
 
-module.exports = { GitHub, blobSha, listLocal, parseRepo, SKIP };
+module.exports = { GitHub, blobSha, listLocal, parseRepo, SKIP, localPath };

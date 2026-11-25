@@ -19,7 +19,7 @@ class AppWindow {
 
     this.win = new BrowserWindow({
       width: 1440, height: 920, minWidth: 960, minHeight: 600,
-      title: 'ASK', icon: paths.iconFile(), backgroundColor: '#141414', show: false, autoHideMenuBar: true,
+      title: 'ASK', icon: paths.iconFile(), backgroundColor: require('electron').nativeTheme.shouldUseDarkColors ? '#16191b' : '#ffffff', show: false, autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(paths.preloadDir(), 'shell.js'),
         contextIsolation: true, sandbox: true, plugins: true, spellcheck: false,
@@ -29,7 +29,13 @@ class AppWindow {
     this.win.once('ready-to-show', () => this.win.show());
     this.win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     this.win.webContents.on('will-navigate', (e) => e.preventDefault());
-    this.win.loadFile(path.join(paths.rendererDir(), 'index.html'));
+    this.win.webContents.on('did-fail-load', (_e, code, desc, url, main) => {
+      if (main && code !== -3) console.error(`Oberfläche nicht geladen (${desc}): ${url}. Zuerst «npm run build:ui».`);
+    });
+    // Entwicklung mit Vite: ASK_DEV_UI=http://localhost:5173 lädt die Oberfläche vom Dev-Server
+    const devUi = !require('electron').app.isPackaged && /^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(process.env.ASK_DEV_UI || '');
+    if (devUi) this.win.loadURL(process.env.ASK_DEV_UI).catch(() => {});
+    else this.win.loadFile(path.join(paths.rendererDir(), 'index.html')).catch(() => {});
 
     this.askSession = session.fromPartition(ASK_PARTITION);
     this.setupAskSession();
@@ -134,7 +140,7 @@ class AppWindow {
   loadAsk(url) {
     this.askOrigin = new URL(url).origin;
     const current = this.view.webContents.getURL();
-    if (!current || !current.startsWith(this.askOrigin)) this.view.webContents.loadURL(url);
+    if (!current || !current.startsWith(this.askOrigin)) this.view.webContents.loadURL(url).catch(() => {}); // did-fail-load zeigt den Fehler
   }
 
   setAskBounds(bounds) {

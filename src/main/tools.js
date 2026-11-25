@@ -81,6 +81,7 @@ async function runCommand(terminal, args, { signal, onProgress }) {
   const blocked = blockedCommand(command);
   if (blocked) return { ok: false, output: blocked, summary: 'abgelehnt' };
   const limit = Math.min(Math.max(Number(args.wait) || 120, 5), 600);
+  if (signal?.aborted) throw new Error('abgebrochen');
   const started = await request(terminal, 'POST', `/execute?${q({ wait: POLL_SECONDS })}`, { command });
   if (started.status !== 200 || !started.json) throw fail(started);
   let data = started.json;
@@ -89,6 +90,11 @@ async function runCommand(terminal, args, { signal, onProgress }) {
   let offset = data.next_offset ?? (data.output || []).length;
   const end = Date.now() + limit * 1000;
   const kill = () => request(terminal, 'DELETE', `/execute/${encodeURIComponent(id)}`).catch(() => {});
+  // Gestoppt, während der Start noch lief: der Befehl läuft schon und muss beendet werden
+  if (signal?.aborted && data.status === 'running') {
+    await kill();
+    throw new Error('abgebrochen');
+  }
   signal?.addEventListener('abort', kill, { once: true });
   try {
     while (data.status === 'running' && Date.now() < end) {
@@ -339,7 +345,8 @@ TOOLS.push(
     parameters: { type: 'object', properties: { repo: { type: 'string', description: 'besitzer/name oder GitHub-Adresse' } }, required: ['repo'] },
     run: githubTool(async (gh, folder, a) => {
       const r = await gh.clone(folder, a.repo);
-      const output = `Geholt von ${r.repo}: ${r.written.length} Dateien.${r.conflicts.length ? ` Nicht überschrieben, weil hier schon anders vorhanden: ${list(r.conflicts)}.` : ''}`;
+      const output = `Geholt von ${r.repo}: ${r.written.length} Dateien.${r.conflicts.length ? ` Nicht überschrieben, weil hier schon anders vorhanden: ${list(r.conflicts)}.` : ''}`
+        + `${r.skipped?.length ? ` Übersprungen (Name unter Windows nicht möglich oder gesperrt): ${list(r.skipped)}.` : ''}`;
       return { ok: true, output, summary: `${r.written.length} Dateien von ${r.repo}${r.conflicts.length ? ` · ${r.conflicts.length} Konflikte` : ''}` };
     }),
   },
@@ -352,7 +359,8 @@ TOOLS.push(
     run: githubTool(async (gh, folder) => {
       const r = await gh.pull(folder);
       const output = [`Geholt: ${list(r.written)}`, `Gelöscht (auf GitHub entfernt): ${list(r.removed)}`,
-        r.conflicts.length ? `Konflikte (hier und auf GitHub geändert, nichts überschrieben): ${list(r.conflicts)}. Die Person entscheiden lassen.` : 'Keine Konflikte.'].join('\n');
+        r.conflicts.length ? `Konflikte (hier und auf GitHub geändert, nichts überschrieben): ${list(r.conflicts)}. Die Person entscheiden lassen.` : 'Keine Konflikte.',
+        r.skipped?.length ? `Übersprungen (Name unter Windows nicht möglich oder gesperrt): ${list(r.skipped)}.` : ''].filter(Boolean).join('\n');
       return { ok: true, output, summary: `${r.written.length} geholt${r.removed.length ? `, ${r.removed.length} gelöscht` : ''}${r.conflicts.length ? ` · ${r.conflicts.length} Konflikte` : ''}` };
     }),
   },

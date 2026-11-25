@@ -315,10 +315,19 @@ class AskSession extends EventEmitter {
       ...options,
       headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json', ...(options.headers || {}) },
     });
-    if (res.status === 401 || res.status === 403) {
+    // Nur 401 heisst «Anmeldung abgelaufen». Ein 403 meldet Open WebUI auch, wenn das Konto ein Modell
+    // oder eine Funktion nicht nutzen darf; dann bleibt man angemeldet und sieht die Meldung.
+    if (res.status === 401) {
       this.token = '';
       this.publish({ state: 'nicht-angemeldet' });
       throw new AuthError('Die Anmeldung bei ASK ist abgelaufen. Bitte neu anmelden.');
+    }
+    if (res.status === 403) {
+      let detail = '';
+      try { detail = (await res.clone().json()).detail || ''; } catch { /* kein JSON */ }
+      const err = new Error(`ASK verweigert den Zugriff${detail ? `: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : ''}. Vielleicht ist das Modell oder die Funktion für dein Konto nicht freigegeben.`);
+      err.status = 403;
+      throw err;
     }
     return res;
   }
@@ -390,7 +399,7 @@ class AskSession extends EventEmitter {
     this.token = '';
     if (this.view) {
       await this.view.webContents.executeJavaScript('localStorage.removeItem("token")', true).catch(() => {});
-      this.view.webContents.loadURL(`${this.base}/auth`);
+      this.view.webContents.loadURL(`${this.base}/auth`).catch(() => {});
     }
     this.publish({ state: 'nicht-angemeldet' });
   }

@@ -4,13 +4,19 @@
 const path = require('node:path');
 
 const buildDir = require('./src/main/build-dir').buildDir();
+let updateUrl = '';
+try { updateUrl = require('./resources/app-config.json').updateUrl || ''; } catch { /* ohne Updates */ }
 
 module.exports = {
   appId: 'ch.tfbern.ask',
   productName: 'ASK',
   copyright: 'TF Bern',
   directories: { output: path.join(buildDir, 'dist') },
-  files: ['src/**/*', 'package.json'],
+  // Oberfläche nur gebaut (src/renderer/dist, «npm run build:ui»), ohne Quellen
+  files: ['src/main/**/*', 'src/preload/**/*', 'src/vendor/**/*', 'src/renderer/dist/**/*', 'package.json'],
+  // Updates (ENTSCHEIDE E34): mit updateUrl in resources/app-config.json entstehen latest.yml und
+  // die Angaben für electron-updater. Die Dateien aus dist dann auf diesen Server legen.
+  publish: updateUrl ? [{ provider: 'generic', url: updateUrl }] : null,
   extraResources: [
     { from: path.join(buildDir, 'python'), to: 'python' },
     { from: 'python/ask_terminal', to: 'ask_terminal', filter: ['*.py'] },

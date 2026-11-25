@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const paths = require('./paths');
 const { cleanupWorkDirs, hideFolder } = require('./cleanup');
-const { Snapshots } = require('./snapshot');
+const { Snapshots, busy: snapshotBusy } = require('./snapshot');
 
 const ASK_DIR = '.ask';
 const MAX_ENTRIES = 300;
@@ -112,9 +112,12 @@ class Workspace extends EventEmitter {
     this.root = folder;
     fs.mkdirSync(path.join(folder, ASK_DIR), { recursive: true });
     hideFolder(path.join(folder, ASK_DIR));
-    setTimeout(() => { // nicht beim Öffnen bremsen
+    // nicht beim Öffnen bremsen; beim Schliessen oder Wechseln abbrechen. Nicht während einer Sicherung
+    // aufräumen (busy), sonst gehen Objekte verloren, auf die die neue Sicherung noch verweisen wird.
+    this.cleanupTimer = setTimeout(() => {
+      if (this.root !== folder) return;
       cleanupWorkDirs(folder);
-      try { new Snapshots(folder).prune(); } catch { /* beim nächsten Mal */ }
+      try { if (!snapshotBusy(folder)) new Snapshots(folder).prune(); } catch { /* beim nächsten Mal */ }
     }, 2000);
     fs.rmSync(path.join(folder, ASK_DIR, 'auftraege'), { recursive: true, force: true });
     this.syncSkills();
@@ -132,6 +135,9 @@ class Workspace extends EventEmitter {
     if (this.watcher) this.watcher.close();
     this.watcher = null;
     clearTimeout(this.timer);
+    clearTimeout(this.cleanupTimer);
+    for (const t of this.orderTimers?.values() || []) clearTimeout(t);
+    this.orderTimers = new Map();
     this.root = '';
   }
 
@@ -155,8 +161,14 @@ class Workspace extends EventEmitter {
   onChange(name) {
     if (['skills', 'chats', 'skripte', 'arbeit', 'anhaenge', 'sicherung'].some((sub) => name.startsWith(path.join(ASK_DIR, sub)))) return;
     if (/^\.ask[\\/]auftraege[\\/][0-9a-f]{6,32}\.json$/i.test(name)) {
+      // Erst melden, wenn die Datei eine Weile unverändert ist: sonst wäre sie vielleicht halb geschrieben
       const file = path.join(this.root, name);
-      if (fs.existsSync(file)) this.emit('auftrag', file);
+      this.orderTimers = this.orderTimers || new Map();
+      clearTimeout(this.orderTimers.get(file));
+      this.orderTimers.set(file, setTimeout(() => {
+        this.orderTimers.delete(file);
+        if (fs.existsSync(file)) this.emit('auftrag', file);
+      }, 300));
       return;
     }
     if (name.startsWith(path.join(ASK_DIR, 'auftraege')) || name.startsWith(path.join(ASK_DIR, 'pdf'))) return;
@@ -187,6 +199,32 @@ class Workspace extends EventEmitter {
     } catch (err) {
       return err.code === 'ENOENT' ? null : { fehler: 'tasks.json ist gerade nicht lesbar', aufgaben: [] };
     }
+  }
+
+  // Inhalt eines Unterordners für den Dateibaum (rel '' = Arbeitsordner), Ordner zuerst
+  list(rel = '') {
+    if (!this.root) return { ok: false, entries: [] };
+    const dir = rel ? this.resolve(rel) : fs.realpathSync.native(this.root);
+    if (!dir) return { ok: false, entries: [] };
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return { ok: false, entries: [] };
+    }
+    const out = [];
+    for (const entry of entries) {
+      if (out.length >= MAX_ENTRIES || HIDDEN.test(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      try {
+        const stat = fs.statSync(full);
+        out.push({ path: path.join(rel, entry.name), name: entry.name, dir: stat.isDirectory(), size: stat.size, modified: stat.mtimeMs });
+      } catch {
+        // gerade gelöscht oder gesperrt
+      }
+    }
+    out.sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name, 'de'));
+    return { ok: true, entries: out, more: entries.length > MAX_ENTRIES };
   }
 
   // Absoluter Pfad zu einer Datei im Arbeitsordner, oder null, wenn sie ausserhalb liegt.

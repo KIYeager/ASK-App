@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { toolSpecs, runTool, describe, clip } = require('./tools');
 const { parseTextToolCalls } = require('./askapi');
+const { assessRisk } = require('./approvals');
 
 // Keine feste Schrittgrenze für normale Aufträge; der Schleifenschutz (loopReason) hält ein
 // festgefahrenes Modell an. MAX_STEPS ist nur die Notbremse.
@@ -15,13 +16,34 @@ const SAME_CALL_LIMIT = 3; // derselbe Aufruf so oft hintereinander
 const FAIL_LIMIT = 8; // so viele fehlgeschlagene Werkzeugaufrufe hintereinander
 const GOAL_IDLE_LIMIT = 2; // Ziel-Modus: so oft ohne Arbeitsschritt anstossen
 const GOAL_NUDGE = 'Das Ziel ist noch nicht erreicht. Arbeite selbständig weiter. Ist es erreicht, rufe goal_done auf. '
-  + 'Brauchst du wirklich eine Antwort der Person, stell die Frage kurz.';
+  + 'Brauchst du wirklich eine Antwort der Person, frag mit frage_stellen.';
 const GOAL_TOOL = {
   type: 'function',
   function: {
     name: 'goal_done',
     description: 'Meldet, dass das Ziel dieses Chats vollständig erreicht ist. Erst aufrufen, wenn alles erledigt und geprüft ist.',
     parameters: { type: 'object', properties: { zusammenfassung: { type: 'string', description: 'Was erreicht wurde, ein bis zwei Sätze' } }, required: ['zusammenfassung'] },
+  },
+};
+
+// Werkzeug frage_stellen: Das Modell fragt die Person im Chat und wartet auf die Antwort (wie
+// AskUserQuestion in Claude Code). Die App zeigt die Frage mit Antworten zum Anklicken und einem Feld
+// für eine eigene Antwort; auch eine Eingabe im normalen Eingabefeld gilt als Antwort.
+const QUESTION_TOOL = {
+  type: 'function',
+  function: {
+    name: 'frage_stellen',
+    description: 'Stellt der Person eine Frage und wartet auf ihre Antwort. Nur, wenn für den Auftrag wirklich eine Entscheidung oder Angabe der Person fehlt. '
+      + 'Gib wenn möglich 2 bis 4 kurze Antworten zum Anklicken an; die Person kann immer auch frei antworten.',
+    parameters: {
+      type: 'object',
+      properties: {
+        frage: { type: 'string', description: 'Die Frage, kurz und klar, in der Du-Form' },
+        optionen: { type: 'array', items: { type: 'string' }, description: 'Antworten zum Anklicken, je höchstens ein paar Wörter (optional, höchstens 6)' },
+        mehrfach: { type: 'boolean', description: 'true, wenn mehrere Antworten gewählt werden dürfen' },
+      },
+      required: ['frage'],
+    },
   },
 };
 
@@ -37,6 +59,7 @@ const CHAT_DIR = path.join('.ask', 'chats');
 const NEW = 'neu'; // openLatest: leeren Chat beginnen
 const { WORK_DIRS } = require('./cleanup'); // unter .ask, je ein Unterordner pro Chat
 
+const normRel = (p) => String(p || '').trim().replace(/^\.?[\\/]+/, '').replaceAll('\\', '/').toLowerCase();
 const newId = () => `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${crypto.randomBytes(3).toString('hex')}`;
 
 // Steckt das Modell in einer Schleife? Betrachtet nur den laufenden Auftrag (seit der letzten Eingabe).
@@ -111,8 +134,17 @@ function apiMessages(system, messages, textMode = false, imageUrl = null) {
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getApprovalMode, fileExists, autoApprove, autoAnswer }) {
     super();
+    // Rückfrage vor heiklen Schritten (approvals.js): Stufe aus den Einstellungen, offene Fragen nach id
+    this.getApprovalMode = getApprovalMode || (() => 'aus');
+    this.fileExists = fileExists || (() => false);
+    this.autoApprove = autoApprove || null; // nur in automatischen Tests
+    this.approvals = new Map();
+    this.questions = new Map(); // offene Fragen des Modells (frage_stellen) nach Werkzeug-id
+    this.autoAnswer = autoAnswer || null; // nur in automatischen Tests
+    this.allowed = new Set(); // «Immer in diesem Chat», pro Art (loeschen, ueberschreiben, …)
+    this.madeThisTurn = new Set(); // in diesem Auftrag vom Modell geschriebene Dateien
     this.images = images || null; // bild_erstellen mit Flux (bild.js), nur wenn ASK das Werkzeug anbietet
     this.getChatMemory = getChatMemory || (() => false); // Schalter «Chats»: frühere Chats lesen (history.js)
     this.web = web || null; // web_search und web_fetch (web.js)
@@ -148,7 +180,7 @@ class Agent extends EventEmitter {
   }
 
   state() {
-    return { id: this.chat.id, title: this.chat.title, running: this.running, textMode: this.textMode, goal: this.chat.goal || null };
+    return { id: this.chat.id, title: this.chat.title, running: this.running, undoing: !!this.undoing, textMode: this.textMode, goal: this.chat.goal || null };
   }
 
   // /goal: Ziel des Chats. Das Modell arbeitet weiter, bis es goal_done aufruft (siehe send).
@@ -168,9 +200,19 @@ class Agent extends EventEmitter {
     const dir = this.chatDir();
     if (!dir || this.chat.messages.length === 0) return;
     this.chat.updated = Date.now();
+    // Erst in eine Zwischendatei, dann umbenennen: Ein Absturz mitten im Schreiben lässt sonst
+    // eine halbe Datei zurück, und der ganze Chat wäre weg.
+    const file = path.join(dir, `${this.chat.id}.json`);
+    const tmp = `${file}.${process.pid}.tmp`;
     try {
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, `${this.chat.id}.json`), JSON.stringify(this.chat));
+      fs.writeFileSync(tmp, JSON.stringify(this.chat));
+      try {
+        fs.renameSync(tmp, file);
+      } catch {
+        fs.rmSync(tmp, { force: true }); // Virenscanner o. Ä.: direkt schreiben
+        fs.writeFileSync(file, JSON.stringify(this.chat));
+      }
     } catch {
       // Ordner nicht beschreibbar: Chat bleibt nur im Speicher
     }
@@ -198,8 +240,16 @@ class Agent extends EventEmitter {
     }).filter(Boolean).sort((a, b) => b.updated - a.updated);
   }
 
+  // Neuer Chat oder anderer Chat: Rückfallmodi neu prüfen (Textmodus, keine Bilder)
+  resetModes() {
+    this.textMode = false;
+    this.noImages = false;
+  }
+
   newChat() {
-    if (this.running) return false;
+    if (this.running || this.undoing) return false;
+    this.allowed.clear();
+    this.resetModes();
     this.chat = this.blank();
     this.emit('changed');
     return true;
@@ -207,7 +257,7 @@ class Agent extends EventEmitter {
 
   // Beim Ordnerwechsel: gewünschten Chat (id oder NEW) oder sonst den letzten Chat des Ordners öffnen.
   openLatest(wanted = null) {
-    if (this.running) this.stop();
+    if (this.running || this.undoing) return; // Ordnerwechsel sind während eines Auftrags gesperrt (main.js)
     if (wanted && wanted !== NEW && this.open(wanted)) return;
     const latest = wanted === NEW ? null : this.list()[0];
     if (!latest || !this.open(latest.id)) {
@@ -233,8 +283,10 @@ class Agent extends EventEmitter {
   }
 
   open(id) {
-    if (this.running || !/^[\w-]+$/.test(id)) return false;
+    if (this.running || this.undoing || !/^[\w-]+$/.test(id)) return false;
     try {
+      this.allowed.clear();
+      this.resetModes();
       this.chat = JSON.parse(fs.readFileSync(path.join(this.chatDir(), `${id}.json`), 'utf8'));
       this.emit('changed');
       return true;
@@ -254,13 +306,14 @@ class Agent extends EventEmitter {
   // attachments: bereits in .ask/anhaenge/<Chat>/ gespeicherte Anhänge (siehe attachments.js)
   async send(text, attachments = []) {
     text = String(text || '').trim();
-    if ((!text && !attachments.length) || this.running) return;
+    if ((!text && !attachments.length) || this.running || this.undoing) return;
     if (!this.chat.title) this.chat.title = (text || attachments.map((a) => a.name).join(', ')).replace(/\s+/g, ' ').slice(0, 80);
     const message = { role: 'user', content: text, time: Date.now() };
     if (attachments.length) message.attachments = attachments;
     this.push(message);
     this.event({ type: 'user', text, attachments });
     this.turnSources = { read: [], found: [] }; // web_fetch und web_search in diesem Auftrag
+    this.madeThisTurn = new Set();
     this.running = true;
     this.controller = new AbortController();
     const { signal } = this.controller;
@@ -318,7 +371,7 @@ class Agent extends EventEmitter {
     const memory = !!this.getChatMemory();
     const flux = !!this.images?.available();
     const offered = (name) => (memory || !name.startsWith('chat_')) && (flux || name !== 'bild_erstellen');
-    const specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => offered(s.function.name)), ...(goal ? [GOAL_TOOL] : [])];
+    const specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => offered(s.function.name)), QUESTION_TOOL, ...(goal ? [GOAL_TOOL] : [])];
     let sentImages = false;
     const request = () => {
       const system = this.getSystemPrompt(this.chat.id) + (goal ? goalPrompt(goal) : '') + (this.textMode ? textModePrompt(specs) : '');
@@ -397,8 +450,14 @@ class Agent extends EventEmitter {
       }
       const started = Date.now();
       this.event({ type: 'tool-start', id: call.id, name: call.function.name, ...this.describeCall(call) });
-      const result = call.function.name === 'goal_done'
+      const verdict = await this.approve(call, signal);
+      const result = verdict !== 'yes'
+        ? { ok: false, summary: 'abgelehnt', output: signal.aborted ? 'Von der Person abgebrochen.'
+          : 'Die Person hat diesen Schritt abgelehnt. Mach ohne ihn weiter oder frag kurz nach, was sie stattdessen möchte.' }
+        : call.function.name === 'goal_done'
         ? this.finishGoal(call.function.arguments)
+        : call.function.name === 'frage_stellen'
+        ? await this.askQuestion(call, signal)
         : await runTool(this.terminal, call.function.name, call.function.arguments, {
           signal,
           onProgress: (output) => this.event({ type: 'tool-progress', id: call.id, output: clip(output, 4000) }),
@@ -415,6 +474,9 @@ class Agent extends EventEmitter {
           confirm: this.confirm,
         });
       const images = result.images || [];
+      if (result.ok !== false && call.function.name === 'write_file') {
+        try { this.madeThisTurn.add(normRel(JSON.parse(call.function.arguments || '{}').path)); } catch { /* ohne Pfad */ }
+      }
       if (result.sources && this.turnSources) this.turnSources[call.function.name === 'web_fetch' ? 'read' : 'found'].push(...result.sources);
       this.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: result.output, ok: result.ok,
         summary: result.summary, display: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, textMode, ms: Date.now() - started });
@@ -428,6 +490,85 @@ class Agent extends EventEmitter {
         attachments: seen.flatMap((s) => s.images).map((p) => ({ path: p, name: path.basename(p), image: true })) });
     }
     return false;
+  }
+
+  // Rückfrage vor heiklen Schritten: 'yes' oder 'no'. Wartet auf die Antwort der Person im Chat
+  // (answerApproval); Stoppen gilt als Nein.
+  async approve(call, signal) {
+    let args = {};
+    try { args = JSON.parse(call.function.arguments || '{}'); } catch { return 'yes'; } // runTool meldet den Fehler
+    const risk = assessRisk(call.function.name, args, {
+      mode: this.getApprovalMode(),
+      exists: (rel) => this.fileExists(rel),
+      madeThisTurn: (rel) => this.madeThisTurn.has(normRel(rel)),
+    });
+    if (!risk || this.allowed.has(risk.kind)) return 'yes';
+    const id = `frage_${crypto.randomBytes(4).toString('hex')}`;
+    this.event({ type: 'approval', id, kind: risk.kind, title: risk.title, detail: risk.detail, reason: risk.reason });
+    let answer;
+    if (this.autoApprove) answer = await this.autoApprove(risk);
+    else {
+      answer = await new Promise((resolve) => {
+        const onAbort = () => resolve('no');
+        signal.addEventListener('abort', onAbort, { once: true });
+        this.approvals.set(id, (a) => { signal.removeEventListener('abort', onAbort); resolve(a); });
+      });
+    }
+    this.approvals.delete(id);
+    if (answer === 'always') this.allowed.add(risk.kind);
+    const verdict = answer === 'yes' || answer === 'always' ? 'yes' : 'no';
+    this.event({ type: 'approval-end', id, answer: verdict === 'yes' ? answer : 'no' });
+    return verdict;
+  }
+
+  // Werkzeug frage_stellen: Frage im Chat zeigen und auf die Antwort warten (answerQuestion)
+  async askQuestion(call, signal) {
+    let args = {};
+    try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* unten */ }
+    const frage = String(args.frage || args.question || '').trim();
+    if (!frage) return { ok: false, output: 'frage fehlt.', summary: 'ohne Frage' };
+    const optionen = (Array.isArray(args.optionen) ? args.optionen : Array.isArray(args.options) ? args.options : [])
+      .map((o) => String(typeof o === 'object' && o ? o.text || o.label || '' : o).trim()).filter(Boolean).slice(0, 6);
+    const id = call.id;
+    this.event({ type: 'question', id, frage, optionen, mehrfach: !!args.mehrfach });
+    let answer;
+    if (this.autoAnswer) answer = await this.autoAnswer({ frage, optionen });
+    else {
+      answer = await new Promise((resolve) => {
+        const onAbort = () => resolve(null);
+        signal.addEventListener('abort', onAbort, { once: true });
+        this.questions.set(id, (a) => { signal.removeEventListener('abort', onAbort); resolve(a); });
+      });
+    }
+    this.questions.delete(id);
+    if (answer === null || answer === undefined) {
+      this.event({ type: 'question-end', id, answer: '' });
+      return { ok: false, output: 'Die Person hat nicht geantwortet (gestoppt).', summary: 'nicht beantwortet' };
+    }
+    const text = String(answer).trim() || '(leer)';
+    this.event({ type: 'question-end', id, answer: text });
+    return { ok: true, output: `Antwort der Person: ${text}`, summary: clip(text, 200), display: `Frage: ${frage}\nAntwort: ${text}` };
+  }
+
+  // Antwort der Person auf eine Frage des Modells
+  answerQuestion(id, text) {
+    const resolve = this.questions.get(String(id));
+    if (!resolve) return false;
+    resolve(String(text ?? '').slice(0, 4000));
+    return true;
+  }
+
+  // Offene Frage oder Rückfrage (für die Oberfläche nach dem Neuladen)
+  pending() {
+    return { questions: [...this.questions.keys()], approvals: [...this.approvals.keys()] };
+  }
+
+  // Antwort der Person auf eine Rückfrage: 'yes' | 'always' | 'no'
+  answerApproval(id, answer) {
+    const resolve = this.approvals.get(String(id));
+    if (!resolve) return false;
+    resolve(['yes', 'always', 'no'].includes(answer) ? answer : 'no');
+    return true;
   }
 
   // Darf das Modell Bilder bekommen? (ASK meldet Bildfähigkeit nicht ab und hat keine abgelehnt)
@@ -464,8 +605,22 @@ class Agent extends EventEmitter {
   }
 
   // Ordner auf den Stand vor einem Auftrag zurücksetzen (nach Rückfrage). Das Modell erfährt es im Verlauf.
+  // Während des Zurücksetzens (Rückfrage, Sicherung, Kopieren) startet kein Auftrag und kein anderer Chat.
   async undo(id) {
     if (this.running) return { ok: false, reason: 'Es läuft gerade ein Auftrag.' };
+    if (this.undoing) return { ok: false, reason: 'Es wird schon zurückgesetzt.' };
+    this.undoing = true;
+    try {
+      return await this.undoNow(id);
+    } catch (err) {
+      return { ok: false, reason: `Zurücksetzen nicht möglich: ${err.message}` };
+    } finally {
+      this.undoing = false;
+      this.emit('changed');
+    }
+  }
+
+  async undoNow(id) {
     const message = this.chat.messages.find((m) => m.role === 'user' && m.snapshot === id);
     const snapshots = this.getSnapshots();
     if (!message || !snapshots) return { ok: false, reason: 'Zu diesem Auftrag gibt es keine Sicherung.' };
@@ -473,7 +628,7 @@ class Agent extends EventEmitter {
     try {
       d = await snapshots.diff(id);
     } catch {
-      return { ok: false, reason: 'Die Sicherung gibt es nicht mehr (sie wird nach 14 Tagen gelöscht).' };
+      return { ok: false, reason: 'Die Sicherung gibt es nicht mehr (sie wird nach 14 Tagen gelöscht) oder ist nicht lesbar.' };
     }
     const total = d.changed.length + d.added.length + d.removed.length;
     if (!total) return { ok: false, reason: 'Seit diesem Auftrag hat sich im Ordner nichts geändert.' };
@@ -508,6 +663,10 @@ class Agent extends EventEmitter {
   describeCall(call) {
     let args = {};
     try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* roh */ }
+    if (call.function.name === 'frage_stellen') {
+      const optionen = Array.isArray(args.optionen) ? args.optionen.map((o) => String(o).trim()).filter(Boolean).slice(0, 6) : [];
+      return { label: 'Frage', detail: String(args.frage || ''), optionen };
+    }
     return describe(call.function.name, args);
   }
 

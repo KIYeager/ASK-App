@@ -20,7 +20,7 @@ module.exports = {
   instructionsDir: () => resources('anweisungen'),
   appConfigFile: () => resources('app-config.json'),
   iconFile: () => resources('icon.ico'),
-  rendererDir: () => path.join(repoRoot, 'src', 'renderer'),
+  rendererDir: () => path.join(repoRoot, 'src', 'renderer', 'dist'), // gebaut mit «npm run build:ui» (Vite)
   preloadDir: () => path.join(repoRoot, 'src', 'preload'),
   // Laufzeitdaten des Terminals (temporäre Dateien, Logs). Muss lokal sein, nicht im Roaming-Profil.
   runtimeDir: () => (!app.isPackaged && process.env.ASK_RUNTIME_DIR)

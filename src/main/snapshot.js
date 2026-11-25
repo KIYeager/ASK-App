@@ -18,7 +18,18 @@ const sha1 = (data) => crypto.createHash('sha1').update(data).digest('hex');
 const newId = () => `${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
 
 // Dateien im Ordner: { 'pfad/datei': { size, mtime } } mit / als Trenner
-async function listFiles(root) {
+// Ordner, in denen gerade gesichert wird: prune wartet dann (workspace.js)
+const busyRoots = new Map();
+const busy = (root) => (busyRoots.get(path.resolve(root).toLowerCase()) || 0) > 0;
+function mark(root, delta) {
+  const key = path.resolve(root).toLowerCase();
+  const n = (busyRoots.get(key) || 0) + delta;
+  if (n > 0) busyRoots.set(key, n); else busyRoots.delete(key);
+}
+
+// limit: Sichern bricht bei zu vielen Dateien ab; Vergleichen und Zurücksetzen nicht, sonst ginge
+// «Rückgängig» nicht mehr, sobald ein Auftrag viele Dateien erzeugt hat.
+async function listFiles(root, limit = MAX_FILES) {
   const out = {};
   let count = 0;
   const walk = async (dir) => {
@@ -34,7 +45,7 @@ async function listFiles(root) {
       if (SKIP.test(rel)) continue;
       if (entry.isDirectory()) await walk(full);
       else if (entry.isFile()) {
-        if (++count > MAX_FILES) throw new Error(`Mehr als ${MAX_FILES} Dateien im Ordner, die App sichert ihn nicht.`);
+        if (++count > limit) throw new Error(`Mehr als ${MAX_FILES} Dateien im Ordner, die App sichert ihn nicht.`);
         try {
           const st = await fsp.stat(full);
           out[rel] = { size: st.size, mtime: st.mtimeMs };
@@ -97,6 +108,15 @@ class Snapshots {
 
   // Stand des Ordners sichern. Liefert { id, count, skipped } (skipped: zu gross oder gesperrt).
   async take(label = '') {
+    mark(this.root, 1);
+    try {
+      return await this.takeNow(label);
+    } finally {
+      mark(this.root, -1);
+    }
+  }
+
+  async takeNow(label) {
     const current = await listFiles(this.root);
     if (!this.last) this.last = this.newest(); // nach einem Neustart: Prüfsummen des letzten Stands
     const before = this.last?.files || {};
@@ -120,7 +140,7 @@ class Snapshots {
   // Was hat sich seit einem Stand geändert? { changed, added, removed } (Pfade)
   async diff(id) {
     const stand = this.read(id);
-    const current = await listFiles(this.root);
+    const current = await listFiles(this.root, Infinity);
     const out = { changed: [], added: [], removed: [] };
     for (const [rel, info] of Object.entries(current)) {
       const old = stand.files[rel];
@@ -143,7 +163,12 @@ class Snapshots {
   async restore(id) {
     const stand = this.read(id);
     const d = await this.diff(id);
-    const safety = await this.take('vor Rückgängig');
+    let safety = null;
+    try {
+      safety = await this.take('vor Rückgängig');
+    } catch {
+      // zu viele Dateien: ohne Zwischensicherung zurücksetzen
+    }
     const failed = [];
     for (const rel of d.added) {
       try {
@@ -165,7 +190,7 @@ class Snapshots {
       }
     }
     this.last = null;
-    return { ...d, failed, safety: safety.id };
+    return { ...d, failed, safety: safety?.id || null };
   }
 
   async removeEmptyParents(rel) {
@@ -210,4 +235,4 @@ class Snapshots {
   }
 }
 
-module.exports = { Snapshots, listFiles, STORE, MAX_FILE, KEEP_DAYS };
+module.exports = { Snapshots, listFiles, busy, STORE, MAX_FILE, KEEP_DAYS };
