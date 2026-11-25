@@ -56,11 +56,43 @@ npm run dist:portable
 
 Tests: siehe [Testprotokoll](docs/TESTPROTOKOLL.md), Abschnitt «Tests wiederholen».
 
+Lokal bauen braucht es nur noch zum Ausprobieren. Veröffentlichte Versionen baut GitHub (nächster Abschnitt).
+
+## Neue Version veröffentlichen
+
+Ein Befehl im Projektordner, Version wie `0.2.0` und ein kurzer Text, was neu ist (erscheint im Update-Dialog der App):
+
+```powershell
+npm run release -- 0.2.0 "Updates kommen jetzt automatisch"
+```
+
+Das Skript (`scripts/release.js`) prüft, dass alles committet ist und die Version grösser ist als die aktuelle, setzt sie in `package.json` und `package-lock.json`, macht den Commit «Version 0.2.0» und den Tag `v0.2.0` mit dem Text und lädt beides hoch. Den Rest macht der Workflow `.github/workflows/release.yml` auf einem Windows-Rechner von GitHub, rund 15 bis 20 Minuten: npm-Pakete, Unit-Tests, Python, Installer, einzelne EXE, dann ein Release im öffentlichen Repository [KIYeager/ASK-Releases](https://github.com/KIYeager/ASK-Releases) mit `ASK-Setup-<Version>.exe`, `.blockmap`, `latest.yml`, `ASK-<Version>.exe` und zusätzlich `ASK-Setup.exe` und `ASK.exe` mit festem Namen. Den Fortschritt zeigt der Reiter «Actions» im Repository ASK-App.
+
+**Beta.** Eine Version wie `0.3.0-beta.1` erscheint in ASK-Releases als Vorabversion. Nur wer im Ordner-Menü «Beta-Versionen erhalten» eingeschaltet hat (oder `/beta`), bekommt sie angeboten. Alle anderen sehen sie nicht, und der Link «neueste Version» zeigt weiter auf die letzte normale Version.
+
+Der Code bleibt privat; ASK-Releases enthält nur die fertigen Dateien. Die App holt Updates ohne Token (ENTSCHEIDE E33).
+
+**Einmal einrichten** (vor dem ersten Release):
+
+1. Auf GitHub das öffentliche Repository `KIYeager/ASK-Releases` anlegen, mit «Add a README file» (ein leeres Repository nimmt keine Releases an). Als README passt [docs/ASK-Releases-README.md](docs/ASK-Releases-README.md).
+2. Ein Token anlegen: GitHub, Settings, Developer settings, Personal access tokens, Fine-grained tokens, «Generate new token». Resource owner `KIYeager`, Repository access «Only select repositories» mit nur `ASK-Releases`, Permissions, Repository permissions, «Contents: Read and write». Ablaufdatum nach Wunsch (danach ein neues eintragen).
+3. Im Repository ASK-App: Settings, Secrets and variables, Actions, «New repository secret», Name `RELEASES_TOKEN`, Wert das Token.
+
+Ändert sich der Ort der Releases, `updates` in `resources/app-config.json` anpassen (gilt für App und Build) und im Workflow `--repo` ändern. Bereits installierte Apps suchen am alten Ort weiter, bis sie eine Version mit der neuen Angabe haben.
+
 ## Installation
 
-`ASK-Setup-<Version>.exe` ausführen. Die Installation läuft pro Nutzer nach `%LOCALAPPDATA%\Programs\ask-desktop`, ohne Admin-Rechte und ohne weitere Fragen, und legt Verknüpfungen im Startmenü und auf dem Desktop an. Python, Bibliotheken und Anleitungen sind dabei; die Lernenden müssen nichts installieren. Deinstallieren über Einstellungen, Apps. Einstellungen bleiben in `%APPDATA%\ASK`, Laufzeitdaten in `%LOCALAPPDATA%\ASK-Desktop`.
+Für die Lernenden gibt es einen festen Link, der immer auf die neueste Version zeigt:
+
+https://github.com/KIYeager/ASK-Releases/releases/latest/download/ASK-Setup.exe
+
+`ASK-Setup.exe` ausführen. Die Installation läuft pro Nutzer nach `%LOCALAPPDATA%\Programs\ask-desktop`, ohne Admin-Rechte und ohne weitere Fragen, und legt Verknüpfungen im Startmenü und auf dem Desktop an. Python, Bibliotheken und Anleitungen sind dabei; die Lernenden müssen nichts installieren. Deinstallieren über Einstellungen, Apps. Einstellungen bleiben in `%APPDATA%\ASK`, Laufzeitdaten in `%LOCALAPPDATA%\ASK-Desktop`.
 
 Ohne Installation: `ASK-<Version>.exe` irgendwo ablegen und doppelklicken. Beim ersten Start entpackt die EXE die App einmal nach `%LOCALAPPDATA%\ASK-Desktop\app\<Version>-<Build>` (Startbild «ASK wird gestartet …»), danach startet sie die App direkt von dort. Eine neuere EXE entpackt sich beim ersten Start neu, die App löscht dann den älteren Stand. Es gibt keine Verknüpfungen und keinen Eintrag unter «Apps». Einstellungen und Laufzeitdaten liegen am gleichen Ort wie bei der installierten App. Installierte App und EXE laufen nicht gleichzeitig.
+
+**Updates.** Die installierte App sucht 20 Sekunden nach dem Start und danach alle 6 Stunden in ASK-Releases nach einer neueren Version. Gibt es eine, fragt sie «ASK 0.2.0 ist da. Jetzt aktualisieren?» und zeigt den Text des Releases. «Jetzt aktualisieren» lädt das Update (unten in der Statuszeile «Update lädt … 40%»), danach fragt die App «Jetzt neu starten?»; sonst installiert es sich beim nächsten Schliessen. Das Installieren läuft still, ohne Admin-Rechte, und startet ASK danach wieder. Chats, Ordner und Einstellungen bleiben. Bei «Später» fragt sie bis zum nächsten Start nicht mehr von selbst, unten steht aber «Update 0.2.0» zum Anklicken. Während das Modell arbeitet, fragt sie nie, sondern erst danach. Von Hand: Ordner-Menü «Nach Updates suchen», `/update` oder der Eintrag unten. Ohne Internet bleibt die Suche still.
+
+Die einzelne EXE kann sich nicht selbst ersetzen. Sie sucht genauso, meldet eine neue Version aber nur mit «Download öffnen» (Seite des Releases); die neue `ASK.exe` entpackt sich beim ersten Start und räumt den alten Stand weg.
 
 Installer und EXE sind nicht signiert. Windows SmartScreen kann deshalb beim ersten Start warnen («Weitere Informationen», «Trotzdem ausführen»).
 
@@ -68,7 +100,7 @@ Installer und EXE sind nicht signiert. Windows SmartScreen kann deshalb beim ers
 
 Beim ersten Start erscheint ein Hinweis in einfachem Deutsch (das Modell kann im Ordner ändern und löschen, darum nur mit Kopien arbeiten, Inhalte gehen an ASK). Danach die Wahl des Arbeitsordners (die ASK-Adresse ist eingebaut): «Neuen Projektordner anlegen» erstellt `%USERPROFILE%\ASK-Projekte\Projekt <Datum>`, oder ein vorhandener Ordner wird gewählt. Ist man nicht bei ASK angemeldet, zeigt die App die Anmeldeseite von ASK. Solange die App prüft, ob man angemeldet ist (beim Start und direkt nach dem Login), zeigt sie stattdessen «Verbinde mit ASK …» bzw. «Anmeldung wird geprüft …»; die Oberfläche von Open WebUI ist dabei nie zu sehen.
 
-Links liegen die Chats, gruppiert nach Arbeitsordner (der aktuelle zuerst, darunter die zuletzt verwendeten), mit «+ Neuer Chat» und einer Suche über die Titel. Ein Klick öffnet einen Chat; liegt er in einem anderen Ordner, wechselt die App dorthin (das Terminal startet neu). Das «+» neben einem Ordnernamen beginnt dort einen neuen Chat, ein Rechtsklick auf einen Chat löscht ihn nach Rückfrage (die Dateien im Ordner bleiben). ☰ blendet die Leiste aus. Oben stehen der Arbeitsordner (Klick öffnet die letzten Ordner und weitere Aktionen), der Schalter «🌐 Web» und die Modellwahl. Mit «Web» sucht ASK vor der ersten Antwort eines Auftrags im Web (mit der Suchmaschine, die in ASK eingerichtet ist) und gibt die Treffer dem Modell mit; die Quellen erscheinen als Links unter der Antwort. Der Schalter ist nur aktiv, wenn ASK die Websuche für das Konto freigibt. Unten das Eingabefeld: Enter sendet, Shift+Enter macht eine neue Zeile, Pfeil nach oben holt die letzte Eingabe, Esc stoppt das Modell. Mit `/` öffnen sich Befehle: `/neu`, `/goal`, `/suchen`, `/ordner`, `/explorer`, `/modell`, `/denken`, `/web`, `/explorer`, `/neustart` (Terminal), `/abmelden`. Darunter die Statuszeile mit Terminal und ASK; ein Klick zeigt Details.
+Links liegen die Chats, gruppiert nach Arbeitsordner (der aktuelle zuerst, darunter die zuletzt verwendeten), mit «+ Neuer Chat» und einer Suche über die Titel. Ein Klick öffnet einen Chat; liegt er in einem anderen Ordner, wechselt die App dorthin (das Terminal startet neu). Das «+» neben einem Ordnernamen beginnt dort einen neuen Chat, ein Rechtsklick auf einen Chat löscht ihn nach Rückfrage (die Dateien im Ordner bleiben). ☰ blendet die Leiste aus. Oben stehen der Arbeitsordner (Klick öffnet die letzten Ordner und weitere Aktionen), der Schalter «🌐 Web» und die Modellwahl. Mit «Web» sucht ASK vor der ersten Antwort eines Auftrags im Web (mit der Suchmaschine, die in ASK eingerichtet ist) und gibt die Treffer dem Modell mit; die Quellen erscheinen als Links unter der Antwort. Der Schalter ist nur aktiv, wenn ASK die Websuche für das Konto freigibt. Unten das Eingabefeld: Enter sendet, Shift+Enter macht eine neue Zeile, Pfeil nach oben holt die letzte Eingabe, Esc stoppt das Modell. Mit `/` öffnen sich Befehle: `/neu`, `/goal`, `/suchen`, `/ordner`, `/explorer`, `/modell`, `/denken`, `/web`, `/explorer`, `/neustart` (Terminal), `/abmelden`, `/update`, `/beta`. Darunter die Statuszeile mit Terminal und ASK; ein Klick zeigt Details.
 
 Im Chat erscheinen Antworten als Markdown, mit Kopierknopf unter jeder Antwort und Codeblöcken mit eigenem «Kopieren». Werkzeugaufrufe sind kompakt wie in Claude Code: eine Zeile für den Aufruf (`● Befehl(…)`), eine für das Kurzresultat (`⎿ 84 Zeilen gelesen`, `⎿ +10 −4 Zeilen`, erste Fehlerzeile in Rot); ein Klick zeigt ganzen Befehl, Ausgabe oder Diff. Mehrere Lese- und Suchschritte hintereinander stehen in einer Zeile («2 Dateien gelesen, 1 Ordner angesehen»). Die Gedanken des Modells sind ausgeblendet; Ctrl+O (oder «Ctrl+O Details» unten) zeigt Gedanken und alle Details. In Antworten sind nur Dateien des Ordners farbig hervorgehoben (Klick öffnet die Vorschau), anderer Inline-Code ist dezent. Unter jedem Auftrag steht eine Zeile wie «✻ 7 Schritte · 9’840 Token · 140 Token/s · Modell 70.4 s»; der Tooltip zeigt die Werte pro Schritt. Die Tokenzahlen kommen von ASK; liefert ASK keine, schätzt die App sie aus der Textlänge und schreibt «≈» davor. Ein Dateiname in einer Antwort öffnet per Klick die Vorschau. Die Chats eines Ordners liegen in `.ask/chats`; beim Ordnerwechsel öffnet die App den letzten Chat des neuen Ordners.
 

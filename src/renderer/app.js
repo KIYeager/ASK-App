@@ -81,6 +81,26 @@ function blocker() {
   return '';
 }
 
+// Unten «Update …», sobald eine neue Version da ist (ENTSCHEIDE E33)
+function renderUpdate(u) {
+  const pill = $('update-pill');
+  const show = !!u && ['verfügbar', 'lädt', 'geladen'].includes(u.state);
+  pill.hidden = !show;
+  if (!show) return;
+  const beta = /-/.test(u.version) ? ' (Beta)' : '';
+  if (u.state === 'lädt') {
+    $('update-text').textContent = `Update lädt … ${u.percent}%`;
+    pill.title = `ASK ${u.version}${beta} wird heruntergeladen`;
+  } else if (u.state === 'geladen') {
+    $('update-text').textContent = 'Update bereit: neu starten';
+    pill.title = `ASK ${u.version}${beta} ist heruntergeladen. Klicken zum Neustarten, sonst beim Beenden.`;
+  } else {
+    $('update-text').textContent = `Update ${u.version}${beta}`;
+    pill.title = u.portable ? `ASK ${u.version}${beta} ist da (du hast ${u.current}). Klicken für den Download.`
+      : `ASK ${u.version}${beta} ist da (du hast ${u.current}). Klicken zum Aktualisieren.`;
+  }
+}
+
 function renderStatus() {
   const s = state;
   $('folder-name').textContent = s.folder || 'Kein Ordner';
@@ -99,6 +119,8 @@ function renderStatus() {
   $('ask-text').textContent = aText;
   $('ask-pill').className = `pill ${aClass}`;
   $('ask-pill').title = s.ask.message || '';
+
+  renderUpdate(s.update);
 
   const select = $('model-select');
   const ids = s.models.map((m) => m.id).join('|');
@@ -1001,6 +1023,8 @@ const COMMANDS = [
   { cmd: '/chats', text: 'Frühere Chats für das Modell ein- oder ausschalten', run: () => api.setChatMemory(!state.chatMemory) },
   { cmd: '/neustart', text: 'Terminal neu starten', run: () => api.restartTerminal() },
   { cmd: '/abmelden', text: 'Bei ASK abmelden', run: () => api.logout() },
+  { cmd: '/update', text: 'Nach einer neuen Version von ASK suchen', run: () => api.updateAction() },
+  { cmd: '/beta', text: 'Beta-Versionen erhalten ein- oder ausschalten', run: () => api.setBetaUpdates(!state.update?.beta) },
 ];
 let slashIndex = 0;
 
@@ -1515,6 +1539,7 @@ function wire() {
   $('think-range').addEventListener('input', (e) => api.setThinking(THINK_LEVELS[Number(e.target.value)]));
   $('think-standard').onclick = () => api.setThinking('standard');
   document.addEventListener('click', () => toggleThinkPop(false));
+  $('update-pill').onclick = () => api.updateAction();
   $('terminal-pill').onclick = () => { openDialog = 'terminal'; $('terminal-logs').hidden = false; render(); };
   $('ask-pill').onclick = () => { openDialog = 'ask'; render(); };
   $('send-btn').onclick = () => submit();

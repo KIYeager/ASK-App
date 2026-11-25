@@ -1,0 +1,96 @@
+# Baut ASK bei jedem Versions-Tag (v0.2.0, v0.3.0-beta.1) auf Windows und veröffentlicht Installer,
+# einzelne EXE und latest.yml im öffentlichen Repository KIYeager/ASK-Releases (ENTSCHEIDE E33).
+# Auslösen: npm run release -- <Version> "Was ist neu" (scripts/release.js).
+# Braucht das Secret RELEASES_TOKEN: Fine-grained Token nur für ASK-Releases, Recht «Contents: Read and write».
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version prüfen
+        id: version
+        env:
+          HAS_TOKEN: ${{ secrets.RELEASES_TOKEN != '' }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} passt nicht zu package.json ($version)." }
+          if ($env:HAS_TOKEN -ne 'true') { throw "Secret RELEASES_TOKEN fehlt (siehe README, Abschnitt «Neue Version veröffentlichen»)." }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "beta=$(if ($version -match '-') { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+          "ASK_BUILD_DIR=$env:RUNNER_TEMP\ask-build" >> $env:GITHUB_ENV
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm-Pakete
+        run: |
+          npm ci --no-audit --no-fund
+          node node_modules/electron/install.js
+
+      - name: Tests
+        run: npm test
+
+      - name: Python-Paket aus dem Zwischenspeicher
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\ask-build\cache
+          key: python-${{ hashFiles('scripts/build-python.ps1') }}
+
+      - name: Python bauen
+        shell: powershell
+        run: scripts\build-python.ps1 -BuildDir $env:ASK_BUILD_DIR
+
+      - name: Installer bauen
+        run: npm run dist
+
+      - name: Einzelne EXE bauen
+        run: npm run dist:portable
+
+      - name: Veröffentlichen
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BETA: ${{ steps.version.outputs.beta }}
+        run: |
+          $dist = Join-Path $env:ASK_BUILD_DIR 'dist'
+          $setup = Join-Path $dist "ASK-Setup-$env:VERSION.exe"
+          $portable = Join-Path $dist "ASK-$env:VERSION.exe"
+          # Feste Namen für den Link «neueste Version» (releases/latest/download/ASK-Setup.exe)
+          $out = Join-Path $env:RUNNER_TEMP 'upload'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item $setup, "$setup.blockmap", (Join-Path $dist 'latest.yml'), $portable $out
+          Copy-Item $setup (Join-Path $out 'ASK-Setup.exe')
+          Copy-Item $portable (Join-Path $out 'ASK.exe')
+
+          # Text aus dem Tag (npm run release schreibt ihn hinein); erscheint im Update-Dialog der App.
+          # Die Download-Anleitung steht im README von ASK-Releases, nicht hier.
+          # Den Tag neu holen: checkout macht aus einem annotierten Tag sonst unter Umständen einen leichten.
+          git fetch --force origin "refs/tags/v$($env:VERSION):refs/tags/v$($env:VERSION)" 2>$null
+          $notes = (git tag -l --format='%(contents)' "v$env:VERSION" | Out-String).Trim()
+          if (-not $notes -or $notes -eq "v$env:VERSION") { $notes = "Neue Version $env:VERSION." }
+          $notesFile = Join-Path $env:RUNNER_TEMP 'notes.md'
+          Set-Content $notesFile -Encoding utf8 -Value $notes
+
+          $flags = if ($env:BETA -eq 'true') { @('--prerelease') } else { @('--latest') }
+          gh release create "v$env:VERSION" --repo KIYeager/ASK-Releases --title "ASK $env:VERSION" --notes-file $notesFile @flags (Get-ChildItem $out).FullName
+          if ($LASTEXITCODE -ne 0) { throw "gh release create fehlgeschlagen" }

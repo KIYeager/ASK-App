@@ -17,6 +17,7 @@ const defaults = {
   model: '',
   webSearch: false,
   thinking: 'standard',
+  betaUpdates: false,
 };
 
 let data = null;
