@@ -78,10 +78,7 @@ class AppWindow {
       return { action: 'deny' };
     });
     wc.on('context-menu', (_e, params) => this.showContextMenu(params));
-    wc.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
-      if (isMainFrame && code !== -3) this.send('ask:load-failed', { code, description, url });
-    });
-    wc.on('did-finish-load', () => this.send('ask:loaded', { url: wc.getURL() }));
+    // Ladefehler der ASK-Seite meldet askapi.js im Status (loadError), nicht als Ereignis (ENTSCHEIDE E53)
   }
 
   showContextMenu(params, wc = this.view.webContents) {

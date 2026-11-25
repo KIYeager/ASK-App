@@ -198,7 +198,7 @@ function makeAgent(folder, rt) {
     getImageUrl: (attachment) => imageUrl(folder, attachment, nativeResize(nativeImage)),
     getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
     getSnapshots: () => snapshotsFor(folder),
-    // Hilfsagenten (ENTSCHEIDE E54): eigenes Modell aus den Einstellungen, sonst das Modell des Chats
+    // Hilfsagenten (ENTSCHEIDE E55): eigenes Modell aus den Einstellungen, sonst das Modell des Chats
     getHelperModel: () => { const wanted = settings.get('helperModel'); return ask.models.some((m) => m.id === wanted) ? wanted : ''; },
     // Andere Chats, die gerade im selben Ordner arbeiten (Warnung, ENTSCHEIDE E46)
     getSiblings: () => [...rt.agents].filter((x) => x !== a && x.running).map((x) => x.chat.title || 'ohne Titel'),

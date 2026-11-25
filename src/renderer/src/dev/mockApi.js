@@ -21,6 +21,8 @@ let state = {
   prefs: { verbose: false, todoCollapsed: true, tourDone: !params.get('tour') }, // ?tour=1 zeigt die Einführung
   chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null, pinned: false, context: { tokens: 18400, estimated: false, limit: 131072 } },
 };
+if (params.get('offline')) state = { ...state, ask: { state: 'unbekannt', loadError: { code: -106, description: 'ERR_INTERNET_DISCONNECTED' } }, models: [], model: '' }; // ?offline=1
+if (params.get('askfehler')) state = { ...state, ask: { state: 'fehler', user: 'Lea Muster', message: 'ASK bietet diesem Konto kein Modell an. Wer ASK betreut, muss deinem Konto zuerst ein Modell freigeben.' }, models: [], model: '' }; // ?askfehler=1
 if (params.get('leer')) state.chat = { id: 'neu1', title: '', running: false, goal: null };
 if (params.get('erst')) state = { ...state, folder: '', chat: { id: 'neu1', title: '', running: false } };
 
@@ -258,7 +260,7 @@ const ghMock = {
 export function install() {
   window.ask = {
     getState: async () => ({ ...state, servers }),
-    onState: on('state'), onFiles: on('files'), onTasks: on('tasks'), onAskLoaded: on('ask:loaded'), onAskLoadFailed: on('ask:load-failed'),
+    onState: on('state'), onFiles: on('files'), onTasks: on('tasks'),
     onMenuChooseFolder: on('x1'), onMenuNewFolder: on('x2'), onMenuGithub: on('x3'), onFolderError: on('folder:error'),
     onProjectRename: on('project:rename'), onGroupsChanged: on('groups'), onChatEvent: on('chat:event'), onChatChanged: on('chat:changed'),
     onBrowserState: on('browser:state'), onBrowserNotice: on('browser:notice'), onServers: on('servers'),

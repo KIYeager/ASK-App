@@ -94,7 +94,7 @@ function AskDialog({ state, onClose }) {
   return (
     <Dialog id="dlg-ask" title="ASK" onClose={onClose} actions={(
       <>
-        {a.state === 'angemeldet' ? <button id="ask-logout" type="button" className="btn" onClick={async () => { onClose(); await api().logout(); }}><Icon name="logout" size={15} /> Abmelden</button> : null}
+        {a.state === 'angemeldet' || a.state === 'fehler' ? <button id="ask-logout" type="button" className="btn" onClick={async () => { onClose(); await api().logout(); }}><Icon name="logout" size={15} /> {a.state === 'fehler' ? 'Neu anmelden' : 'Abmelden'}</button> : null}
         <button id="ask-retry" type="button" className="btn" onClick={async () => { await api().connectAsk(); await api().models(); }}>Erneut prüfen</button>
         <button id="ask-close" type="button" className="btn primary" onClick={onClose}>Schliessen</button>
       </>

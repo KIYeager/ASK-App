@@ -481,6 +481,11 @@ button.work-head:hover { background: var(--hover); }
 .ask-host { flex: 1; position: relative; }
 .ask-placeholder { position: absolute; inset: 0; display: flex; gap: 10px; align-items: center; justify-content: center; color: var(--muted); text-align: center; }
 .ask-placeholder p { margin: 0 0 8px; }
+.ask-error { width: 100%; margin-bottom: 10px; }
+.ask-error-box { border: 1px solid var(--bad); background: var(--bad-soft); border-radius: 10px; padding: 10px 14px; font-size: 13px; }
+.ask-error-box p { margin: 0 0 8px; }
+.ask-error-box strong { color: var(--bad); }
+.ask-error-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ---------- Dialoge ---------- */
 .overlay { position: fixed; inset: 0; background: rgba(10, 16, 20, .42); display: grid; place-items: center; z-index: 50; padding: 20px; }

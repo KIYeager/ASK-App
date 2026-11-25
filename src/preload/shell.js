@@ -11,8 +11,6 @@ contextBridge.exposeInMainWorld('ask', {
   getState: () => ipcRenderer.invoke('state:get'),
   onState: on('state'),
   onFiles: on('files'),
-  onAskLoaded: on('ask:loaded'),
-  onAskLoadFailed: on('ask:load-failed'),
   onMenuChooseFolder: on('menu:choose-folder'),
   onMenuNewFolder: on('menu:new-folder'),
   onMenuGithub: on('menu:github'),

@@ -1,4 +1,4 @@
-// Hilfsagenten (ENTSCHEIDE E54): Das Modell gibt eine Teilfrage ab, ein eigener kleiner Agent klärt sie mit
+// Hilfsagenten (ENTSCHEIDE E55): Das Modell gibt eine Teilfrage ab, ein eigener kleiner Agent klärt sie mit
 // lesenden Werkzeugen und gibt nur das Ergebnis zurück. So bleibt der Verlauf des Chats kurz, und mehrere
 // unabhängige Suchen laufen gleichzeitig. Hilfsagenten ändern nichts (keine Befehle, kein Schreiben), sehen den
 // Chat nicht und starten keine weiteren Hilfsagenten.
