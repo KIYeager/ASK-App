@@ -215,6 +215,8 @@ class Workspace extends EventEmitter {
   import(relDir, files) {
     const dir = relDir ? this.resolve(relDir) : (this.root ? fs.realpathSync.native(this.root) : null);
     if (!dir || !fs.statSync(dir).isDirectory()) throw new Error('Ordner nicht gefunden.');
+    // resolve() liefert den echten Pfad; der gespeicherte Ordner kann eine Kurzform sein (C:\Users\RUNNER~1\…)
+    const realRoot = fs.realpathSync.native(this.root);
     const { cleanName, freeName } = require('./attachments');
     const done = [];
     for (const f of (Array.isArray(files) ? files : []).slice(0, 50)) {
@@ -222,7 +224,7 @@ class Workspace extends EventEmitter {
       const data = Buffer.from(f.data || []);
       if (data.length > 200 * 1024 * 1024) throw new Error(`${name} ist grösser als 200 MB.`);
       fs.writeFileSync(path.join(dir, name), data, { flag: 'wx' });
-      done.push(path.relative(this.root, path.join(dir, name)));
+      done.push(path.relative(realRoot, path.join(dir, name)));
     }
     return done;
   }
