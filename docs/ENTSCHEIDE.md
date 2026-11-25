@@ -269,3 +269,11 @@ Weiter: Beim Neustart für ein Update läuft der Installer nicht mehr still, son
 
 Der Wechsel selbst ist noch einmal langsam: Das Update auf die erste Version mit Archiv entfernt die alten 12'000 Dateien, und der erste Start entpackt Python. Ab dann schreibt ein Update rund 40 Dateien.
 
+## E40 Ein Klick, dann Balken und Countdown
+
+Beim Test von 0.2.3-beta.2 war nach «Jetzt aktualisieren» nicht zu sehen, dass etwas geschieht: Den Download (rund 210 MB) zeigte nur ein kleiner Eintrag unten in der Statuszeile, der bei schmalem Fenster abgeschnitten wird, und erst nach dem Download kam die zweite Frage «Jetzt neu starten?». Wer nicht so lange wartet, schliesst ASK oder klickt woanders.
+
+Jetzt gibt es nur noch die eine Frage vor dem Download. Danach zeigt ein Balken oben in der App den Download in Prozent (dazu die Taskleiste), mit dem Hinweis, dass man weiterarbeiten kann. Ist das Update geladen, zählt der Balken 10 Sekunden herunter und startet dann neu (Installer mit Fortschrittsfenster, E39); «Jetzt neu starten» und «Später» stehen im Balken. «Später» installiert beim Schliessen von ASK und startet nicht mehr von selbst. Startet während des Countdowns ein Auftrag, hält die App an und zählt nach dem Auftrag neu. Ein Neustart mitten in einem Auftrag ist damit weiter ausgeschlossen, und es braucht keinen zweiten Dialog.
+
+Dass beim Test nach «Jetzt neu starten» kein Fortschrittsfenster kam, lag an der installierten 0.2.2: Das Update führt immer die alte Version aus, und die installierte noch still. Das Fenster von E39 zeigt erst ein Update aus 0.2.3-beta.2 heraus.
+

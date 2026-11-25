@@ -95,17 +95,55 @@ function blocker() {
   return '';
 }
 
+// Balken oben: Download, Countdown, Neustart (ENTSCHEIDE E40)
+function renderUpdateBar(u) {
+  const bar = $('update-bar');
+  const state = u?.state || '';
+  const show = ['lädt', 'neustart', 'geladen', 'installiert'].includes(state);
+  bar.hidden = !show;
+  if (!show) return;
+  const name = `ASK ${u.version}${/-/.test(u.version) ? ' (Beta)' : ''}`;
+  let text = '';
+  let fill = null;
+  let now = '';
+  let later = false;
+  if (state === 'lädt') {
+    text = `⬇ Update auf ${name} wird geladen … ${u.percent} %. Du kannst weiterarbeiten; danach startet ASK von selbst neu.`;
+    fill = u.percent;
+  } else if (state === 'neustart') {
+    text = `${name} ist geladen. ASK startet in ${u.countdown} s neu und installiert das Update (ein Fenster zeigt den Fortschritt, danach ist ASK wieder da).`;
+    fill = Math.round(((10 - u.countdown) / 10) * 100);
+    now = 'Jetzt neu starten';
+    later = true;
+  } else if (state === 'installiert') {
+    text = `ASK schliesst sich und installiert ${name}. Gleich ist ASK wieder da; bitte nicht von Hand öffnen.`;
+  } else if (u.postponed) {
+    text = `${name} ist geladen und installiert sich, wenn du ASK schliesst.`;
+    now = 'Jetzt neu starten';
+  } else {
+    text = `${name} ist geladen. ASK startet neu, sobald der Auftrag fertig ist.`;
+    now = 'Jetzt neu starten';
+  }
+  $('update-bar-text').textContent = text;
+  $('update-bar-track').hidden = fill === null;
+  if (fill !== null) $('update-bar-fill').style.width = `${fill}%`;
+  $('update-bar-now').hidden = !now;
+  $('update-bar-now').textContent = now || 'Jetzt neu starten';
+  $('update-bar-later').hidden = !later;
+}
+
 // Unten «Update …», sobald eine neue Version da ist (ENTSCHEIDE E37)
 function renderUpdate(u) {
+  renderUpdateBar(u);
   const pill = $('update-pill');
-  const show = !!u && ['verfügbar', 'lädt', 'geladen'].includes(u.state);
+  const show = !!u && ['verfügbar', 'lädt', 'geladen', 'neustart'].includes(u.state);
   pill.hidden = !show;
   if (!show) return;
   const beta = /-/.test(u.version) ? ' (Beta)' : '';
   if (u.state === 'lädt') {
     $('update-text').textContent = `Update lädt … ${u.percent}%`;
     pill.title = `ASK ${u.version}${beta} wird heruntergeladen`;
-  } else if (u.state === 'geladen') {
+  } else if (u.state === 'geladen' || u.state === 'neustart') {
     $('update-text').textContent = 'Update bereit: neu starten';
     pill.title = `ASK ${u.version}${beta} ist heruntergeladen. Klicken zum Neustarten, sonst beim Beenden.`;
   } else {
@@ -1948,6 +1986,8 @@ function wire() {
   $('think-standard').onclick = () => api.setThinking('standard');
   document.addEventListener('click', () => { toggleThinkPop(false); closeChatMenu(); });
   $('update-pill').onclick = () => api.updateAction();
+  $('update-bar-now').onclick = () => api.updateAction();
+  $('update-bar-later').onclick = () => api.updateLater();
   $('terminal-pill').onclick = () => { openDialog = 'terminal'; $('terminal-logs').hidden = false; render(); };
   $('ask-pill').onclick = () => { openDialog = 'ask'; render(); };
   $('send-btn').onclick = () => (running ? stopRun() : submit());

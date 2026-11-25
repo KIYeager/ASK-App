@@ -554,3 +554,14 @@ button:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visib
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 .group-head:focus-within .gnew { visibility: visible; }
+
+/* Update oben in der App (ENTSCHEIDE E40): Download, Countdown bis zum Neustart */
+.update-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 16px; font-size: 13px;
+  border-bottom: 1px solid var(--accent-strong); background: var(--accent-bg); color: var(--text);
+}
+.update-bar[hidden] { display: none; }
+.update-bar-text { flex: 1 1 260px; min-width: 0; }
+.update-bar-track { flex: 0 1 180px; height: 6px; border-radius: 3px; background: var(--border-2); overflow: hidden; }
+.update-bar-track[hidden] { display: none; }
+#update-bar-fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }

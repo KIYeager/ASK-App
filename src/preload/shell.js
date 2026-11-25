@@ -78,5 +78,6 @@ contextBridge.exposeInMainWorld('ask', {
   toPdf: (rel) => ipcRenderer.invoke('file:pdf', rel),
   showFile: (rel) => ipcRenderer.invoke('file:show', rel),
   updateAction: () => ipcRenderer.invoke('update:action'),
+  updateLater: () => ipcRenderer.invoke('update:later'),
   setBetaUpdates: (on, tell) => ipcRenderer.invoke('update:beta', on, tell),
 });

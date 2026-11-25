@@ -47,6 +47,12 @@
     <div class="resizer" data-panel="chatbar" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Breite der Chats" title="Ziehen: Breite ändern · Doppelklick: Standardbreite"></div>
 
     <section class="chat-area">
+      <div id="update-bar" class="update-bar" role="status" aria-live="polite" hidden>
+        <span id="update-bar-text" class="update-bar-text"></span>
+        <span id="update-bar-track" class="update-bar-track" aria-hidden="true"><span id="update-bar-fill"></span></span>
+        <button id="update-bar-now" class="btn small">Jetzt neu starten</button>
+        <button id="update-bar-later" class="btn small ghost">Später</button>
+      </div>
       <div id="login-area" class="login-area" hidden>
         <div class="login-head">
           <span><span class="spark">✻</span> Bei ASK anmelden. Danach arbeitest du hier im Chat; die Seite verschwindet wieder.</span>
