@@ -1,5 +1,5 @@
 # Baut ASK bei jedem Versions-Tag (v0.2.0, v0.3.0-beta.1) auf Windows und veröffentlicht Installer,
-# einzelne EXE und latest.yml im öffentlichen Repository KIYeager/ASK-Releases (ENTSCHEIDE E33).
+# einzelne EXE und latest.yml im öffentlichen Repository KIYeager/ASK-Releases (ENTSCHEIDE E37).
 # Auslösen: npm run release -- <Version> "Was ist neu" (scripts/release.js).
 # Braucht das Secret RELEASES_TOKEN: Fine-grained Token nur für ASK-Releases, Recht «Contents: Read and write».
 name: Release
@@ -47,8 +47,10 @@ jobs:
           npm ci --no-audit --no-fund
           node node_modules/electron/install.js
 
-      - name: Tests
-        run: npm test
+      - name: Lint und Tests
+        run: |
+          npm run lint
+          npm test
 
       - name: Python-Paket aus dem Zwischenspeicher
         uses: actions/cache@v4

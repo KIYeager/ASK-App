@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { GitHub, blobSha, parseRepo } = require('../src/main/github');
+const { GitHub, blobSha, parseRepo, validLink, listLocal } = require('../src/main/github');
 const { createMockGitHub, TOKEN } = require('./e2e/mock-github');
 
 // fetch-Ersatz, der direkt den Nachbau aufruft
@@ -35,6 +35,10 @@ test('Prüfsumme wie git, Repository-Angaben', () => {
   assert.strictEqual(parseRepo('https://github.com/lea/projekt.git'), 'lea/projekt');
   assert.strictEqual(parseRepo('lea/projekt'), 'lea/projekt');
   assert.throws(() => parseRepo('projekt'), /besitzer\/name/);
+  assert.strictEqual(parseRepo('https://github.com/lea/website/tree/main'), 'lea/website');
+  assert.strictEqual(parseRepo('https://github.com/lea/website/blob/main/README.md'), 'lea/website');
+  assert.strictEqual(parseRepo('git@github.com:lea/website.git'), 'lea/website');
+  assert.throws(() => parseRepo('../user'), /besitzer\/name/);
 });
 
 test('Verbinden: falsches Token abgelehnt, richtiges gespeichert', async () => {
@@ -120,5 +124,76 @@ test('Hochladen in ein leeres Repository', async () => {
     assert.strictEqual(mock.fileOnGitHub('lea-test/leer', 'a.txt'), 'A');
   } finally {
     fs.rmSync(a, { recursive: true, force: true });
+  }
+});
+
+test('.gitignore: Ausgeschlossenes wird nicht hochgeladen, schon Abgeglichenes bleibt', async () => {
+  const { mock, gh } = setup();
+  await gh.connect(TOKEN);
+  const a = folder({ 'app.py': 'print(1)', '.env': 'GEHEIM=1', '.gitignore': '.env\n*.log\n/build/\n!wichtig.log\ndaten/**/roh\n',
+    'lauf.log': 'x', 'wichtig.log': 'y', 'build/app.exe': 'bin', 'src/build/ok.txt': 'ok', 'daten/2026/roh/a.csv': '1', 'daten/2026/fertig.csv': '2' });
+  try {
+    assert.deepStrictEqual(listLocal(a).map((f) => f.path).sort(), ['.gitignore', 'app.py', 'daten/2026/fertig.csv', 'src/build/ok.txt', 'wichtig.log']);
+    await gh.create(a, 'geheim');
+    assert.strictEqual(mock.fileOnGitHub('lea-test/geheim', '.env'), null);
+    assert.strictEqual(mock.fileOnGitHub('lea-test/geheim', 'build/app.exe'), null);
+    assert.strictEqual(mock.fileOnGitHub('lea-test/geheim', 'app.py'), 'print(1)');
+    // Auf GitHub liegt eine Datei, die hier ausgeschlossen und anders ist: Holen überschreibt sie nicht
+    mock.commitOnGitHub('lea-test/geheim', '.env', 'GEHEIM=von-github');
+    const pulled = await gh.pull(a);
+    assert.deepStrictEqual(pulled.conflicts, ['.env']);
+    assert.strictEqual(read(a, '.env'), 'GEHEIM=1');
+    // Eine abgeglichene Datei kommt später in .gitignore: Hochladen löscht sie auf GitHub nicht
+    fs.writeFileSync(path.join(a, '.gitignore'), '.env\n*.log\napp.py\n');
+    const pushed = await gh.push(a, 'gitignore');
+    assert.deepStrictEqual(pushed.deleted, []);
+    assert.strictEqual(mock.fileOnGitHub('lea-test/geheim', 'app.py'), 'print(1)');
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+});
+
+test('Konflikt: Hochladen ersetzt die Fassung auf GitHub nur mit overwrite', async () => {
+  const { mock, gh } = setup();
+  await gh.connect(TOKEN);
+  const a = folder({ 'index.html': 'eins' });
+  try {
+    await gh.create(a, 'konflikt');
+    mock.commitOnGitHub('lea-test/konflikt', 'index.html', 'von GitHub');
+    fs.writeFileSync(path.join(a, 'index.html'), 'von hier');
+    assert.deepStrictEqual((await gh.pull(a)).conflicts, ['index.html']);
+    assert.deepStrictEqual((await gh.status(a)).conflicts, ['index.html']);
+    await assert.rejects(gh.push(a, 'x'), /verschieden geändert: index\.html/);
+    assert.strictEqual(mock.fileOnGitHub('lea-test/konflikt', 'index.html'), 'von GitHub');
+    await gh.push(a, 'x', { overwrite: true });
+    assert.strictEqual(mock.fileOnGitHub('lea-test/konflikt', 'index.html'), 'von hier');
+    assert.deepStrictEqual((await gh.status(a)).conflicts, []);
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+});
+
+test('Gespeicherte Verbindung wird geprüft, Ablage ausserhalb des Ordners', async () => {
+  const sha = 'a'.repeat(40);
+  const ok = { repo: 'lea/web', branch: 'main', commit: null, files: { 'a/b.txt': sha } };
+  assert.strictEqual(validLink(ok), true);
+  for (const bad of [{ ...ok, repo: 'lea/web/../../user' }, { ...ok, repo: '../x' }, { ...ok, repo: 'lea/web?x=1' }, { ...ok, branch: 'a/../b' },
+    { ...ok, commit: 'xyz' }, { ...ok, files: { '../x': sha } }, { ...ok, files: { 'C:/x': sha } }, { ...ok, files: { 'a.txt': 'kurz' } }, null]) {
+    assert.strictEqual(validLink(bad), false, JSON.stringify(bad));
+  }
+  const store = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-github-ablage-'));
+  const a = folder({ 'a.txt': 'A' });
+  try {
+    const { gh } = setup();
+    gh.linkFile = () => path.join(store, 'github.json');
+    await gh.connect(TOKEN);
+    await gh.create(a, 'ablage');
+    assert.ok(fs.existsSync(path.join(store, 'github.json')));
+    assert.ok(!fs.existsSync(path.join(a, '.ask', 'github.json')));
+    fs.writeFileSync(path.join(store, 'github.json'), JSON.stringify({ repo: 'lea-test/ablage/../../user', branch: 'main', commit: null, files: {} }));
+    assert.strictEqual((await gh.status(a)).linked, false);
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+    fs.rmSync(store, { recursive: true, force: true });
   }
 });

@@ -1,4 +1,4 @@
-// Neue Version veröffentlichen (ENTSCHEIDE E33):  npm run release -- 0.2.0 "Was ist neu"
+// Neue Version veröffentlichen (ENTSCHEIDE E37):  npm run release -- 0.2.0 "Was ist neu"
 // Beta:  npm run release -- 0.3.0-beta.1 "Zum Testen: …"
 // Setzt die Version in package.json und package-lock.json, macht einen Commit und einen Tag v<Version>
 // mit dem Text und lädt beides hoch. Den Rest (bauen, veröffentlichen in ASK-Releases) macht

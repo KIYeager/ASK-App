@@ -15,9 +15,9 @@
       <span id="folder-name">Kein Ordner</span><span class="caret" aria-hidden="true">▾</span>
     </button>
     <div class="spacer"></div>
-    <button id="web-btn" class="toggle" title="Websuche über ASK (/web)">🌐 Web</button>
-    <button id="memory-btn" class="toggle" title="Frühere Chats (/chats)">◷ Chats</button>
-    <button id="browser-btn" class="toggle" title="Browser öffnen oder schliessen">⧉ Browser</button>
+    <button id="web-btn" class="toggle" aria-pressed="false" title="Websuche über ASK (/web)">🌐 Web</button>
+    <button id="memory-btn" class="toggle" aria-pressed="false" title="Frühere Chats (/chats)">◷ Chats</button>
+    <button id="browser-btn" class="toggle" aria-pressed="false" title="Browser öffnen oder schliessen">⧉ Browser</button>
     <div class="think-wrap">
       <button id="think-btn" class="toggle" title="Denkaufwand des Modells (/denken)">✻ <span id="think-label">Standard</span></button>
       <div id="think-pop" class="think-pop" hidden>
@@ -34,13 +34,14 @@
       <span class="muted">Modell</span>
       <select id="model-select"></select>
     </label>
+    <button id="settings-btn" class="ghost icon" title="Einstellungen (/einstellungen)" aria-label="Einstellungen">⚙</button>
     <button id="sidebar-btn" class="ghost icon" title="Seitenleiste ein- oder ausblenden" aria-label="Seitenleiste ein- oder ausblenden">▥</button>
   </header>
 
   <main class="layout">
     <aside id="chatbar" class="chatbar">
       <button id="new-btn" class="chatbar-new" title="Neuer Chat im aktuellen Ordner (/neu)">+ Neuer Chat</button>
-      <input id="chat-search" class="chat-search" type="search" placeholder="Chats durchsuchen" spellcheck="false">
+      <input id="chat-search" class="chat-search" type="search" placeholder="Chats durchsuchen" aria-label="Chats durchsuchen" spellcheck="false">
       <div id="chat-groups" class="chat-groups"></div>
     </aside>
     <div class="resizer" data-panel="chatbar" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Breite der Chats" title="Ziehen: Breite ändern · Doppelklick: Standardbreite"></div>
@@ -81,7 +82,7 @@
             <span id="goal-text" class="goal-text"></span><span id="goal-state" class="goal-state"></span>
             <button id="goal-clear" class="ghost small" title="Ziel aufheben (/goal aus)" aria-label="Ziel aufheben">×</button>
           </div>
-          <div id="activity" class="activity" hidden>
+          <div id="activity" class="activity" aria-live="polite" hidden>
             <span class="spinner" aria-hidden="true">✻</span>
             <span id="activity-text">Denkt nach …</span>
             <span class="muted">(<span id="activity-time">0 s</span> · Esc zum Stoppen)</span>
@@ -97,11 +98,12 @@
             <ul id="todo-list" class="todo-list"></ul>
           </div>
           <div id="slash" class="slash" hidden></div>
+          <div id="queue-row" class="attach-row" hidden></div>
           <div id="attach-row" class="attach-row" hidden></div>
           <div class="input-box" id="input-box">
             <button id="attach-btn" class="attach-btn" title="Dateien oder Bilder anhängen (auch mit Ctrl+V oder Hineinziehen)" aria-label="Anhängen">+</button>
             <input id="attach-file" type="file" multiple hidden>
-            <textarea id="input" rows="1" spellcheck="true" placeholder="Was soll ich im Arbeitsordner erledigen?"></textarea>
+            <textarea id="input" rows="1" spellcheck="true" aria-label="Nachricht an das Modell" placeholder="Was soll ich im Arbeitsordner erledigen?"></textarea>
             <button id="send-btn" class="send" title="Senden (Enter)">↵</button>
           </div>
           <div class="statusline">
@@ -109,8 +111,9 @@
             <button id="ask-pill" class="pill" title="ASK"><span class="dot"></span><span id="ask-text">ASK: unbekannt</span></button>
             <button id="update-pill" class="pill ok" hidden><span class="dot"></span><span id="update-text">Update</span></button>
             <span class="spacer"></span>
+            <span id="ctx" class="ctx" hidden><span id="ctx-text"></span><span class="ctx-bar" aria-hidden="true"><span id="ctx-fill"></span></span></span>
             <span class="muted hint">Enter senden · Shift+Enter Zeile · / Befehle · Ctrl+T Aufgaben · </span>
-            <button id="verbose-btn" class="pill hint" title="Gedanken und alle Details ein- oder ausblenden">Ctrl+O Details</button>
+            <button id="verbose-btn" class="pill hint" aria-pressed="false" title="Gedanken und alle Details ein- oder ausblenden">Ctrl+O Details</button>
           </div>
         </div>
       </div>
@@ -158,8 +161,8 @@
 
   <!-- Dialoge: Solange einer offen ist, ist die ASK-Seite verborgen. -->
   <div id="overlay" class="overlay" hidden>
-    <div id="dlg-warning" class="dialog" hidden>
-      <h1>Bevor es losgeht</h1>
+    <div id="dlg-warning" role="dialog" aria-modal="true" aria-labelledby="dlg-warning-h" class="dialog" hidden>
+      <h1 id="dlg-warning-h">Bevor es losgeht</h1>
       <p>Mit ASK arbeitet das Sprachmodell selbständig in einem Ordner auf deinem Laptop. Es kann dort Dateien lesen, neue Dateien schreiben, Programme ausführen und Dateien <strong>ändern oder löschen</strong>.</p>
       <p>Arbeite deshalb nur mit <strong>Kopien</strong>. Lege für jedes Projekt einen eigenen Ordner an und kopiere nur die Dateien hinein, die das Modell braucht. Wichtige Originale bleiben an ihrem Ort.</p>
       <p>Ordner in OneDrive oder SharePoint lassen sich nicht wählen, weil Änderungen dort sofort in die Cloud übertragen würden. Ausserhalb des gewählten Ordners kann das Modell nichts schreiben, lesen kann es aber auch andere Dateien auf dem Laptop.</p>
@@ -169,28 +172,28 @@
       <div class="actions"><button id="warning-ok" class="btn primary" disabled>Weiter</button></div>
     </div>
 
-    <div id="dlg-url" class="dialog" hidden>
-      <h1>Adresse von ASK</h1>
+    <div id="dlg-url" role="dialog" aria-modal="true" aria-labelledby="dlg-url-h" class="dialog" hidden>
+      <h1 id="dlg-url-h">Adresse von ASK</h1>
       <p>Gib die Adresse ein, unter der du ASK im Browser öffnest.</p>
-      <input id="url-input" type="url" placeholder="https://…" spellcheck="false">
-      <p id="url-error" class="error" hidden></p>
+      <input id="url-input" type="url" placeholder="https://…" aria-label="Adresse von ASK" spellcheck="false">
+      <p id="url-error" class="error" role="alert" hidden></p>
       <div class="actions"><button id="url-ok" class="btn primary">Speichern</button></div>
     </div>
 
-    <div id="dlg-start" class="dialog" hidden>
-      <h1>Arbeitsordner wählen</h1>
+    <div id="dlg-start" role="dialog" aria-modal="true" aria-labelledby="dlg-start-h" class="dialog" hidden>
+      <h1 id="dlg-start-h">Arbeitsordner wählen</h1>
       <p>Wähle den Ordner, in dem das Modell arbeiten soll. Am besten ein eigener Projektordner, zum Beispiel unter <code>ASK-Projekte</code> in deinem Benutzerordner.</p>
       <div class="actions left">
         <button id="start-new" class="btn primary">Neuen Projektordner anlegen</button>
         <button id="start-choose" class="btn">Vorhandenen Ordner wählen …</button>
       </div>
-      <p id="start-error" class="error" hidden></p>
+      <p id="start-error" class="error" role="alert" hidden></p>
       <h2 id="recent-title" hidden>Zuletzt verwendet</h2>
       <ul id="recent-list" class="recent"></ul>
     </div>
 
-    <div id="dlg-ask" class="dialog" hidden>
-      <h1>ASK</h1>
+    <div id="dlg-ask" role="dialog" aria-modal="true" aria-labelledby="dlg-ask-h" class="dialog" hidden>
+      <h1 id="dlg-ask-h">ASK</h1>
       <div id="ask-body"></div>
       <div class="actions">
         <button id="ask-logout" class="btn">Abmelden</button>
@@ -199,15 +202,15 @@
       </div>
     </div>
 
-    <div id="dlg-github" class="dialog" hidden>
-      <h1>GitHub</h1>
+    <div id="dlg-github" role="dialog" aria-modal="true" aria-labelledby="dlg-github-h" class="dialog" hidden>
+      <h1 id="dlg-github-h">GitHub</h1>
       <div id="github-body"></div>
       <div id="github-connect">
         <p>Damit das Modell Projekte von GitHub holen und hochladen kann, braucht die App einmal ein persönliches Token mit dem Recht «repo».
           <button id="github-token-link" class="link-btn" type="button">Token auf github.com erstellen</button></p>
-        <input id="github-token" type="password" placeholder="ghp_… oder github_pat_…" spellcheck="false" autocomplete="off">
+        <input id="github-token" type="password" placeholder="ghp_… oder github_pat_…" aria-label="GitHub-Token" spellcheck="false" autocomplete="off">
         <p class="muted small">Das Token wird mit deinem Windows-Konto verschlüsselt gespeichert. Das Modell und das Terminal sehen es nie. Anlegen und Hochladen bestätigst du jedes Mal.</p>
-        <p id="github-error" class="error" hidden></p>
+        <p id="github-error" class="error" role="alert" hidden></p>
       </div>
       <div class="actions">
         <button id="github-disconnect" class="btn">Trennen</button>
@@ -216,8 +219,8 @@
       </div>
     </div>
 
-    <div id="dlg-terminal" class="dialog wide" hidden>
-      <h1>Terminal</h1>
+    <div id="dlg-terminal" role="dialog" aria-modal="true" aria-labelledby="dlg-terminal-h" class="dialog wide" hidden>
+      <h1 id="dlg-terminal-h">Terminal</h1>
       <p id="terminal-detail"></p>
       <pre id="terminal-logs" class="logs"></pre>
       <div class="actions">
@@ -226,7 +229,40 @@
       </div>
     </div>
 
-    <div id="dlg-preview" class="dialog full" hidden>
+    <div id="dlg-settings" role="dialog" aria-modal="true" aria-labelledby="dlg-settings-h" class="dialog" hidden>
+      <h1 id="dlg-settings-h">Einstellungen</h1>
+      <label for="settings-url">ASK-Adresse</label>
+      <div class="row">
+        <input id="settings-url" type="url" placeholder="https://…" spellcheck="false">
+        <button id="settings-url-ok" class="btn">Speichern</button>
+      </div>
+      <p id="settings-msg" class="muted small" role="status"></p>
+      <p id="settings-error" class="error" role="alert" hidden></p>
+      <label class="check"><input type="checkbox" id="pref-verbose"> Details immer zeigen (Gedanken und Ausgaben)</label>
+      <label class="check"><input type="checkbox" id="pref-todo"> Aufgabenliste nach dem Auftrag eingeklappt</label>
+      <label class="check"><input type="checkbox" id="pref-beta"> Beta-Versionen erhalten (Vorabversionen zum Testen, können Fehler haben)</label>
+      <div class="actions left">
+        <button id="settings-github" class="btn">GitHub …</button>
+        <button id="settings-terminal" class="btn">Terminal-Details</button>
+        <button id="settings-clear" class="btn">Anmeldungen im Browser löschen</button>
+        <button id="settings-logout" class="btn">Bei ASK abmelden</button>
+      </div>
+      <div class="row spread">
+        <p id="settings-version" class="muted small"></p>
+        <button id="settings-update" class="btn small">Nach Updates suchen</button>
+      </div>
+      <div class="actions"><button id="settings-close" class="btn primary">Schliessen</button></div>
+    </div>
+
+    <div id="dlg-alert" role="dialog" aria-modal="true" aria-labelledby="dlg-alert-h" class="dialog" hidden>
+      <h1 id="dlg-alert-h">Hinweis</h1>
+      <p id="alert-text"></p>
+      <div class="actions">
+        <button id="alert-close" class="btn primary">Schliessen</button>
+      </div>
+    </div>
+
+    <div id="dlg-preview" role="dialog" aria-modal="true" aria-labelledby="big-title" class="dialog full" hidden>
       <div class="preview-head">
         <h2 id="big-title"></h2>
         <button id="big-close" class="btn primary">Schliessen</button>

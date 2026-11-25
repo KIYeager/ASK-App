@@ -105,8 +105,9 @@ Echtes ASK (Version, Freigaben, Anmeldung über Microsoft-Konto in der App), ech
 
 ```
 $env:ASK_BUILD_DIR = Get-Content .ask-build-dir   # von scripts\setup.ps1 geschrieben
+npm run lint
 npm test
-& "$env:ASK_BUILD_DIR\python\python.exe" -m unittest tests\test_terminal.py tests\test_skills.py
+& "$env:ASK_BUILD_DIR\python\python.exe" -m unittest tests\test_terminal.py tests\test_skills.py tests\test_streams.py
 npm run test:e2e
 node tests\e2e\packaged-test.js "$env:ASK_BUILD_DIR\dist\win-unpacked\ASK.exe" "$env:USERPROFILE\ASK-Test"
 node tests\e2e\portable-test.js "$env:ASK_BUILD_DIR\dist\ASK-0.1.0.exe" "$env:USERPROFILE\ASK-Test"

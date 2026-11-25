@@ -12,11 +12,17 @@ let chatId = null;
 let running = false;
 let runStarted = 0;
 let activityLabel = 'Denkt nach …';
+let kept = []; // beim Bearbeiten zurückgeholte Anhänge { path, name, size, image }, bereits im Ordner gespeichert
+let prefs = { verbose: false, todoCollapsed: true };
+let queued = null; // eine wartende Folgenachricht { text, files }, geht nach dem Auftrag automatisch raus
+let runFailed = false; // im laufenden Auftrag kam ein Fehler: nichts automatisch senden
 let current = null; // laufende Antwort { el, body, text, textEl, thinkEl, reasoning }
 const toolRows = new Map();
 let turnStats = []; // Tokenzahlen und Zeiten der Schritte des laufenden Auftrags
-const sent = []; // eigene Eingaben für Pfeil nach oben
-let sentIndex = -1;
+const sent = []; // eigene Eingaben in dieser Sitzung (Pfeil nach oben)
+let chatTexts = []; // frühere Eingaben des offenen Chats
+let sentIndex = -1; // Stelle im Verlauf, -1: Entwurf
+let draft = ''; // ungesendeter Text, solange man im Verlauf blättert
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -26,6 +32,18 @@ function el(tag, attrs = {}, ...children) {
     else if (v !== undefined && v !== null && v !== false) node.setAttribute(k, v === true ? '' : v);
   }
   for (const c of children) if (c !== null && c !== undefined) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  // Klickbare Elemente ohne eigene Tastenbedienung: mit Tab erreichbar, Enter und Leertaste lösen den Klick aus
+  if (typeof attrs.onclick === 'function' && !/^(button|a|input|select|textarea|summary)$/i.test(tag)) makeActivatable(node);
+  return node;
+}
+
+function makeActivatable(node) {
+  if (!node.hasAttribute('tabindex')) node.tabIndex = 0;
+  if (!node.hasAttribute('role')) node.setAttribute('role', 'button');
+  node.addEventListener('keydown', (e) => {
+    if (e.target !== node || e.isComposing || e.ctrlKey || e.altKey || e.metaKey) return; // Tasten verschachtelter Knöpfe lösen nichts doppelt aus
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); node.click(); }
+  });
   return node;
 }
 
@@ -68,10 +86,6 @@ function askText(a) {
   }
 }
 
-function ready() {
-  return state && state.folder && state.terminal.state === 'läuft' && state.ask.state === 'angemeldet' && !!state.model;
-}
-
 function blocker() {
   if (!state?.folder) return 'Zuerst einen Arbeitsordner wählen.';
   if (state.ask.state !== 'angemeldet') return 'Zuerst bei ASK anmelden.';
@@ -81,7 +95,7 @@ function blocker() {
   return '';
 }
 
-// Unten «Update …», sobald eine neue Version da ist (ENTSCHEIDE E33)
+// Unten «Update …», sobald eine neue Version da ist (ENTSCHEIDE E37)
 function renderUpdate(u) {
   const pill = $('update-pill');
   const show = !!u && ['verfügbar', 'lädt', 'geladen'].includes(u.state);
@@ -134,11 +148,13 @@ function renderStatus() {
   const web = $('web-btn');
   web.disabled = !s.webSearchAvailable;
   web.classList.toggle('on', s.webSearch && s.webSearchAvailable);
+  web.setAttribute('aria-pressed', String(!!(s.webSearch && s.webSearchAvailable)));
   web.title = !s.webSearchAvailable ? 'Websuche ist in ASK für dein Konto nicht freigegeben'
     : s.webSearch ? 'Websuche an: ASK sucht vor der Antwort im Web (/web zum Ausschalten)' : 'Websuche aus (/web zum Einschalten)';
 
   const memory = $('memory-btn');
   memory.classList.toggle('on', !!s.chatMemory);
+  memory.setAttribute('aria-pressed', String(!!s.chatMemory));
   memory.title = s.chatMemory ? 'Frühere Chats an: das Modell sieht die Liste der früheren Chats in diesem Ordner und kann sie durchsuchen und lesen (/chats zum Ausschalten)'
     : 'Frühere Chats aus: jeder Chat beginnt ohne Wissen über andere Chats (/chats zum Einschalten)';
 
@@ -148,13 +164,14 @@ function renderStatus() {
   document.body.classList.toggle('no-sidebar', !s.sidebarOpen);
   document.body.classList.toggle('no-chatbar', !s.chatbarOpen);
   applyWidths(); // eingeblendete Leiste: Breiten neu begrenzen
+  renderContext(s.chat?.context);
   renderComposer();
 }
 
 function renderComposer() {
   const block = blocker();
   const input = $('input');
-  input.placeholder = running ? 'Das Modell arbeitet … (Esc stoppt)' : (block || 'Was soll ich im Arbeitsordner erledigen?');
+  input.placeholder = running ? 'Das Modell arbeitet … Enter reiht die Nachricht ein, Esc stoppt' : (block || 'Was soll ich im Arbeitsordner erledigen?');
   $('input-box').classList.toggle('disabled', !!block && !running);
   const send = $('send-btn');
   send.textContent = running ? '■' : '↵';
@@ -164,8 +181,31 @@ function renderComposer() {
   $('activity').hidden = !running;
   $('welcome').hidden = $('messages').childElementCount > 0;
   updateUndo();
+  updateUserActions();
   renderTodo();
   renderGoal();
+}
+
+// ---------- Kontextanzeige ----------
+
+function tokensShort(n) {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n));
+}
+
+function renderContext(c) {
+  const box = $('ctx');
+  box.hidden = !c || !(c.tokens > 0);
+  if (box.hidden) return;
+  const known = c.limit > 0;
+  const pct = known ? Math.min(100, Math.round((c.tokens / c.limit) * 100)) : 0;
+  const warn = known && pct >= 80;
+  $('ctx-text').textContent = known ? `Kontext ${tokensShort(c.tokens)} / ${tokensShort(c.limit)} (${pct} %)`
+    : `Kontext ${c.estimated ? '≈ ' : ''}${tokensShort(c.tokens)} Token`;
+  $('ctx-fill').style.width = `${pct}%`;
+  box.classList.toggle('warn', warn);
+  box.classList.toggle('unknown', !known);
+  box.title = warn ? 'Der Kontext ist fast voll. Beginne mit /neu einen neuen Chat, sonst vergisst das Modell Früheres.'
+    : `Belegung des Kontextfensters${c.estimated ? ' (geschätzt)' : ''}`;
 }
 
 // ---------- Denkaufwand (Regler wie «Reasoning Effort» in ASK) ----------
@@ -237,10 +277,11 @@ function showAskPage() {
 
 function renderDialogs() {
   const currentDialog = activeDialog();
-  for (const name of ['warning', 'url', 'start', 'ask', 'github', 'terminal', 'preview']) {
+  for (const name of ['warning', 'url', 'start', 'ask', 'github', 'terminal', 'preview', 'alert', 'settings']) {
     $(`dlg-${name}`).hidden = name !== currentDialog;
   }
   $('overlay').hidden = !currentDialog;
+  if (currentDialog !== 'github') $('github-token').value = ''; // das Token bleibt nie im Feld stehen
   const login = needsLogin() && state.warningAccepted;
   $('login-area').hidden = !login;
   $('login-area').classList.toggle('loading', login && !showAskPage());
@@ -251,7 +292,93 @@ function renderDialogs() {
   if (currentDialog === 'start') renderStart();
   if (currentDialog === 'ask') renderAskDialog();
   if (currentDialog === 'terminal') renderTerminalDialog();
+  if (currentDialog === 'settings') renderSettings();
+  manageDialogFocus(currentDialog);
   if (currentDialog === 'url') $('url-input').value = $('url-input').value || state.askUrl || '';
+}
+
+// Fokus: beim Öffnen in den Dialog, beim Schliessen dorthin zurück, wo er war
+let shownDialog = null;
+let dialogReturn = null;
+const FOCUSABLE = 'button, input, select, textarea, a[href], [tabindex]';
+function dialogFocusables(name) {
+  const dlg = $(`dlg-${name}`);
+  return dlg ? [...dlg.querySelectorAll(FOCUSABLE)].filter((n) => !n.disabled && n.tabIndex >= 0 && !n.closest('[hidden]')) : [];
+}
+
+function manageDialogFocus(name) {
+  if (name === shownDialog) return;
+  const prev = shownDialog;
+  shownDialog = name;
+  if (name) {
+    if (!prev) dialogReturn = document.activeElement;
+    dialogFocusables(name)[0]?.focus();
+  } else {
+    const back = dialogReturn;
+    dialogReturn = null;
+    if (back && back.isConnected && back !== document.body) back.focus();
+  }
+}
+
+// Tab bleibt im offenen Dialog
+function trapTab(e) {
+  const name = shownDialog;
+  if (e.key !== 'Tab' || !name) return;
+  const list = dialogFocusables(name);
+  if (!list.length) { e.preventDefault(); return; }
+  const first = list[0];
+  const last = list[list.length - 1];
+  const a = document.activeElement;
+  if (!$(`dlg-${name}`).contains(a)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
+}
+
+// ---------- Einstellungen (/einstellungen) ----------
+
+function showSettings() {
+  openDialog = 'settings';
+  $('settings-url').value = state.askUrl || '';
+  $('settings-msg').textContent = '';
+  $('settings-error').hidden = true;
+  render();
+}
+
+function renderSettings() {
+  $('pref-verbose').checked = !!prefs.verbose;
+  $('pref-todo').checked = !!prefs.todoCollapsed;
+  $('settings-version').textContent = state.version ? `Version ${state.version}` : '';
+  $('pref-beta').checked = !!state.update?.beta;
+  $('settings-update').hidden = !state.update?.enabled;
+}
+
+function wireSettings() {
+  $('settings-btn').onclick = () => showSettings();
+  $('settings-url-ok').onclick = async () => {
+    $('settings-msg').textContent = '';
+    const res = await api.setAskUrl($('settings-url').value);
+    $('settings-error').hidden = !!res?.ok;
+    $('settings-error').textContent = res?.reason || '';
+    if (res?.ok) $('settings-msg').textContent = 'Gespeichert.';
+  };
+  $('settings-url').onkeydown = (e) => { if (e.key === 'Enter') $('settings-url-ok').click(); };
+  $('pref-verbose').onchange = (e) => setVerbose(e.target.checked);
+  $('pref-todo').onchange = (e) => {
+    prefs = { ...prefs, todoCollapsed: e.target.checked };
+    todoPeek = null;
+    renderTodo();
+    api.setPrefs({ todoCollapsed: e.target.checked });
+  };
+  $('pref-beta').onchange = (e) => api.setBetaUpdates(e.target.checked, false);
+  $('settings-update').onclick = () => api.updateAction();
+  $('settings-github').onclick = () => showGithub();
+  $('settings-terminal').onclick = () => { openDialog = 'terminal'; $('terminal-logs').hidden = false; render(); };
+  $('settings-clear').onclick = async () => {
+    await api.browserClear();
+    $('settings-msg').textContent = 'Anmeldungen im Browser gelöscht.';
+  };
+  $('settings-logout').onclick = async () => { openDialog = null; await api.logout(); render(); };
+  $('settings-close').onclick = () => { openDialog = null; render(); };
 }
 
 function renderStart() {
@@ -279,9 +406,8 @@ async function openFolder(action) {
 }
 
 function alertBox(text) {
-  openDialog = 'terminal';
-  $('terminal-detail').textContent = text;
-  $('terminal-logs').hidden = true;
+  openDialog = 'alert'; // eigener Dialog: das Terminal-Fenster würde sich überschreiben und «Neu starten» anbieten
+  $('alert-text').textContent = text;
   render();
 }
 
@@ -368,24 +494,112 @@ async function openChat(folder, id) {
   if (res && res.ok === false && res.reason) alertBox(res.reason);
 }
 
+let renaming = null; // { folder, id, value }: Umbenennen in der Liste
+let chatMenu = null; // offenes Menü { node, back }
+let contentHits = { query: '', list: [] };
+let searchTimer = 0;
+
+function closeChatMenu() {
+  if (!chatMenu) return;
+  const { node, back } = chatMenu;
+  chatMenu = null;
+  node.remove();
+  if (back) { back.removeAttribute('aria-expanded'); if (back.isConnected) back.focus(); }
+}
+
+function openChatMenu(group, chat, anchor, at) {
+  closeChatMenu();
+  const item = (label, fn, cls = '') => el('button', { type: 'button', role: 'menuitem', class: cls, onclick: (e) => { e.stopPropagation(); closeChatMenu(); fn(); } }, label);
+  const node = el('div', { class: 'chat-menu', role: 'menu', 'aria-label': 'Chat' },
+    item('Umbenennen', () => { renaming = { folder: group.folder, id: chat.id, value: chat.title, fresh: true }; renderChats(); }),
+    item(chat.pinned ? 'Nicht mehr anheften' : 'Anheften', async () => { await api.chatPin(group.folder, chat.id, !chat.pinned); loadChats(); }),
+    item('Löschen', async () => { if (await api.chatDelete(group.folder, chat.id, chat.title)) loadChats(); }, 'danger'));
+  node.addEventListener('keydown', (e) => {
+    const items = [...node.querySelectorAll('button')];
+    const i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+    } else if (e.key === 'Tab') {
+      closeChatMenu();
+    }
+  });
+  node.addEventListener('click', (e) => e.stopPropagation());
+  document.body.append(node);
+  const r = anchor ? anchor.getBoundingClientRect() : { left: at.x, bottom: at.y };
+  node.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - node.offsetWidth - 4))}px`;
+  node.style.top = `${Math.max(4, Math.min(r.bottom, window.innerHeight - node.offsetHeight - 4))}px`;
+  if (anchor) anchor.setAttribute('aria-expanded', 'true');
+  chatMenu = { node, back: anchor };
+  node.querySelector('button').focus();
+}
+
+async function saveRename(group, chat, input) {
+  const title = input.value.trim();
+  renaming = null;
+  if (title && title !== chat.title) await api.chatRename(group.folder, chat.id, title);
+  loadChats();
+}
+
 function chatItem(group, chat) {
   const active = group.current && chat.id === chatId;
+  if (renaming && renaming.folder === group.folder && renaming.id === chat.id) {
+    const input = el('input', { class: 'chat-rename', type: 'text', value: renaming.value, 'aria-label': 'Neuer Name des Chats', maxlength: '200', spellcheck: 'false' });
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); saveRename(group, chat, input); }
+      else if (e.key === 'Escape') { e.preventDefault(); renaming = null; renderChats(); }
+    });
+    input.addEventListener('blur', (e) => { if (renaming && e.relatedTarget && !e.relatedTarget.closest('.chat-rename')) { renaming = null; renderChats(); } });
+    return el('li', { class: 'chat-item renaming' }, input);
+  }
+  const menuBtn = chat.placeholder ? null : el('button', { class: 'cmenu-btn', type: 'button', title: 'Mehr: Umbenennen, Anheften, Löschen', 'aria-label': `Menü für ${chat.title}`, 'aria-haspopup': 'menu',
+    onclick: (e) => { e.stopPropagation(); openChatMenu(group, chat, e.currentTarget); } }, '…');
   const item = el('li', {
-    class: `chat-item${active ? ' active' : ''}`, title: `${chat.title}\n${chat.count} ${chat.count === 1 ? 'Auftrag' : 'Aufträge'} · ${formatTime(chat.updated)}\nRechtsklick: löschen`,
+    class: `chat-item${active ? ' active' : ''}`, title: `${chat.title}\n${chat.count} ${chat.count === 1 ? 'Auftrag' : 'Aufträge'} · ${formatTime(chat.updated)}\nRechtsklick: Menü`,
     onclick: () => { if (!active) openChat(group.folder, chat.id); },
-    oncontextmenu: async (e) => {
+    oncontextmenu: (e) => {
       e.preventDefault();
-      if (await api.chatDelete(group.folder, chat.id, chat.title)) loadChats();
+      if (!chat.placeholder) openChatMenu(group, chat, null, { x: e.clientX, y: e.clientY });
     },
   },
   active && running ? el('span', { class: 'spinner', 'aria-hidden': 'true' }, '✻') : null,
+  chat.pinned ? el('span', { class: 'cpin', title: 'Angeheftet', role: 'img', 'aria-label': 'angeheftet' }, '📌') : null,
   el('span', { class: 'ctitle' }, chat.title),
-  el('span', { class: 'cwhen' }, shortTime(chat.updated)));
+  el('span', { class: 'cwhen' }, shortTime(chat.updated)),
+  menuBtn);
+  if (active) item.setAttribute('aria-current', 'true');
   return item;
 }
 
+// Treffer im Inhalt der Chats (api.chatSearch), nur für die gerade eingegebene Suche
+function scheduleContentSearch() {
+  clearTimeout(searchTimer);
+  const query = $('chat-search').value.trim();
+  if (query.length < 2) return;
+  searchTimer = setTimeout(async () => {
+    let list = [];
+    try { list = await api.chatSearch(query); } catch { list = []; }
+    if ($('chat-search').value.trim() !== query) return; // inzwischen anders gesucht: Ergebnis verwerfen
+    contentHits = { query, list: Array.isArray(list) ? list : [] };
+    renderChats();
+  }, 250);
+}
+
+function contentSection(query) {
+  if (query.length < 2 || contentHits.query !== query || !contentHits.list.length) return null;
+  return el('section', { class: 'chat-group content-hits' },
+    el('div', { class: 'group-head' }, el('span', { class: 'gname' }, 'Im Inhalt gefunden')),
+    el('ul', { class: 'chat-items' }, ...contentHits.list.map((h) => el('li', { class: 'chat-item hit', title: `${h.title}\n${h.name}`, onclick: () => openChat(h.folder, h.id) },
+      el('div', { class: 'hit-top' }, el('span', { class: 'ctitle' }, h.title), el('span', { class: 'hit-folder' }, h.name)),
+      h.snippets?.[0] ? el('div', { class: 'hit-snippet' }, h.snippets[0]) : null))));
+}
+
 function renderChats() {
-  const query = $('chat-search').value.trim().toLowerCase();
+  const prevRename = document.querySelector('.chat-rename');
+  if (prevRename && renaming) { renaming.value = prevRename.value; renaming.fresh = renaming.fresh || document.activeElement === prevRename; }
+  const rawQuery = $('chat-search').value.trim();
+  const query = rawQuery.toLowerCase();
   const nodes = [];
   for (const group of groups) {
     let chats = group.chats;
@@ -403,20 +617,27 @@ function renderChats() {
     }));
     if (!chats.length) list.append(el('li', { class: 'chat-empty' }, 'Noch keine Chats'));
     nodes.push(el('section', { class: `chat-group${group.current ? ' current' : ''}${isCollapsed ? ' collapsed' : ''}`, 'data-folder': group.folder },
-      el('div', { class: 'group-head', title: group.folder, onclick: () => {
+      el('div', { class: 'group-head', title: group.folder, 'aria-expanded': String(!isCollapsed), onclick: () => {
         if (collapsed.has(group.folder)) collapsed.delete(group.folder); else collapsed.add(group.folder);
         renderChats();
       } },
       el('span', { class: 'caret', 'aria-hidden': 'true' }, '▾'),
       el('span', { class: 'gname' }, group.name),
-      el('button', { class: 'gnew', title: `Neuer Chat in ${group.name}`, onclick: (e) => {
+      el('button', { class: 'gnew', title: `Neuer Chat in ${group.name}`, 'aria-label': `Neuer Chat in ${group.name}`, onclick: (e) => {
         e.stopPropagation();
         api.chatNew(group.folder).then((res) => { if (res && res.ok === false && res.reason) alertBox(res.reason); });
       } }, '+')),
       list));
   }
+  const hits = contentSection(rawQuery);
+  if (hits) nodes.push(hits);
   if (!nodes.length) nodes.push(el('div', { class: 'chat-empty' }, query ? 'Keine Treffer' : 'Noch keine Chats'));
   $('chat-groups').replaceChildren(...nodes);
+  const input = document.querySelector('.chat-rename');
+  if (input && renaming?.fresh) {
+    input.focus();
+    if (renaming.selectAll !== false) { input.select(); renaming.selectAll = false; }
+  }
 }
 
 // ---------- Chat ----------
@@ -502,8 +723,11 @@ function foldTurn(endTime = Date.now()) {
   if (failed) parts.push(`${failed} fehlgeschlagen`);
   const fold = el('div', { class: 'msg fold', title: 'Klicken zeigt die einzelnen Schritte' },
     el('span', { class: 'mark' }, '▸'), el('div', { class: 'body' }, parts.join(' · ')));
+  makeActivatable(fold);
+  fold.setAttribute('aria-expanded', 'false');
   fold.addEventListener('click', () => {
     const open = fold.classList.toggle('open');
+    fold.setAttribute('aria-expanded', String(open));
     fold.querySelector('.mark').textContent = open ? '▾' : '▸';
     steps.forEach((n) => n.classList.toggle('folded', !open));
   });
@@ -652,8 +876,10 @@ function toolNode(cls) {
   const result = el('div', { class: 'result' }, el('span', { class: 'elbow' }, '⎿'), el('div', { class: 'res' }, summary));
   const details = el('div', { class: 'details' });
   const node = addMessage(cls, '●', head, result, details);
+  makeActivatable(node);
+  node.setAttribute('aria-expanded', 'false');
   node.addEventListener('click', (e) => {
-    if (!e.target.closest('.details') && !window.getSelection().toString()) node.classList.toggle('expanded');
+    if (!e.target.closest('.details') && !window.getSelection().toString()) node.setAttribute('aria-expanded', String(node.classList.toggle('expanded')));
   });
   return { node, head, result, summary, details };
 }
@@ -753,8 +979,10 @@ function toolResult(row, { ok, summary, output, tasks, name, images }, live = fa
 
 // Ausführliche Ansicht (Ctrl+O): Gedanken und alle Details aufgeklappt
 let verbose = false;
-function setVerbose(on) {
+function setVerbose(on, save = true) {
   verbose = on;
+  if (save) api.setPrefs({ verbose: on });
+  $('verbose-btn').setAttribute('aria-pressed', String(on));
   document.body.classList.toggle('verbose', on);
   document.querySelectorAll('details.thinking').forEach((d) => { d.open = on; });
 }
@@ -767,7 +995,7 @@ const sec = (ms) => (ms / 1000).toLocaleString('de-CH', { minimumFractionDigits:
 // Während eines Auftrags offen (Ctrl+T blendet aus), danach eine Zeile, die sich aufklappen lässt.
 let todo = { tasks: [], live: false }; // live: im laufenden Auftrag gesetzt
 let todoOpen = true; // während eines Auftrags
-let todoPeek = false; // nach dem Auftrag aufgeklappt
+let todoPeek = null; // nach dem Auftrag aufgeklappt; null: so, wie es die Einstellung sagt
 const TODO_SHOWN = 7;
 
 function setTodo(tasks, live) {
@@ -777,14 +1005,16 @@ function setTodo(tasks, live) {
 
 // Neuer Auftrag: eine fertige Liste verschwindet, eine offene bleibt, bis das Modell sie aktualisiert
 function newTurnTodo() {
-  todoPeek = false;
+  todoPeek = null;
   setTodo(todo.tasks.every((t) => t.status === 'erledigt') ? [] : todo.tasks, false);
 }
+
+const todoIdleOpen = () => todoPeek ?? !prefs.todoCollapsed;
 
 function toggleTodo() {
   if (!todo.tasks.length) return;
   if (running && todo.live) todoOpen = !todoOpen;
-  else todoPeek = !todoPeek;
+  else todoPeek = !todoIdleOpen();
   renderTodo();
 }
 
@@ -795,7 +1025,7 @@ function renderTodo() {
   if (!tasks.length) return;
   const done = tasks.filter((t) => t.status === 'erledigt').length;
   const current = tasks.find((t) => t.status === 'in_arbeit');
-  const open = running && todo.live ? todoOpen : todoPeek;
+  const open = running && todo.live ? todoOpen : todoIdleOpen();
   box.classList.toggle('open', open);
   box.classList.toggle('done', done === tasks.length);
   $('todo-caret').textContent = open ? '▾' : '▸';
@@ -840,6 +1070,39 @@ function addChanges(snapshot, changes, undone = false) {
     if (res && !res.ok && !res.cancelled) addMessage('error', '✗', res.reason);
   };
   updateUndo();
+}
+
+// Bearbeiten / Neu senden an der letzten Eingabe des Chats (nur ohne laufenden Auftrag)
+function updateUserActions() {
+  const users = [...document.querySelectorAll('.msg.user')];
+  const last = running ? null : users[users.length - 1];
+  document.querySelectorAll('.user-actions').forEach((n) => { if (n.closest('.msg') !== last) n.remove(); });
+  if (!last) return;
+  const resend = last.querySelector('.user-resend');
+  if (resend) { resend.disabled = !!blocker(); return; }
+  last.querySelector('.body').append(el('div', { class: 'user-actions' },
+    el('button', { type: 'button', class: 'user-edit', title: 'Die Nachricht zurücknehmen und im Eingabefeld ändern', onclick: () => editLast(false) }, '✎ Bearbeiten'),
+    el('button', { type: 'button', class: 'user-resend', title: 'Die Nachricht zurücknehmen und gleich nochmals senden', disabled: !!blocker(), onclick: () => editLast(true) }, '↻ Neu senden')));
+}
+
+async function editLast(resend) {
+  if (running) return;
+  const res = await api.chatRewind();
+  if (!res || res.cancelled) return;
+  if (!res.ok) { alertBox(res.reason || 'Die Nachricht lässt sich nicht zurücknehmen.'); return; }
+  if (res.failed?.length) addMessage('notice', '⎿', `Nicht zurückgesetzt: ${res.failed.map((f) => baseName(f?.path || f)).join(', ')}`);
+  const attachments = res.attachments || [];
+  await loadTranscript(); // die zurückgenommene Nachricht verschwindet aus der Ansicht
+  if (resend && !blocker()) {
+    await sendText(res.text || '', [], attachments);
+    return;
+  }
+  const input = $('input');
+  input.value = input.value ? `${res.text || ''}\n${input.value}` : (res.text || '');
+  kept = [...attachments, ...kept];
+  renderPending();
+  autosize();
+  input.focus();
 }
 
 function updateUndo() {
@@ -925,7 +1188,7 @@ function onEvent(ev) {
     case 'live': onLive(ev); break;
     case 'undo': onUndo(ev); break;
     case 'notice': addMessage('notice', '⎿', ev.text); break;
-    case 'error': addMessage('error', '✗', ev.text); break;
+    case 'error': runFailed = true; addMessage('error', '✗', ev.text); break;
     case 'done':
       current = null;
       addStats(turnStats);
@@ -947,21 +1210,28 @@ function renderTranscript(items) {
   let lastTime = 0;
   let turn = null; // Eingabe, mit der der Auftrag begann (Sicherung, Änderungen)
   let lastTasks = null;
+  chatTexts = [];
   const endTurn = () => {
     if (turn) addChanges(turn.snapshot, turn.changes, turn.undone);
     addStats(stats);
   };
   turnNode = null;
   for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
     if (item.role === 'auto') {
       addMessage('notice auto', '↻', 'Weiter am Ziel …');
     } else if (item.role === 'undo') {
       addMessage('notice', '↶', item.text);
+    } else if (item.role === 'notice') {
+      addMessage('notice', '⎿', item.text);
+    } else if (item.role === 'error') {
+      addMessage('error', '✗', item.text);
     } else if (item.role === 'user') {
       endTurn();
       turn = item;
       stats = [];
       foldTurn(lastTime);
+      if (item.content) chatTexts.push(item.content);
       addUser(item.content, item.time || 0, item.attachments);
     } else if (item.role === 'assistant') {
       lastTime = item.time || lastTime;
@@ -969,7 +1239,7 @@ function renderTranscript(items) {
       if (item.reasoning) appendReasoning(item.reasoning);
       endAssistant(item.content);
       addSources(item.sources);
-      for (const call of item.calls) {
+      for (const call of item.calls || []) {
         names.set(call.id, call.name);
         toolCall(call.id, call.name, call.label, call.detail);
       }
@@ -1019,17 +1289,17 @@ const COMMANDS = [
   { cmd: '/github', text: 'Mit GitHub verbinden, Repository des Ordners', run: () => showGithub() },
   { cmd: '/modell', text: 'Modell wählen', run: () => $('model-select').focus() },
   { cmd: '/denken', text: 'Denkaufwand einstellen (Standard, Tief bis Maximal)', run: () => toggleThinkPop(true) },
+  { cmd: '/einstellungen', text: 'Einstellungen öffnen', run: () => showSettings() },
   { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api.setWebSearch(!state.webSearch); } },
   { cmd: '/chats', text: 'Frühere Chats für das Modell ein- oder ausschalten', run: () => api.setChatMemory(!state.chatMemory) },
   { cmd: '/neustart', text: 'Terminal neu starten', run: () => api.restartTerminal() },
   { cmd: '/abmelden', text: 'Bei ASK abmelden', run: () => api.logout() },
   { cmd: '/update', text: 'Nach einer neuen Version von ASK suchen', run: () => api.updateAction() },
-  { cmd: '/beta', text: 'Beta-Versionen erhalten ein- oder ausschalten', run: () => api.setBetaUpdates(!state.update?.beta) },
+  { cmd: '/beta', text: 'Beta-Versionen erhalten ein- oder ausschalten', run: () => api.setBetaUpdates(!state.update?.beta, true) },
 ];
 let slashIndex = 0;
 
-function slashMatches() {
-  const v = $('input').value;
+function slashMatches(v = $('input').value) {
   if (!v.startsWith('/') || v.includes(' ') || v.includes('\n')) return [];
   return COMMANDS.filter((c) => c.cmd.startsWith(v.toLowerCase()));
 }
@@ -1039,7 +1309,7 @@ function renderSlash() {
   const box = $('slash');
   box.hidden = matches.length === 0;
   slashIndex = Math.min(slashIndex, Math.max(matches.length - 1, 0));
-  box.replaceChildren(...matches.map((c, i) => el('div', { class: i === slashIndex ? 'active' : '', onclick: () => runSlash(c) },
+  box.replaceChildren(...matches.map((c, i) => el('div', { class: i === slashIndex ? 'active' : '', onclick: (e) => { e.stopPropagation(); runSlash(c); } }, // sonst schliesst der Klick /denken gleich wieder
     el('span', { class: 'cmd' }, c.cmd), el('span', { class: 'muted' }, c.text))));
 }
 
@@ -1056,52 +1326,121 @@ function autosize() {
   input.style.height = `${input.scrollHeight}px`;
 }
 
-async function submit() {
-  if (running) {
-    api.chatStop();
+// Wartende Nachricht: Enter während eines Auftrags reiht eine Folgenachricht ein (nur eine)
+function renderQueue() {
+  const row = $('queue-row');
+  row.hidden = !queued;
+  if (!queued) { row.replaceChildren(); return; }
+  const label = queued.text || [...queued.files, ...queued.kept].map((f) => f.name || 'Bild').join(', ');
+  row.replaceChildren(el('span', { class: 'attach-chip queue-chip', title: label },
+    el('span', { class: 'name' }, `Wartet: ${label}`),
+    el('button', { class: 'remove', title: 'Entfernen (Text zurück ins Eingabefeld)', 'aria-label': 'Wartende Nachricht entfernen', onclick: () => restoreQueued() }, '×')));
+}
+
+function queueMessage(text) {
+  if (queued) {
+    addMessage('notice', '⎿', 'Es wartet schon eine Nachricht. Mit × entfernen oder den Auftrag abwarten.');
     return;
   }
+  queued = { text, files: pending, kept };
+  pending = [];
+  kept = [];
+  renderPending();
+  $('input').value = '';
+  autosize();
+  renderSlash();
+  renderQueue();
+}
+
+// Wartende Nachricht zurück ins Eingabefeld (Stopp, Fehler, anderer Chat, ×)
+function restoreQueued() {
+  if (!queued) return;
+  const q = queued;
+  queued = null;
+  const input = $('input');
+  if (q.text) input.value = input.value ? `${q.text}\n${input.value}` : q.text;
+  pending = [...q.files, ...pending].slice(0, MAX_ATTACH);
+  kept = [...q.kept, ...kept];
+  renderPending();
+  renderQueue();
+  autosize();
+}
+
+function stopRun() {
+  restoreQueued();
+  api.chatStop();
+}
+
+function flushQueued() {
+  if (!queued || running) return;
+  if (blocker()) { restoreQueued(); return; }
+  const q = queued;
+  queued = null;
+  renderQueue();
+  sendText(q.text, q.files, q.kept);
+}
+
+async function submit() {
   const input = $('input');
   const text = input.value.trim();
-  if (!text && !pending.length) return;
+  if (!text && !pending.length && !kept.length) return; // auch während eines Auftrags: leere Eingabe tut nichts
   const goalCmd = /^\/goal(?:\s+([\s\S]*))?$/i.exec(text);
   if (goalCmd) {
+    const arg = (goalCmd[1] || '').trim();
+    if (running && arg && !/^(aus|stopp|stop|löschen|off|clear)$/i.test(arg)) {
+      addMessage('notice', '⎿', 'Ein neues Ziel lässt sich erst setzen, wenn der Auftrag fertig ist.');
+      return;
+    }
     input.value = '';
     autosize();
     renderSlash();
-    await handleGoal((goalCmd[1] || '').trim());
+    await handleGoal(arg);
     return;
   }
-  const matches = slashMatches();
+  const matches = slashMatches(text); // getrimmt: «/neu » mit Leerzeichen ist auch der Befehl
   if (matches.length) {
     runSlash(matches[slashIndex] || matches[0]);
+    return;
+  }
+  if (running) {
+    queueMessage(text);
     return;
   }
   if (blocker()) return;
   input.value = '';
   autosize();
   const files = pending;
+  const keptFiles = kept;
   pending = [];
+  kept = [];
   renderPending();
-  await sendText(text, files);
+  await sendText(text, files, keptFiles);
 }
 
-async function sendText(text, files = []) {
+async function sendText(text, files = [], keptFiles = []) {
   if (text) sent.push(text);
   sentIndex = -1;
   running = true;
+  runFailed = false;
   runStarted = Date.now();
   activityLabel = 'Denkt nach …';
   tickActivity();
   renderComposer();
-  const res = await api.chatSend(text, files.map(({ name, type, data }) => ({ name, type, data })));
+  let res;
+  try {
+    res = await api.chatSend(text, files.map(({ name, type, data }) => ({ name, type, data })), keptFiles);
+  } catch (err) {
+    res = { ok: false, reason: err?.message || String(err) };
+  }
   if (res && res.ok === false) {
     // Nichts gesendet: Anhänge und Text zurück ins Eingabefeld
     running = false;
-    pending = files;
+    pending = [...files, ...pending];
+    kept = [...keptFiles, ...kept];
     renderPending();
-    if (text && !$('input').value) { $('input').value = text; autosize(); }
-    addMessage('error', '✗', res.reason);
+    const input = $('input');
+    if (text) { input.value = input.value ? `${text}\n${input.value}` : text; autosize(); }
+    addMessage('error', '✗', res.reason || 'Senden fehlgeschlagen.');
     renderComposer();
   } else {
     for (const f of files) if (f.url) URL.revokeObjectURL(f.url);
@@ -1117,7 +1456,7 @@ let pending = []; // { name, type, size, data, url }
 
 async function addFiles(list) {
   for (const file of [...list]) {
-    if (pending.length >= MAX_ATTACH) {
+    if (pending.length + kept.length >= MAX_ATTACH) {
       addMessage('notice', '⎿', `Höchstens ${MAX_ATTACH} Anhänge auf einmal.`);
       break;
     }
@@ -1141,8 +1480,12 @@ async function addFiles(list) {
 
 function renderPending() {
   const row = $('attach-row');
-  row.hidden = pending.length === 0;
-  row.replaceChildren(...pending.map((f, i) => el('span', { class: 'attach-chip', title: `${f.name} (${formatSize(f.size)})` },
+  row.hidden = pending.length === 0 && kept.length === 0;
+  const keptChips = kept.map((a, i) => el('span', { class: 'attach-chip', title: a.path },
+    a.image ? el('img', { src: askFileUrl(a.path), alt: '' }) : el('span', { class: `badge ${extOf(a.name)}` }, (extOf(a.name) || 'Datei').slice(0, 4).toUpperCase()),
+    el('span', { class: 'name' }, a.name || 'Anhang'),
+    el('button', { class: 'remove', type: 'button', title: 'Entfernen', 'aria-label': `${a.name} entfernen`, onclick: () => { kept.splice(i, 1); renderPending(); } }, '×')));
+  row.replaceChildren(...keptChips, ...pending.map((f, i) => el('span', { class: 'attach-chip', title: `${f.name} (${formatSize(f.size)})` },
     f.url ? el('img', { src: f.url, alt: '' }) : el('span', { class: `badge ${extOf(f.name)}` }, (extOf(f.name) || 'Datei').slice(0, 4).toUpperCase()),
     el('span', { class: 'name' }, f.name || 'Bild'),
     el('button', { class: 'remove', title: 'Entfernen', 'aria-label': `${f.name} entfernen`, onclick: () => {
@@ -1151,6 +1494,8 @@ function renderPending() {
       renderPending();
     } }, '×'))));
 }
+
+const askFileUrl = (p) => `askfile://datei/${p.split('/').map(encodeURIComponent).join('/')}`;
 
 // Anhänge in einer Eingabe im Chat: Bilder als Vorschaubild, sonst Name; Klick zeigt die Vorschau.
 function attachmentList(attachments) {
@@ -1224,12 +1569,36 @@ function onKey(e) {
     submit();
     return;
   }
-  if (e.key === 'ArrowUp' && !$('input').value && sent.length) {
-    sentIndex = sentIndex < 0 ? sent.length - 1 : Math.max(sentIndex - 1, 0);
-    $('input').value = sent[sentIndex];
-    autosize();
-    e.preventDefault();
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing) walkHistory(e);
+}
+
+// Frühere Eingaben, neueste zuerst: die des offenen Chats, dann die dieser Sitzung
+function historyList() {
+  const all = [...chatTexts].reverse();
+  for (const t of [...sent].reverse()) if (!all.includes(t)) all.push(t);
+  return all;
+}
+
+// Pfeil nach oben in der ersten, nach unten in der letzten Zeile blättert; der Entwurf bleibt erhalten
+function walkHistory(e) {
+  const input = $('input');
+  if (input.selectionStart !== input.selectionEnd) return;
+  const caret = input.selectionStart;
+  const list = historyList();
+  if (e.key === 'ArrowUp') {
+    if (input.value.slice(0, caret).includes('\n') || !list.length || sentIndex >= list.length - 1) return;
+    if (sentIndex < 0) draft = input.value;
+    sentIndex += 1;
+    input.value = list[sentIndex];
+    input.setSelectionRange(0, 0);
+  } else {
+    if (sentIndex < 0 || input.value.slice(caret).includes('\n')) return;
+    sentIndex -= 1;
+    input.value = sentIndex < 0 ? draft : list[sentIndex];
+    input.setSelectionRange(input.value.length, input.value.length);
   }
+  e.preventDefault();
+  autosize();
 }
 
 // ---------- Seitenleiste ----------
@@ -1254,6 +1623,7 @@ function openBrowser() {
   $('browser-pane').hidden = false;
   document.body.classList.add('browser-open');
   $('browser-btn').classList.add('on');
+  $('browser-btn').setAttribute('aria-pressed', 'true');
   applyWidths();
   requestAnimationFrame(reportBrowser);
 }
@@ -1262,6 +1632,7 @@ function closeBrowser() {
   $('browser-pane').hidden = true;
   document.body.classList.remove('browser-open', 'browser-big');
   $('browser-btn').classList.remove('on');
+  $('browser-btn').setAttribute('aria-pressed', 'false');
   $('bp-url').value = '';
   $('bp-status').textContent = '';
   $('bp-log').replaceChildren();
@@ -1430,6 +1801,9 @@ function onLive(ev) {
   }
 }
 
+// Pfade vergleichen: «/» und «\\» gelten gleich
+const samePath = (a, b) => String(a).replaceAll('\\', '/') === String(b).replaceAll('\\', '/');
+
 function extOf(name) {
   const m = /\.([a-z0-9]+)$/i.exec(name);
   return m ? m[1].toLowerCase() : '';
@@ -1437,7 +1811,7 @@ function extOf(name) {
 
 function fileItem(entry, meta) {
   const ext = entry.dir ? 'dir' : extOf(entry.name);
-  return el('li', { title: entry.path, class: selected?.path === entry.path ? 'active' : '',
+  return el('li', { title: entry.path, class: selected && samePath(selected.path, entry.path) ? 'active' : '',
     onclick: () => (entry.dir ? api.showFile(entry.path) : showPreview(entry)),
     ondblclick: () => !entry.dir && api.openFile(entry.path) },
   el('span', { class: `badge ${ext}` }, entry.dir ? 'DIR' : (ext || 'Datei').slice(0, 4).toUpperCase()),
@@ -1453,14 +1827,23 @@ function renderFiles() {
   $('files-empty').hidden = entries.length > 0;
   markFiles($('messages')); // neue Dateien im Chat als Link markieren
   if (selected) {
-    const found = [...files.recent, ...files.top].find((f) => f.path === selected.path);
-    if (!found) closePreview();
-    else if (found.modified !== selected.modified) showPreview(found);
+    const found = [...files.recent, ...files.top].find((f) => samePath(f.path, selected.path));
+    if (found) {
+      selected.listed = true;
+      if (found.modified !== selected.modified) showPreview(found);
+    } else if (selected.listed) {
+      // War in den Listen und fehlt jetzt: nur schliessen, wenn die Datei wirklich weg ist (die Listen sind gekürzt).
+      // Pfade, die nie in den Listen standen (.ask/, Bilder, Unterordner), bleiben offen.
+      const path = selected.path;
+      api.preview(path).then((p) => { if (p?.kind === 'missing' && selected && samePath(selected.path, path)) closePreview(); }).catch(() => {});
+    }
   }
 }
 
 async function fillPreview(container, entry) {
+  const tok = container._tok = (container._tok || 0) + 1; // spätere Füllung (andere Datei) gewinnt
   const p = await api.preview(entry.path);
+  if (container._tok !== tok) return;
   container.replaceChildren();
   if (p.kind === 'image') container.append(el('img', { src: `${p.url}?t=${entry.modified}`, alt: entry.name }));
   else if (p.kind === 'pdf') container.append(el('iframe', { src: `${p.url}?t=${entry.modified}`, title: entry.name }));
@@ -1476,8 +1859,11 @@ async function fillPreview(container, entry) {
       box.append(el('button', { class: 'btn', onclick: async () => {
         status.textContent = 'Wird mit Office in PDF umgewandelt …';
         const res = await api.toPdf(entry.path);
+        // Hat die Person inzwischen eine andere Datei gewählt, wird das Ergebnis verworfen
+        if (container._tok !== tok || !selected || !samePath(selected.path, entry.path)) return;
         if (!res.ok) { status.textContent = res.fehler; return; }
         const pdf = await api.preview(res.path);
+        if (container._tok !== tok || !selected || !samePath(selected.path, entry.path)) return;
         container.replaceChildren(el('iframe', { src: `${pdf.url}?t=${Date.now()}`, title: entry.name }));
       } }, 'Als PDF anzeigen'), status);
     }
@@ -1487,11 +1873,19 @@ async function fillPreview(container, entry) {
 
 async function showPreview(entry) {
   selected = { path: entry.path, modified: entry.modified };
+  if (document.body.classList.contains('browser-open')) {
+    // Die Seitenleiste ist bei offenem Browser ausgeblendet: Vorschau im grossen Fenster
+    openDialog = 'preview';
+    $('big-title').textContent = entry.path;
+    render();
+    await fillPreview($('big-body'), entry);
+    return;
+  }
   if (!state.sidebarOpen) await api.setSidebar(true);
   $('preview-panel').hidden = false;
   $('preview-title').textContent = baseName(entry.path);
   $('preview-title').title = entry.path;
-  document.querySelectorAll('.files li').forEach((li) => li.classList.toggle('active', li.title === entry.path));
+  document.querySelectorAll('.files li').forEach((li) => li.classList.toggle('active', samePath(li.title, entry.path)));
   await fillPreview($('preview-body'), entry);
   if (openDialog === 'preview') await fillPreview($('big-body'), entry);
 }
@@ -1514,6 +1908,19 @@ function render() {
   renderDialogs();
 }
 
+// Der Fokus geht nur dann ins Eingabefeld, wenn er sonst nirgends ist (nicht aus Suche, Adressleiste, Dialogen)
+// Einstellungen der Oberfläche aus dem Zustand übernehmen
+function applyPrefs() {
+  prefs = { ...prefs, ...(state?.prefs || {}) };
+  if (prefs.verbose !== verbose) setVerbose(prefs.verbose, false);
+}
+
+function inputFocusOk() {
+  if (activeDialog() || !$('think-pop').hidden) return false;
+  const a = document.activeElement;
+  return !a || a === document.body || !!a.closest('.chat-area');
+}
+
 function reportBounds() {
   const r = $('ask-host').getBoundingClientRect();
   api.setAskBounds({ x: r.x, y: r.y, width: r.width, height: r.height });
@@ -1522,6 +1929,7 @@ function reportBounds() {
 function wire() {
   wireAttachments();
   wireScroll();
+  wireSettings();
   $('todo-head').onclick = () => toggleTodo();
   wireBrowser();
   wireResizers();
@@ -1529,8 +1937,8 @@ function wire() {
   $('sidebar-btn').onclick = () => api.setSidebar(!state.sidebarOpen);
   $('new-btn').onclick = () => newChat();
   $('chatbar-btn').onclick = () => api.setChatbar(!state.chatbarOpen);
-  $('chat-search').addEventListener('input', () => renderChats());
-  $('chat-search').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; renderChats(); } });
+  $('chat-search').addEventListener('input', () => { renderChats(); scheduleContentSearch(); });
+  $('chat-search').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; clearTimeout(searchTimer); renderChats(); } });
   $('model-select').onchange = (e) => api.setModel(e.target.value);
   $('web-btn').onclick = () => api.setWebSearch(!state.webSearch);
   $('memory-btn').onclick = () => api.setChatMemory(!state.chatMemory);
@@ -1538,13 +1946,13 @@ function wire() {
   $('think-pop').addEventListener('click', (e) => e.stopPropagation());
   $('think-range').addEventListener('input', (e) => api.setThinking(THINK_LEVELS[Number(e.target.value)]));
   $('think-standard').onclick = () => api.setThinking('standard');
-  document.addEventListener('click', () => toggleThinkPop(false));
+  document.addEventListener('click', () => { toggleThinkPop(false); closeChatMenu(); });
   $('update-pill').onclick = () => api.updateAction();
   $('terminal-pill').onclick = () => { openDialog = 'terminal'; $('terminal-logs').hidden = false; render(); };
   $('ask-pill').onclick = () => { openDialog = 'ask'; render(); };
-  $('send-btn').onclick = () => submit();
+  $('send-btn').onclick = () => (running ? stopRun() : submit());
   $('input').addEventListener('keydown', onKey);
-  $('input').addEventListener('input', () => { autosize(); slashIndex = 0; renderSlash(); });
+  $('input').addEventListener('input', () => { sentIndex = -1; autosize(); slashIndex = 0; renderSlash(); });
   document.querySelectorAll('.example').forEach((b) => {
     b.onclick = () => { $('input').value = b.textContent; autosize(); $('input').focus(); };
   });
@@ -1595,7 +2003,13 @@ function wire() {
     render();
     await fillPreview($('big-body'), selected);
   };
-  $('big-close').onclick = () => { openDialog = null; $('big-body').replaceChildren(); render(); };
+  $('big-close').onclick = () => {
+    openDialog = null;
+    $('big-body').replaceChildren();
+    if ($('preview-panel').hidden) selected = null; // nur im grossen Fenster geöffnet
+    render();
+  };
+  document.addEventListener('keydown', trapTab);
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
@@ -1609,34 +2023,43 @@ function wire() {
   $('verbose-btn').onclick = () => setVerbose(!verbose);
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    if (chatMenu) { closeChatMenu(); return; }
     if (!$('think-pop').hidden) { toggleThinkPop(false); return; }
     if (openDialog) { openDialog = null; render(); return; }
+    if (activeDialog()) return; // feste Dialoge (Warnung, Adresse, Start): Esc stoppt nichts dahinter
+    if (e.target.closest?.('#chat-search, #bp-url, .chat-rename')) return; // dort gilt Esc nur für das Feld selbst
     if (!$('slash').hidden) { $('input').value = ''; renderSlash(); return; }
-    if (running) api.chatStop();
+    if (running) stopRun();
   });
 
   api.onState((s) => {
     const folderChanged = state && s.folder !== state.folder;
+    const recentChanged = state && JSON.stringify(s.recent) !== JSON.stringify(state.recent);
     state = s;
+    applyPrefs();
     goal = s.chat.goal;
-    if (folderChanged) loadChats();
+    if (folderChanged || recentChanged) loadChats(); // auch wenn ein Ordner aus der Liste entfernt wurde
     if (s.chat.running !== running) {
       running = s.chat.running;
       if (running && !runStarted) runStarted = Date.now();
       if (!running) runStarted = 0;
     }
-    if (s.chat.id !== chatId) loadTranscript();
+    if (s.chat.id !== chatId) { restoreQueued(); kept = []; renderPending(); loadTranscript(); }
     render();
   });
   api.onChatEvent(onEvent);
   api.onChatChanged((c) => {
-    if (c.id !== chatId) loadTranscript();
+    if (c.id !== chatId) { restoreQueued(); kept = []; renderPending(); loadTranscript(); }
+    if (state) state.chat = { ...state.chat, ...c };
+    renderContext(c.context);
     running = c.running;
     goal = c.goal;
     loadChats();
     if (!running) runStarted = 0;
     renderComposer();
-    if (!running) $('input').focus();
+    if (running) return;
+    if (queued) { if (runFailed) restoreQueued(); else flushQueued(); } // Auftrag normal beendet: wartende Nachricht senden
+    else if (inputFocusOk()) $('input').focus();
   });
   api.onFiles((f) => { files = f; renderFiles(); });
   api.onMenuChooseFolder(() => openFolder(api.chooseFolder));
@@ -1655,6 +2078,7 @@ function wire() {
   $('github-token').onkeydown = (e) => { if (e.key === 'Enter') $('github-ok').click(); };
   $('github-disconnect').onclick = async () => { await api.githubDisconnect(); showGithub(); };
   $('github-close').onclick = () => { openDialog = null; render(); };
+  $('alert-close').onclick = () => { openDialog = null; render(); };
   api.onFolderError((reason) => alertBox(reason));
   api.onAskLoaded(() => {
     askFailed = false;
@@ -1680,6 +2104,7 @@ function wire() {
 (async function init() {
   wire();
   state = await api.getState();
+  applyPrefs();
   render();
   await loadTranscript();
   await loadChats();

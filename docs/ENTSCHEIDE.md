@@ -201,7 +201,37 @@ Schreibt die Person im Chat, während das Modell im Browser-Bereich arbeitet, sp
 
 Die App gibt den Fokus jetzt nach dem Laden, nach jedem Klick (nach 30 ms) und nach jeder Aktion an die Oberfläche zurück, sofern der Bereich ihn hat. Ausnahme: Die Person klickt während des Aufrufs selbst in den Browser; dann bleibt er dort. Ob der Bereich schon vor dem Aufruf den Fokus hatte, zählt nicht, denn auch Einblenden und frühere Aufrufe holen ihn dorthin, ohne dass die Person dort ist. Tasten (`sendInputEvent`) und Text (`insertText`) erreichen die Seite auch ohne Fokus, auch in ein zuvor angeklicktes Feld.
 
-## E33 Updates über ein öffentliches Release-Repository
+## E33 Was das Modell schreiben kann, ist für die App nicht vertrauenswürdig
+
+Das Terminal läuft mit niedriger Integritätsstufe, die App selbst mit den normalen Rechten der Person. Alles, was die App aus dem Arbeitsordner liest und danach mit ihren Rechten ausführt, ist darum ein Weg aus dem Schutz hinaus, sobald das Modell (zum Beispiel nach einer manipulierten Webseite oder Datei) es darauf anlegt. Eine Durchsicht am 25.11.2026 fand drei solche Wege; alle sind geschlossen:
+
+- **Rückgängig.** Die Liste der gesicherten Dateien lag in `.ask/sicherung`. Ein Eintrag wie `..\..\AppData\…\Startup\x.bat` liess die App beim Zurücksetzen ausserhalb des Ordners schreiben. Sicherung und GitHub-Verbindung liegen jetzt unter `%LOCALAPPDATA%\ASK-Desktop\projekte\<Kennung>` (nicht im Laufzeitordner des Terminals, der ebenfalls beschreibbar ist); vorhandene Daten aus `.ask` übernimmt die App einmal. Zusätzlich prüft sie jeden Stand beim Lesen: nur relative Pfade ohne `..`, Laufwerk oder Datenstrom, nur echte Prüfsummen, und kein Schreiben über eine Verknüpfung aus dem Ordner hinaus (`src/main/safe.js`).
+- **Doppelklick.** «Öffnen» startete jede Datei im zugehörigen Programm, auch eine vom Modell angelegte `Bericht.bat`. Ohne Rückfrage öffnet die App jetzt nur noch Dokumente, Bilder, Medien und Text; bei allem anderen fragt sie nach.
+- **Office-Umwandlung.** Die Prüfung auf externe Verweise suchte mit Mustern im XML und liess sich mit einfachen Anführungszeichen, einem Ziel auf `/hyperlink` oder klein geschriebenen Feldnamen umgehen; Word hätte dann Inhalte von fremden Rechnern geholt und dabei Anmeldedaten mitgeschickt. Die Datei wird jetzt in der App gelesen (`src/main/ooxml.js`): Verweise nach ihrem Typ, Felder nach dem ersten Wort der Anweisung, auch wenn Word sie auf mehrere Stücke verteilt, in allen Teilen des Dokuments. Was sich nicht lesen lässt, gilt als abgelehnt. Die alte Prüfung im PowerShell-Skript bleibt als zweite Stufe.
+
+Dazu gehört der Abgleich mit GitHub: Repository und Branch aus der gespeicherten Verbindung gehen in Adressen der GitHub-API mit dem Token der Person und werden darum geprüft; Pfade aus einem Repository, die aus dem Ordner hinausführen, legt die App nicht an. `.gitignore` gilt beim Hochladen (was schon auf GitHub liegt, bleibt dabei, wie bei git), und eine Datei, die hier und auf GitHub verschieden geändert wurde, ersetzt das Hochladen nur nach einer eigenen Rückfrage.
+
+Nicht geschlossen: Die Kennzeichnung «Low» bleibt an jedem Ordner, der einmal Arbeitsordner war (README, Bekannte Grenzen).
+
+## E34 Enter während eines Auftrags reiht ein
+
+Bisher stoppte Enter einen laufenden Auftrag; wer eine Folgefrage tippte und Enter drückte, brach die Arbeit ab und schickte nichts. Jetzt reiht Enter eine Nachricht ein, die nach dem Auftrag von selbst hinausgeht. Gestoppt wird nur mit Esc oder ■; dann, nach einem Fehler und beim Wechsel des Chats steht die wartende Nachricht wieder im Eingabefeld, damit nichts ungewollt abgeschickt wird.
+
+Ordnerwechsel während eines Auftrags lehnt die App ab: Der laufende Auftrag schrieb seinen Chat sonst in den neuen Ordner. Mehrere Starts des Terminals kurz hintereinander laufen nacheinander, und nur der letzte startet wirklich; eine einzelne verpasste Probe gilt nicht mehr als Ausfall.
+
+## E35 Langer Verlauf
+
+Die App weiss nicht, wie gross das Kontextfenster des Modells in ASK ist. Sie schickt darum ältere Arbeitsschritte von Anfang an gekürzt mit (Ergebnisse und lange Argumente, etwa den Inhalt einer geschriebenen Datei; die Datei liegt ja im Ordner) und kürzt stärker, sobald ASK meldet, dass der Verlauf zu lang ist. Reicht auch das nicht, sagt sie, dass ein neuer Chat nötig ist. Der gespeicherte Chat bleibt immer vollständig. Eine Zusammenfassung des Verlaufs durch das Modell gibt es nicht.
+
+## E36 Eingabe ändern, Chat-Menü, Kontextanzeige, Einstellungen, Tastatur
+
+- **Eingabe ändern oder neu senden** gibt es nur für die letzte Eingabe. Sie nimmt die Eingabe und alles danach aus dem Chat und setzt den Ordner nach Rückfrage mit derselben Sicherung zurück wie «Rückgängig» (E24); lehnt die Person das Zurücksetzen ab, bleibt auch der Chat, wie er ist. So kann der Chat nie etwas anderes behaupten, als im Ordner liegt.
+- **Chat-Menü**: Umbenennen und Anheften stehen in der Chat-Datei selbst (`title`, `pinned`), damit sie mit dem Ordner mitgehen. Die Suche im Inhalt läuft über alle Ordner der Liste, mit derselben Suche, die das Modell mit `chat_search` benutzt (E28).
+- **Kontextanzeige**: Die Grösse des Kontextfensters kennt die App nur, wenn ASK sie zum Modell angibt oder sie einmal in einer Fehlermeldung genannt hat (dann merkt sich die App die Zahl pro Modell). Sonst zeigt sie nur die Tokenzahl, ohne Prozent.
+- **Aufgabenliste**: Sie gehörte in der Oberfläche schon zum Chat (aus dessen Arbeitsschritten). Die Datei `.ask/tasks.json` für den ganzen Ordner las niemand mehr; das Werkzeug schreibt sie nicht mehr.
+- **Tastatur**: Was sich anklicken lässt, ist mit Tab erreichbar; Dialoge halten den Fokus und geben ihn beim Schliessen zurück. Die gedämpfte Schrift ist heller (Kontrast etwa 4.7:1 statt 3:1).
+
+## E37 Updates über ein öffentliches Release-Repository
 
 Neue Versionen kamen bisher nur als Datei, die jemand auf dem eigenen Windows-Rechner bauen (`setup.ps1`, `npm run dist`) und verteilen musste. Neu baut der Workflow `.github/workflows/release.yml` bei jedem Tag `v<Version>` auf `windows-latest` und veröffentlicht in einem eigenen, öffentlichen Repository `KIYeager/ASK-Releases`; die App aktualisiert sich mit electron-updater.
 

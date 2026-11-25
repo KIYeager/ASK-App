@@ -1,18 +1,24 @@
 // Sicherung des Arbeitsordners vor jedem Auftrag (ENTSCHEIDE E24). Das Modell ändert Dateien direkt;
 // «Rückgängig» setzt den Ordner auf den Stand vor einem Auftrag zurück. Jede Dateifassung liegt nur
-// einmal in .ask/sicherung/objekte (Name = SHA-1 des Inhalts), ein Stand ist eine Liste
-// Pfad → Prüfsumme in .ask/sicherung/staende. Unveränderte Dateien (gleiche Grösse und Zeit) werden
+// einmal in <Ablage>/objekte (Name = SHA-1 des Inhalts), ein Stand ist eine Liste
+// Pfad → Prüfsumme in <Ablage>/staende. Unveränderte Dateien (gleiche Grösse und Zeit) werden
 // nicht neu gelesen. Erfasst auch Änderungen durch Skripte, nicht nur durch write_file.
+//
+// Die Ablage liegt in der App ausserhalb des Arbeitsordners (main.js, projectDataDir), damit das
+// Modell sie nicht ändern kann: Der Hauptprozess schreibt beim Zurücksetzen mit normalen Rechten.
+// Trotzdem wird jeder Stand beim Lesen geprüft (nur sichere Pfade im Ordner, nur echte Prüfsummen).
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { safeRel, safeJoin, SHA1 } = require('./safe');
 
 const STORE = path.join('.ask', 'sicherung');
 const SKIP = /^(\.ask|\.git|node_modules|__pycache__|\.venv)(\/|$)|(^|\/)~\$/i; // ~$: Sperrdateien von Office
 const MAX_FILE = 100 * 1024 * 1024; // grössere Dateien werden nicht gesichert
 const MAX_FILES = 5000;
 const KEEP_DAYS = 14;
+const FRESH_MS = 60 * 60 * 1000; // so junge Dateifassungen räumt prune nicht weg (laufende Sicherung)
 
 const sha1 = (data) => crypto.createHash('sha1').update(data).digest('hex');
 const newId = () => `${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
@@ -49,13 +55,15 @@ async function listFiles(root) {
 }
 
 class Snapshots {
-  constructor(root) {
+  // dir: Ablage der Sicherung; ohne Angabe .ask/sicherung im Ordner (nur für Tests)
+  constructor(root, dir = path.join(root, STORE)) {
     this.root = root;
-    this.dir = path.join(root, STORE);
+    this.dir = dir;
     this.last = null; // letzter Stand, für Prüfsummen unveränderter Dateien
   }
 
   objectPath(hash) {
+    if (!SHA1.test(String(hash))) throw new Error('Ungültige Prüfsumme in der Sicherung');
     return path.join(this.dir, 'objekte', hash.slice(0, 2), hash);
   }
 
@@ -64,15 +72,28 @@ class Snapshots {
     return path.join(this.dir, 'staende', `${id}.json`);
   }
 
+  // Liest einen Stand und prüft ihn: Ein veränderter Stand darf den Hauptprozess nicht dazu bringen,
+  // ausserhalb des Ordners zu schreiben oder fremde Dateien als «Dateifassung» zu kopieren.
   read(id) {
-    return JSON.parse(fs.readFileSync(this.standPath(id), 'utf8'));
+    return this.checked(JSON.parse(fs.readFileSync(this.standPath(id), 'utf8')));
+  }
+
+  checked(stand) {
+    if (!stand || typeof stand !== 'object' || !stand.files || typeof stand.files !== 'object' || Array.isArray(stand.files)) {
+      throw new Error('Die Sicherung ist beschädigt.');
+    }
+    for (const [rel, f] of Object.entries(stand.files)) {
+      if (!safeRel(rel) || SKIP.test(rel) || !f || !SHA1.test(String(f.hash))) throw new Error('Die Sicherung ist beschädigt.');
+    }
+    stand.skipped = Array.isArray(stand.skipped) ? stand.skipped.map(String) : [];
+    return stand;
   }
 
   newest() {
     try {
       const dir = path.join(this.dir, 'staende');
       const latest = fs.readdirSync(dir).map((n) => ({ n, t: fs.statSync(path.join(dir, n)).mtimeMs })).sort((a, b) => b.t - a.t)[0];
-      return latest ? JSON.parse(fs.readFileSync(path.join(dir, latest.n), 'utf8')) : null;
+      return latest ? this.checked(JSON.parse(fs.readFileSync(path.join(dir, latest.n), 'utf8'))) : null;
     } catch {
       return null;
     }
@@ -103,7 +124,7 @@ class Snapshots {
     const files = {};
     const skipped = [];
     for (const [rel, info] of Object.entries(current)) {
-      if (info.size > MAX_FILE) { skipped.push(rel); continue; }
+      if (info.size > MAX_FILE || !safeRel(rel)) { skipped.push(rel); continue; }
       try {
         files[rel] = { ...info, hash: await this.hashOf(rel, info, before[rel], true) };
       } catch {
@@ -147,7 +168,7 @@ class Snapshots {
     const failed = [];
     for (const rel of d.added) {
       try {
-        await fsp.rm(path.join(this.root, rel), { force: true });
+        await fsp.rm(safeJoin(this.root, rel), { force: true });
         await this.removeEmptyParents(rel);
       } catch {
         failed.push(rel);
@@ -155,7 +176,7 @@ class Snapshots {
     }
     for (const rel of [...d.changed, ...d.removed]) {
       try {
-        const target = path.join(this.root, rel);
+        const target = safeJoin(this.root, rel);
         await fsp.mkdir(path.dirname(target), { recursive: true });
         await fsp.copyFile(this.objectPath(stand.files[rel].hash), target);
         const t = new Date(stand.files[rel].mtime);
@@ -198,10 +219,12 @@ class Snapshots {
     const objDir = path.join(this.dir, 'objekte');
     for (const sub of fs.existsSync(objDir) ? fs.readdirSync(objDir) : []) {
       for (const name of fs.readdirSync(path.join(objDir, sub))) {
-        if (!used.has(name)) {
-          fs.rmSync(path.join(objDir, sub, name), { force: true });
-          removed++;
-        }
+        if (used.has(name)) continue;
+        const file = path.join(objDir, sub, name);
+        // Eine gerade laufende Sicherung hat ihre Fassungen schon abgelegt, den Stand aber noch nicht
+        try { if (now - fs.statSync(file).mtimeMs < FRESH_MS) continue; } catch { continue; }
+        fs.rmSync(file, { force: true });
+        removed++;
       }
       if (!fs.readdirSync(path.join(objDir, sub)).length) fs.rmdirSync(path.join(objDir, sub));
     }

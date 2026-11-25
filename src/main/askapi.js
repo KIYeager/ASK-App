@@ -184,6 +184,22 @@ const THINKING_PARAMS = {
   maximal: { reasoning_effort: 'high', think: true, chat_template_kwargs: { enable_thinking: true } },
 };
 
+// Lehnt ein Modell eine Stufe ab und nennt die erlaubten («Unexpected reasoning effort high. Supported
+// types are xhigh (default), medium, and low»), die nächste erlaubte Stufe wählen, bei Gleichstand die höhere.
+// null: keine Liste in der Meldung oder die Stufe ist schon erlaubt.
+const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+function nearestEffort(message, wanted) {
+  const list = /supported[^:.]*?(?:are|:)\s*([^.]+)/i.exec(String(message))?.[1] || '';
+  const allowed = EFFORTS.filter((e) => new RegExp(`\\b${e}\\b`, 'i').test(list));
+  if (!allowed.length || allowed.includes(wanted)) return null;
+  const at = EFFORTS.indexOf(wanted);
+  return allowed.reduce((best, e) => {
+    const d = Math.abs(EFFORTS.indexOf(e) - at);
+    const bd = Math.abs(EFFORTS.indexOf(best) - at);
+    return d < bd || (d === bd && EFFORTS.indexOf(e) > EFFORTS.indexOf(best)) ? e : best;
+  });
+}
+
 // Websuche in ASK eingeschaltet und für dieses Konto erlaubt? (Admins dürfen immer.)
 function webSearchAllowed(config, user) {
   if (config?.features?.enable_web_search !== true) return false;
@@ -215,6 +231,15 @@ function isStaleTerminal(s) {
   return s?.name === 'ASK Desktop' && s?.key === 'ask-desktop' && /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(String(s?.url));
 }
 
+// Kontextfenster eines Modells aus den Angaben von /api/models. Je nach Modellserver steht es an anderer Stelle
+// (Ollama: num_ctx, vLLM: max_model_len, andere: context_length oder context_window).
+function contextOf(m) {
+  const candidates = [m?.info?.params?.num_ctx, m?.context_length, m?.context_window, m?.max_model_len, m?.info?.meta?.context_length,
+    m?.openai?.context_length, m?.openai?.context_window, m?.openai?.max_model_len, m?.top_provider?.context_length];
+  const n = candidates.map(Number).find((v) => Number.isFinite(v) && v >= 1000);
+  return n ? Math.round(n) : 0;
+}
+
 async function errorOf(res) {
   const text = await res.text().catch(() => '');
   let detail = text;
@@ -222,6 +247,14 @@ async function errorOf(res) {
   if (typeof detail !== 'string') detail = JSON.stringify(detail);
   return Object.assign(new Error(`ASK: ${detail || `HTTP ${res.status}`}`), { status: res.status });
 }
+
+// Gehört die Adresse zu ASK? Verglichen wird die ganze Herkunft, nicht nur der Anfang der Adresse
+// («https://ask.example.evil.org» beginnt auch mit «https://ask.example»).
+function sameOrigin(url, base) {
+  try { return !!url && !!base && new URL(url).origin === new URL(base).origin; } catch { return false; }
+}
+
+const STALL_MS = 5 * 60 * 1000; // so lange darf ASK mitten in einer Antwort schweigen
 
 const RECHECK_MS = { 'nicht-angemeldet': 3000, unbekannt: 1000, pruefen: 500, fehler: 30000, angemeldet: 120000 };
 
@@ -265,7 +298,7 @@ class AskSession extends EventEmitter {
   navigated(url) {
     let target;
     try { target = new URL(url); } catch { return; }
-    if (!this.base || target.origin !== new URL(this.base).origin) return; // fremde Anmeldeseite bleibt sichtbar
+    if (!sameOrigin(target.href, this.base)) return; // fremde Anmeldeseite bleibt sichtbar
     if (this.status.state === 'nicht-angemeldet' && !/^\/auth\b/.test(target.pathname)) this.publish({ state: 'pruefen' });
     this.check(true);
   }
@@ -275,7 +308,7 @@ class AskSession extends EventEmitter {
     if (this.busy && force) this.again = true; // nach der laufenden Prüfung gleich nochmals
     if (!this.view || !this.base || this.busy) return this.status;
     const wc = this.view.webContents;
-    if (wc.isDestroyed() || wc.isLoading() || !wc.getURL().startsWith(new URL(this.base).origin)) return this.status;
+    if (wc.isDestroyed() || wc.isLoading() || !sameOrigin(wc.getURL(), this.base)) return this.status;
     const interval = RECHECK_MS[this.status.state] ?? 30000;
     if (!force && Date.now() - this.lastCheck < interval) return this.status;
     this.lastCheck = Date.now();
@@ -315,7 +348,9 @@ class AskSession extends EventEmitter {
       ...options,
       headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json', ...(options.headers || {}) },
     });
-    if (res.status === 401 || res.status === 403) {
+    // Nur 401 heisst «nicht mehr angemeldet». 403 kommt auch, wenn das Konto ein Modell oder eine Funktion
+    // nicht benutzen darf; das meldet der Aufrufer als Fehler, die Anmeldung bleibt.
+    if (res.status === 401) {
       this.token = '';
       this.publish({ state: 'nicht-angemeldet' });
       throw new AuthError('Die Anmeldung bei ASK ist abgelaufen. Bitte neu anmelden.');
@@ -381,28 +416,44 @@ class AskSession extends EventEmitter {
     this.models = (data.data || data || [])
       .filter((m) => m && m.id && !m.info?.meta?.hidden)
       // vision: true/false, wenn ASK angibt, ob das Modell Bilder versteht; sonst undefined
-      .map((m) => ({ id: m.id, name: m.name || m.id, vision: m.info?.meta?.capabilities?.vision }));
+      // context: Grösse des Kontextfensters in Token, falls ASK oder der Modellserver sie nennt; sonst 0
+      .map((m) => ({ id: m.id, name: m.name || m.id, vision: m.info?.meta?.capabilities?.vision, context: contextOf(m) }));
     this.emit('models', this.models);
     return this.models;
   }
 
+  // Abmelden wie auf der Webseite: bei ASK abmelden, das Token aus der Seite und die Cookies von ASK löschen.
+  // Ohne das meldet die Anmeldeseite nach einem Login über Microsoft gleich wieder an (Token im Cookie).
   async logout() {
+    const token = this.token;
     this.token = '';
+    if (token && this.session) {
+      await this.session.fetch(`${this.base}/api/v1/auths/signout`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
+    }
     if (this.view) {
       await this.view.webContents.executeJavaScript('localStorage.removeItem("token")', true).catch(() => {});
+      await this.session.clearStorageData({ origin: new URL(this.base).origin, storages: ['cookies'] }).catch(() => {});
       this.view.webContents.loadURL(`${this.base}/auth`);
     }
     this.publish({ state: 'nicht-angemeldet' });
   }
 
   // Eine Antwort des Modells, gestreamt. onDelta(kind, text) für die Anzeige.
-  async chat({ model, messages, tools, webSearch, thinking, signal, onDelta }) {
+  // Bricht die Antwort ab (Stopp, Verbindung weg), trägt der Fehler unter «partial» mit, was bis dahin ankam.
+  async chat({ model, messages, tools, webSearch, thinking, signal: outer, onDelta }) {
     const completion = new Completion(onDelta);
+    // Schweigt ASK mitten in der Antwort zu lange, hängt die Verbindung: abbrechen statt ewig warten
+    const stall = new AbortController();
+    const signal = outer ? AbortSignal.any([outer, stall.signal]) : stall.signal;
     const send = (withUsage) => {
       const body = { model, messages, stream: true };
       // Websuche macht ASK auf dem Server vor der Antwort und schickt die Quellen mit.
       if (webSearch) body.features = { web_search: true };
-      if (!this.noThinkParams) Object.assign(body, THINKING_PARAMS[thinking] || {});
+      if (!this.noThinkParams && THINKING_PARAMS[thinking]) {
+        Object.assign(body, THINKING_PARAMS[thinking]);
+        const effort = this.effortFor?.[body.reasoning_effort];
+        if (effort) body.reasoning_effort = effort;
+      }
       // Tokenzahlen am Ende des Stroms; manche Server lehnen das ab, dann ohne.
       if (withUsage) body.stream_options = { include_usage: true };
       if (tools && tools.length) body.tools = tools;
@@ -411,9 +462,13 @@ class AskSession extends EventEmitter {
     let res = await send(!this.noUsage);
     let error = res.ok ? null : await errorOf(res);
     // Lehnt der Server einen Zusatz ab, ohne ihn nochmals versuchen und ihn künftig weglassen.
-    for (let retry = 0; error && res.status === 400 && retry < 2; retry++) {
+    for (let retry = 0; error && res.status === 400 && retry < 3; retry++) {
+      const thinkParams = !this.noThinkParams && THINKING_PARAMS[thinking];
+      const sent = thinkParams && (this.effortFor?.[thinkParams.reasoning_effort] || thinkParams.reasoning_effort);
+      const other = thinkParams && /reasoning[ _]effort/i.test(error.message) && nearestEffort(error.message, sent);
       if (!this.noUsage && /stream_options|include_usage/i.test(error.message)) this.noUsage = true;
-      else if (!this.noThinkParams && thinking && THINKING_PARAMS[thinking] && /reasoning_effort|chat_template_kwargs|enable_thinking|\bthink\b/i.test(error.message)) this.noThinkParams = true;
+      else if (other) this.effortFor = { ...this.effortFor, [thinkParams.reasoning_effort]: other }; // erlaubte Stufe statt gar keiner
+      else if (thinkParams && /reasoning[ _]effort|chat_template_kwargs|enable_thinking|\bthink\b/i.test(error.message)) this.noThinkParams = true;
       else break;
       res = await send(!this.noUsage);
       error = res.ok ? null : await errorOf(res);
@@ -427,15 +482,26 @@ class AskSession extends EventEmitter {
     const parser = new SseParser((chunk) => completion.add(chunk));
     const decoder = new TextDecoder();
     const reader = res.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      parser.push(decoder.decode(value, { stream: true }));
+    let timer = null;
+    try {
+      for (;;) {
+        clearTimeout(timer);
+        timer = setTimeout(() => stall.abort(), STALL_MS);
+        const { done, value } = await reader.read();
+        if (done) break;
+        parser.push(decoder.decode(value, { stream: true }));
+      }
+    } catch (err) {
+      const partial = completion.end();
+      if (stall.signal.aborted && !outer?.aborted) throw Object.assign(new Error('ASK hat fünf Minuten lang nichts mehr gesendet. Die Verbindung wurde getrennt; schreib «weiter».'), { partial });
+      throw Object.assign(err, { partial });
+    } finally {
+      clearTimeout(timer);
     }
     parser.push('\n');
-    if (completion.error) throw new Error(`ASK: ${completion.error}`);
+    if (completion.error) throw Object.assign(new Error(`ASK: ${completion.error}`), { partial: completion.end() });
     return completion.end();
   }
 }
 
-module.exports = { AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS };
+module.exports = { sameOrigin, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS, nearestEffort };

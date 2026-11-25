@@ -1,0 +1,57 @@
+# Prüft jede Änderung: Lint und Unit-Tests auf Linux, Terminal- und Skill-Tests auf Windows.
+# Die End-to-End-Tests (Electron, gepackte App) laufen weiterhin von Hand, siehe docs/TESTPROTOKOLL.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Lint und Unit-Tests (Node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # --ignore-scripts: Electron selbst (rund 100 MB) braucht es für Lint und Unit-Tests nicht
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm test
+
+  python:
+    name: Lint und Tests ohne Windows (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: pip install ruff
+      - run: ruff check python resources/skills tests scripts
+      - run: python -m unittest tests/test_streams.py -v
+
+  windows:
+    name: Terminal und Skills (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: python/requirements.txt
+      - run: 'pip install --only-binary=:all: -r python/requirements.txt'
+      - run: python -m unittest tests/test_streams.py tests/test_skills.py -v
+      # Startet das Terminal mit niedriger Integritätsstufe in einem Ordner mit Umlaut
+      - run: python -m unittest tests/test_terminal.py -v

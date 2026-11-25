@@ -7,7 +7,7 @@ const settings = require('./settings');
 const paths = require('./paths');
 const { checkFolder } = require('./folders');
 const { Terminal } = require('./terminal');
-const { AskSession, THINKING_LEVELS } = require('./askapi');
+const { AskSession, THINKING_LEVELS, sameOrigin } = require('./askapi');
 const { Agent, NEW } = require('./agent');
 const { Workspace } = require('./workspace');
 const { AppWindow, BROWSER_PARTITION } = require('./window');
@@ -19,7 +19,7 @@ const { saveAttachments, imageUrl, nativeResize } = require('./attachments');
 const { Snapshots } = require('./snapshot');
 const { Visual } = require('./visual');
 const { Web } = require('./web');
-const { historyPrompt } = require('./history');
+const { historyPrompt, search: searchChats } = require('./history');
 const { Images } = require('./bild');
 
 app.setAppUserModelId('ch.tfbern.ask');
@@ -44,6 +44,7 @@ const testMode = !app.isPackaged && !!process.env.ASK_TEST_SCRIPT;
 // GitHub-Token verschlüsselt mit dem Windows-Konto (DPAPI) in den Einstellungen; nur hier lesbar.
 const github = new GitHub({
   api: (testMode && process.env.ASK_TEST_GITHUB_API) || undefined,
+  linkFile: (folder) => projectFile(folder, 'github.json', path.join('.ask', 'github.json')),
   store: {
     get() {
       const stored = settings.get('githubToken');
@@ -79,7 +80,7 @@ const githubTrust = {
 // Internet für das Modell; lokale Adressen nur im Test (Mock-Server auf 127.0.0.1)
 const web = new Web({ ask, fetchImpl: (url, options) => net.fetch(url, options), allowLocal: testMode });
 
-// Updates (ENTSCHEIDE E33): fragt vor dem Herunterladen und vor dem Neustart, nie während eines Auftrags.
+// Updates (ENTSCHEIDE E37): fragt vor dem Herunterladen und vor dem Neustart, nie während eines Auftrags.
 const updater = new Updater({
   app,
   config: process.env.ASK_NO_UPDATES === '1' ? null : settings.appConfig().updates, // aus für automatische Tests
@@ -142,13 +143,36 @@ const agent = new Agent({
   getImageUrl: (attachment) => imageUrl(agent.getFolder(), attachment, nativeResize(nativeImage)),
   getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
   getSnapshots: () => snapshotsFor(agent.getFolder()),
+  // Kontextfenster: was ASK zum Modell angibt, sonst was ASK einmal in einer Fehlermeldung genannt hat
+  getContextLimit: (model) => ask.models.find((m) => m.id === model)?.context || Number((settings.get('contextLimits') || {})[model]) || 0,
+  onContextLimit: (model, limit) => settings.set({ contextLimits: { ...(settings.get('contextLimits') || {}), [model]: limit } }),
 });
+
+// Datei oder Ordner der App zu einem Arbeitsordner, ausserhalb davon (paths.projectDataDir). Frühere
+// Versionen legten Sicherung und GitHub-Verbindung in .ask ab: einmal übernehmen. Was von dort kommt,
+// prüfen snapshot.js und github.js beim Lesen, denn das Modell konnte es ändern.
+function projectFile(folder, name, legacy) {
+  const target = path.join(paths.projectDataDir(folder), name);
+  const old = path.join(folder, legacy);
+  try {
+    if (!fs.existsSync(target) && fs.existsSync(old)) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.cpSync(old, target, { recursive: true });
+    }
+    if (fs.existsSync(old)) fs.rmSync(old, { recursive: true, force: true });
+  } catch {
+    // nicht übernommen: Die App beginnt eine neue Ablage
+  }
+  return target;
+}
 
 // Sicherung des Arbeitsordners (snapshot.js), eine Instanz pro Ordner
 let snapshots = null;
 function snapshotsFor(folder) {
   if (!folder) return null;
-  if (!snapshots || !sameFolder(snapshots.root, folder)) snapshots = new Snapshots(folder);
+  if (!snapshots || !sameFolder(snapshots.root, folder)) {
+    snapshots = new Snapshots(folder, projectFile(folder, 'sicherung', path.join('.ask', 'sicherung')));
+  }
   return snapshots;
 }
 
@@ -170,6 +194,12 @@ const TEXT_EXT = new Set(['.txt', '.md', '.csv', '.json', '.py', '.js', '.html',
   '.yaml', '.ini', '.toml', '.bat', '.ps1', '.sql', '.tsv', '.java', '.c', '.cpp', '.h', '.ts']);
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp']);
 const OFFICE_EXT = new Set(['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt', '.odt', '.ods', '.odp']);
+// Dateiarten, die ein Doppelklick ohne Rückfrage im zugehörigen Programm öffnet: Dokumente, Bilder, Medien,
+// Text. Alles andere (exe, bat, cmd, lnk, js, vbs, hta, ps1, py, msi, reg, Makro-Dokumente, Unbekanntes) fragt nach.
+const SAFE_OPEN_EXT = new Set(['.txt', '.md', '.csv', '.tsv', '.json', '.xml', '.yml', '.yaml', '.ini', '.toml', '.log', '.css', '.sql', '.html', '.htm', '.svg',
+  '.pdf', '.docx', '.xlsx', '.pptx', '.odt', '.ods', '.odp', '.rtf',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tif', '.tiff',
+  '.mp3', '.wav', '.ogg', '.m4a', '.mp4', '.webm', '.mov', '.zip']);
 
 function readInstruction(name, folder, chat = 'allgemein') {
   try {
@@ -221,7 +251,16 @@ function state() {
     webSearchAvailable: !!ask.webSearch,
     chat: agent.state(),
     update: updater.snapshot(),
+    prefs: prefs(),
+    version: app.getVersion(),
   };
+}
+
+// Einstellungen der Oberfläche, die sich die App merkt (Dialog «Einstellungen»)
+const PREFS = { verbose: false, todoCollapsed: true }; // wie bisher: die Aufgabenliste schrumpft nach dem Auftrag auf eine Zeile
+function prefs() {
+  const stored = settings.get('prefs') || {};
+  return Object.fromEntries(Object.entries(PREFS).map(([k, v]) => [k, typeof stored[k] === typeof v ? stored[k] : v]));
 }
 
 function currentModel() {
@@ -256,7 +295,12 @@ async function openChat(folder, id) {
   return res;
 }
 
+// Solange das Modell arbeitet, bleibt der Ordner: Sonst schreibt der laufende Auftrag seinen Chat in den
+// neuen Ordner, und seine Befehle treffen ein Terminal, das gerade neu startet.
+const BUSY = 'Das Modell arbeitet noch. Zuerst stoppen (Esc), dann den Ordner wechseln.';
+
 async function openFolder(folder) {
+  if (agent.running) return { ok: false, reason: BUSY };
   const result = checkFolder(folder);
   if (!result.ok) return result;
   settings.addRecent(result.path);
@@ -267,6 +311,10 @@ async function openFolder(folder) {
   }
   pushState();
   startTerminal();
+  // Alte Sicherungen aufräumen, mit derselben Instanz, die auch sichert, und nicht beim Öffnen bremsen
+  setTimeout(() => {
+    try { if (sameFolder(settings.get('folder'), result.path)) snapshotsFor(result.path).prune(); } catch { /* beim nächsten Mal */ }
+  }, 5000);
   return { ok: true, path: result.path };
 }
 
@@ -321,6 +369,10 @@ function browserAddress(text) {
 // Ordner aus der Liste nehmen. Beim aktuellen Ordner auch Terminal und Beobachtung beenden.
 function forgetFolder(f) {
   const current = sameFolder(f, settings.get('folder'));
+  if (current && agent.running) {
+    appWindow?.send('folder:error', BUSY);
+    return;
+  }
   settings.removeRecent(f);
   if (current) {
     workspace.close();
@@ -371,7 +423,7 @@ async function setBeta(on, tell = false) {
 
 function setupIpc() {
   ipcMain.handle('update:action', () => updater.action());
-  ipcMain.handle('update:beta', (_e, on) => setBeta(on, true));
+  ipcMain.handle('update:beta', (_e, on, tell) => setBeta(on, !!tell));
   ipcMain.handle('file:pdf', async (_e, rel) => {
     const source = workspace.resolve(rel);
     if (!source) return { fehler: 'Datei nicht gefunden.' };
@@ -398,10 +450,7 @@ function setupIpc() {
     return openFolder(target);
   });
   ipcMain.handle('folder:open', (_e, folder) => openFolder(folder));
-  ipcMain.handle('folder:forget', (_e, folder) => {
-    settings.removeRecent(folder);
-    pushState();
-  });
+  ipcMain.handle('folder:forget', (_e, folder) => forgetFolder(String(folder || '')));
   ipcMain.handle('folder:menu', () => {
     Menu.buildFromTemplate(folderMenuItems()).popup({ window: appWindow.win });
   });
@@ -419,7 +468,7 @@ function setupIpc() {
   ipcMain.handle('ask:set-url', (_e, url) => {
     let parsed;
     try {
-      parsed = new URL(url.trim());
+      parsed = new URL(String(url).trim());
     } catch {
       return { ok: false, reason: 'Das ist keine gültige Adresse.' };
     }
@@ -454,14 +503,26 @@ function setupIpc() {
     pushState();
   });
   // Anhänge zuerst nach .ask/anhaenge/<Chat>/ speichern; scheitert das, geht nichts an das Modell.
-  ipcMain.handle('chat:send', (_e, text, files) => {
+  // kept: Anhänge einer zurückgenommenen Eingabe (chat:rewind), die schon dort liegen.
+  ipcMain.handle('chat:send', (_e, text, files, kept) => {
     if (agent.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' };
     let attachments = [];
+    for (const k of Array.isArray(kept) ? kept.slice(0, 10) : []) {
+      const rel = String(k?.path || '');
+      const folder = agent.getFolder();
+      // nur Dateien, die wirklich bei den Anhängen dieses Chats liegen
+      if (!folder || !new RegExp(`^\\.ask/anhaenge/${agent.chat.id}/[^/\\\\]+$`).test(rel) || /\/\.{1,2}$/.test(rel)) continue;
+      try {
+        const size = fs.statSync(path.join(folder, ...rel.split('/'))).size;
+        attachments.push({ path: rel, name: path.basename(rel), size, image: /\.(png|jpe?g|gif|webp)$/i.test(rel) });
+      } catch { /* inzwischen gelöscht */ }
+    }
+    const before = attachments;
     if (Array.isArray(files) && files.length) {
       const folder = agent.getFolder();
       if (!folder) return { ok: false, reason: 'Zuerst einen Arbeitsordner wählen.' };
       try {
-        attachments = saveAttachments(folder, files, agent.chat.id);
+        attachments = [...before, ...saveAttachments(folder, files, agent.chat.id)];
       } catch (err) {
         return { ok: false, reason: `Anhänge nicht gespeichert: ${err.message}` };
       }
@@ -470,6 +531,25 @@ function setupIpc() {
     return { ok: true };
   });
   ipcMain.handle('chat:undo', (_e, snapshot) => agent.undo(String(snapshot || '')));
+  ipcMain.handle('chat:rewind', () => agent.rewind());
+  ipcMain.handle('chat:rename', (_e, folder, id, title) => agent.rename(String(folder || ''), String(id || ''), title));
+  ipcMain.handle('chat:pin', (_e, folder, id, on) => agent.pin(String(folder || ''), String(id || ''), !!on));
+  // Suche über den Inhalt aller Chats der Ordner in der Liste: [{ folder, id, title, updated, snippets }]
+  ipcMain.handle('chat:search', (_e, query) => {
+    const hits = [];
+    for (const group of chatGroups()) {
+      try {
+        for (const h of searchChats(group.folder, String(query || ''), null)) hits.push({ folder: group.folder, name: group.name, ...h });
+      } catch { /* leere Anfrage oder Ordner nicht lesbar */ }
+    }
+    return hits.sort((a, b) => b.score - a.score || b.updated - a.updated).slice(0, 30);
+  });
+  ipcMain.handle('prefs:set', (_e, values) => {
+    const next = { ...prefs() };
+    for (const [k, v] of Object.entries(values || {})) if (k in PREFS && typeof v === typeof PREFS[k]) next[k] = v;
+    settings.set({ prefs: next });
+    pushState();
+  });
   ipcMain.handle('chat:stop', () => agent.stop());
   ipcMain.handle('chat:goal', (_e, text) => agent.setGoal(text));
   ipcMain.handle('github:status', async () => {
@@ -504,7 +584,7 @@ function setupIpc() {
   ipcMain.handle('ask:reload', () => {
     const wc = appWindow.view.webContents;
     const url = settings.get('askUrl');
-    if (url && !wc.getURL().startsWith(new URL(url).origin)) wc.loadURL(url);
+    if (url && !sameOrigin(wc.getURL(), url)) wc.loadURL(url);
     else wc.reload();
   });
   ipcMain.handle('ui:chatbar', (_e, open) => {
@@ -541,7 +621,6 @@ function setupIpc() {
     if (/^https?:\/\//i.test(String(url))) shell.openExternal(String(url));
   });
   ipcMain.handle('workspace:files', () => workspace.files());
-  ipcMain.handle('workspace:tasks', () => workspace.tasks());
   ipcMain.handle('file:preview', (_e, rel) => {
     const full = workspace.resolve(rel);
     if (!full) return { kind: 'missing' };
@@ -557,10 +636,22 @@ function setupIpc() {
     }
     return { kind: 'other', name: path.basename(full) };
   });
-  ipcMain.handle('file:open', (_e, rel) => {
+  // Öffnen mit dem zugehörigen Programm läuft mit den normalen Rechten der Person, nicht im geschützten
+  // Terminal. Programme und Skripte (auch solche, die das Modell angelegt hat) darum nie ohne Rückfrage.
+  ipcMain.handle('file:open', async (_e, rel) => {
     const full = workspace.resolve(rel);
-    if (full) return shell.openPath(full);
-    return 'nicht gefunden';
+    if (!full) return 'nicht gefunden';
+    if (!SAFE_OPEN_EXT.has(path.extname(full).toLowerCase())) {
+      const res = testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? { response: 0 } : await dialog.showMessageBox(appWindow.win, {
+        type: 'warning', buttons: ['Im Explorer zeigen', 'Trotzdem öffnen', 'Abbrechen'], defaultId: 0, cancelId: 2,
+        message: `«${path.basename(full)}» öffnen?`,
+        detail: 'Diese Datei kann ein Programm oder Skript sein. Beim Öffnen läuft sie mit deinen Rechten auf dem ganzen Laptop, '
+          + 'nicht nur im Arbeitsordner. Öffne sie nur, wenn du weisst, was sie tut. Hat das Modell sie angelegt, lass sie lieber vom Modell im Chat ausführen.',
+      });
+      if (res.response === 0) { shell.showItemInFolder(full); return ''; }
+      if (res.response !== 1) return '';
+    }
+    return shell.openPath(full);
   });
   ipcMain.handle('file:show', (_e, rel) => {
     const full = workspace.resolve(rel);
@@ -612,7 +703,6 @@ function wireEvents() {
   updater.on('changed', () => pushState());
   workspace.on('auftrag', (file) => handleOrder(file));
   workspace.on('files', (files) => appWindow?.send('files', files));
-  workspace.on('tasks', (tasks) => appWindow?.send('tasks', tasks));
 }
 
 app.on('second-instance', () => {

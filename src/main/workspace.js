@@ -5,7 +5,6 @@ const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const paths = require('./paths');
 const { cleanupWorkDirs, hideFolder } = require('./cleanup');
-const { Snapshots } = require('./snapshot');
 
 const ASK_DIR = '.ask';
 const MAX_ENTRIES = 300;
@@ -80,31 +79,12 @@ function hashDir(dir) {
   return hash.digest('hex');
 }
 
-// Akzeptiert auch abweichende Schreibweisen, die ein Modell gern benutzt.
-function normalizeTasks(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const list = Array.isArray(raw) ? raw : raw.aufgaben || raw.tasks || raw.todos || raw.items || [];
-  const tasks = list.map((t) => {
-    if (typeof t === 'string') return { titel: t, status: 'offen' };
-    const titel = t.titel || t.title || t.text || t.name || t.beschreibung || t.description || '';
-    let status = String(t.status || t.state || '').toLowerCase();
-    if (t.done === true || t.erledigt === true || t.completed === true) status = 'erledigt';
-    if (['done', 'completed', 'fertig', 'ok', 'erledigt'].includes(status)) status = 'erledigt';
-    else if (['in_progress', 'in-progress', 'in arbeit', 'in_arbeit', 'läuft', 'laeuft', 'running', 'aktiv']
-      .includes(status)) status = 'in_arbeit';
-    else status = 'offen';
-    return { titel: String(titel), status };
-  }).filter((t) => t.titel);
-  return { auftrag: Array.isArray(raw) ? '' : String(raw.auftrag || raw.goal || raw.titel || raw.title || ''), aufgaben: tasks };
-}
-
 class Workspace extends EventEmitter {
   constructor() {
     super();
     this.root = '';
     this.watcher = null;
     this.timer = null;
-    this.pending = new Set();
   }
 
   open(folder) {
@@ -112,10 +92,7 @@ class Workspace extends EventEmitter {
     this.root = folder;
     fs.mkdirSync(path.join(folder, ASK_DIR), { recursive: true });
     hideFolder(path.join(folder, ASK_DIR));
-    setTimeout(() => { // nicht beim Öffnen bremsen
-      cleanupWorkDirs(folder);
-      try { new Snapshots(folder).prune(); } catch { /* beim nächsten Mal */ }
-    }, 2000);
+    setTimeout(() => cleanupWorkDirs(folder), 2000); // nicht beim Öffnen bremsen; die Sicherung räumt main.js auf
     fs.rmSync(path.join(folder, ASK_DIR, 'auftraege'), { recursive: true, force: true });
     this.syncSkills();
     try {
@@ -125,7 +102,6 @@ class Workspace extends EventEmitter {
       this.watcher = null;
     }
     this.emit('files', this.files());
-    this.emit('tasks', this.tasks());
   }
 
   close() {
@@ -160,15 +136,9 @@ class Workspace extends EventEmitter {
       return;
     }
     if (name.startsWith(path.join(ASK_DIR, 'auftraege')) || name.startsWith(path.join(ASK_DIR, 'pdf'))) return;
-    this.pending.add(name.toLowerCase() === path.join(ASK_DIR, 'tasks.json').toLowerCase() ? 'tasks' : 'files');
+    if (name.toLowerCase() === path.join(ASK_DIR, 'tasks.json').toLowerCase()) return; // Datei früherer Versionen
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      const kinds = this.pending;
-      this.pending = new Set();
-      if (!this.root) return;
-      if (kinds.has('tasks')) this.emit('tasks', this.tasks());
-      if (kinds.has('files')) this.emit('files', this.files());
-    }, 250);
+    this.timer = setTimeout(() => { if (this.root) this.emit('files', this.files()); }, 250);
   }
 
   files() {
@@ -177,16 +147,6 @@ class Workspace extends EventEmitter {
     listRecursive(this.root, this.root, 0, top);
     const sortTop = (a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name, 'de');
     return { top: top.sort(sortTop), recent: recentFiles(this.root) };
-  }
-
-  tasks() {
-    if (!this.root) return null;
-    try {
-      const text = fs.readFileSync(path.join(this.root, ASK_DIR, 'tasks.json'), 'utf8');
-      return normalizeTasks(JSON.parse(text.replace(/^﻿/, '')));
-    } catch (err) {
-      return err.code === 'ENOENT' ? null : { fehler: 'tasks.json ist gerade nicht lesbar', aufgaben: [] };
-    }
   }
 
   // Absoluter Pfad zu einer Datei im Arbeitsordner, oder null, wenn sie ausserhalb liegt.
@@ -205,4 +165,4 @@ class Workspace extends EventEmitter {
   }
 }
 
-module.exports = { Workspace, normalizeTasks, recentFiles, ASK_DIR };
+module.exports = { Workspace, recentFiles, ASK_DIR };

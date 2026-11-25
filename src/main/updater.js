@@ -1,4 +1,4 @@
-// Updates aus dem öffentlichen Release-Repository (ENTSCHEIDE E33). Die installierte App fragt vor
+// Updates aus dem öffentlichen Release-Repository (ENTSCHEIDE E37). Die installierte App fragt vor
 // dem Herunterladen und vor dem Neustart; die einzelne EXE kann sich nicht selbst ersetzen und zeigt
 // nur einen Hinweis mit Link zur neuen Version. Mit «Beta-Versionen erhalten» kommen auch
 // Vorabversionen (Tags wie v0.3.0-beta.1). Während das Modell arbeitet, fragt die App nie.
