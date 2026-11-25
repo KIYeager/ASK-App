@@ -37,14 +37,23 @@ if (!singleInstance) {
   app.quit();
 }
 
-const terminal = new Terminal();
-// Installierte App und einzelne EXE: Python vor dem ersten Terminal-Start entpacken (ENTSCHEIDE E39)
-if (app.isPackaged) {
-  terminal.prepare = (report) => paths.pythonRuntime().ensure((percent) =>
-    report(percent >= 100 ? '' : `Python wird eingerichtet (einmalig) … ${percent} %`));
+// Parallele Chats (ENTSCHEIDE E46): Jedes Projekt, in dem gearbeitet wird, hat sein eigenes Terminal und
+// seine eigene Beobachtung des Ordners, jeder laufende Chat seinen eigenen Agenten. terminal, workspace und
+// agent zeigen immer auf das sichtbare Projekt bzw. den sichtbaren Chat; was im Hintergrund läuft, bleibt in
+// runtimes stehen, bis es fertig ist.
+function makeTerminal() {
+  const t = new Terminal();
+  // Installierte App und einzelne EXE: Python vor dem ersten Terminal-Start entpacken (ENTSCHEIDE E39)
+  if (app.isPackaged) {
+    t.prepare = (report) => paths.pythonRuntime().ensure((percent) =>
+      report(percent >= 100 ? '' : `Python wird eingerichtet (einmalig) … ${percent} %`));
+  }
+  return t;
 }
+const runtimes = new Map(); // Ordner (klein geschrieben) → { folder, terminal, workspace, agents: Set }
+let terminal = makeTerminal(); // ohne Projekt: ein Terminal, das nie startet
 const ask = new AskSession();
-const workspace = new Workspace();
+let workspace = new Workspace();
 const testMode = !app.isPackaged && !!process.env.ASK_TEST_SCRIPT;
 
 // GitHub-Token verschlüsselt mit dem Windows-Konto (DPAPI) in den Einstellungen; nur hier lesbar.
@@ -92,7 +101,7 @@ const updater = new Updater({
   config: process.env.ASK_NO_UPDATES === '1' ? null : settings.appConfig().updates, // aus für automatische Tests
   portable: isPortable(),
   beta: () => !!settings.get('betaUpdates'),
-  busy: () => agent.running,
+  busy: () => anyRunning(),
   ask: async (options) => {
     if (testMode || !appWindow) return -1;
     return (await dialog.showMessageBox(appWindow.win, options)).response;
@@ -100,10 +109,10 @@ const updater = new Updater({
   openExternal: (url) => shell.openExternal(url),
   beforeInstall: async () => {
     quitting = true; // before-quit soll nicht ein zweites Mal aufräumen
-    agent.stop();
+    for (const a of allAgents()) a.stop();
     visual.closeRenderer();
     workspace.close();
-    await terminal.stop();
+    await Promise.all([terminal.stop(), ...[...runtimes.values()].map((rt) => rt.terminal.stop())]);
   },
   log: (m) => console.log(`[update] ${m}`),
 });
@@ -129,35 +138,85 @@ async function browserPane() {
 const visual = new Visual({ electron: { BrowserWindow, nativeImage }, convertToPdf, renderPage: path.join(__dirname, 'render', 'pdf.html'),
   getPane: browserPane, allowLocal: testMode });
 
-const agent = new Agent({
-  github,
-  githubTrust,
-  visual,
-  web,
-  images,
-  confirm,
-  ask,
-  terminal,
-  getFolder: () => (terminal.state === 'läuft' ? terminal.folder : settings.get('folder')),
-  getModel: () => currentModel(),
-  getSystemPrompt: (chat) => readInstruction('systemprompt.md', settings.get('folder'), chat) + projectNotes(settings.get('folder'))
-    + (settings.get('chatMemory') ? historyPrompt(settings.get('folder'), chat) : '') + thinkingSwitch(),
-  getChatMemory: () => !!settings.get('chatMemory'),
-  getCommandHint: (chat) => readInstruction('befehle.md', settings.get('folder'), chat),
-  getWebSearch: () => !!ask.webSearch && settings.get('webSearch'),
-  getThinking: () => thinkingLevel(),
-  getImageUrl: (attachment) => imageUrl(agent.getFolder(), attachment, nativeResize(nativeImage)),
-  getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
-  getSnapshots: () => snapshotsFor(agent.getFolder()),
-  getApprovalMode: () => approvalMode(),
-  fileExists: (rel) => !!workspace.resolve(String(rel || '')),
-  // In automatischen Tests: Rückfragen erlauben, Fragen mit der ersten Antwort beantworten
-  autoApprove: testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? async () => 'yes' : null,
-  autoAnswer: testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? async (q) => q.optionen[0] || 'ja' : null,
-  // Kontextfenster: was ASK zum Modell angibt, sonst was ASK einmal in einer Fehlermeldung genannt hat
-  getContextLimit: (model) => ask.models.find((m) => m.id === model)?.context || Number((settings.get('contextLimits') || {})[model]) || 0,
-  onContextLimit: (model, limit) => settings.set({ contextLimits: { ...(settings.get('contextLimits') || {}), [model]: limit } }),
-});
+function makeAgent(folder, rt) {
+  const a = new Agent({
+    github,
+    githubTrust,
+    visual,
+    web,
+    images,
+    confirm,
+    ask,
+    terminal: rt.terminal,
+    getFolder: () => folder,
+    getModel: () => currentModel(),
+    getSystemPrompt: (chat) => readInstruction('systemprompt.md', folder, chat) + projectNotes(folder)
+      + (settings.get('chatMemory') ? historyPrompt(folder, chat) : '') + thinkingSwitch(),
+    getChatMemory: () => !!settings.get('chatMemory'),
+    getCommandHint: (chat) => readInstruction('befehle.md', folder, chat),
+    getWebSearch: () => !!ask.webSearch && settings.get('webSearch'),
+    getThinking: () => thinkingLevel(),
+    getImageUrl: (attachment) => imageUrl(folder, attachment, nativeResize(nativeImage)),
+    getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
+    getSnapshots: () => snapshotsFor(folder),
+    getApprovalMode: () => approvalMode(),
+    fileExists: (rel) => !!rt.workspace.resolve(String(rel || '')),
+    // In automatischen Tests: Rückfragen erlauben, Fragen mit der ersten Antwort beantworten
+    autoApprove: testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? async () => 'yes' : null,
+    autoAnswer: testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? async (q) => q.optionen[0] || 'ja' : null,
+    // Kontextfenster: was ASK zum Modell angibt, sonst was ASK einmal in einer Fehlermeldung genannt hat
+    getContextLimit: (model) => ask.models.find((m) => m.id === model)?.context || Number((settings.get('contextLimits') || {})[model]) || 0,
+    onContextLimit: (model, limit) => settings.set({ contextLimits: { ...(settings.get('contextLimits') || {}), [model]: limit } }),
+  });
+  wireAgent(a, folder);
+  rt.agents.add(a);
+  return a;
+}
+
+// Laufzeit eines Projekts: Terminal und Beobachtung des Ordners (für Aufträge an die App wie PDF-Umwandlung)
+function runtime(folder) {
+  const key = path.resolve(folder).toLowerCase();
+  let rt = runtimes.get(key);
+  if (rt) return rt;
+  rt = { folder, terminal: makeTerminal(), workspace: new Workspace(), agents: new Set() };
+  runtimes.set(key, rt);
+  wireRuntime(rt);
+  return rt;
+}
+
+const isActiveRt = (rt) => rt.terminal === terminal;
+const allAgents = () => [...runtimes.values()].flatMap((rt) => [...rt.agents]);
+const anyRunning = () => allAgents().some((a) => a.running);
+
+// Laufende Chats für die Seitenleiste (auch die im Hintergrund)
+function runningChats() {
+  return allAgents().filter((a) => a.running).map((a) => ({ folder: a.getFolder(), id: a.chat.id, title: a.chat.title }));
+}
+
+// Projekte ohne laufenden Auftrag, die nicht sichtbar sind, wieder schliessen (Terminal beenden)
+function releaseIdle() {
+  for (const [key, rt] of runtimes) {
+    if (isActiveRt(rt)) {
+      // Im sichtbaren Projekt höchstens einen untätigen Agenten behalten: den sichtbaren
+      for (const a of rt.agents) if (a !== agent && !a.running && !a.undoing) rt.agents.delete(a);
+      continue;
+    }
+    if ([...rt.agents].some((a) => a.running || a.undoing)) continue;
+    rt.agents.clear();
+    rt.workspace.close();
+    rt.terminal.stop();
+    runtimes.delete(key);
+  }
+}
+
+// Agent für einen Chat in einem Projekt: der, der ihn schon offen hat, sonst ein neuer
+function agentFor(rt, id) {
+  for (const a of rt.agents) if (a.chat.id === id) return a;
+  return null;
+}
+
+// Ohne Projekt: ein Agent ohne Ordner (zeigt den leeren Chat)
+let agent = makeAgent('', { terminal, workspace, agents: new Set() });
 
 function approvalMode() {
   const mode = settings.get('approvals');
@@ -188,13 +247,14 @@ function projectFile(folder, name, legacy) {
 }
 
 // Sicherung des Arbeitsordners (snapshot.js), eine Instanz pro Ordner
-let snapshots = null;
+const snapshotsByFolder = new Map(); // eine Instanz pro Ordner (parallele Chats in mehreren Projekten)
 function snapshotsFor(folder) {
   if (!folder) return null;
-  if (!snapshots || !sameFolder(snapshots.root, folder)) {
-    snapshots = new Snapshots(folder, projectFile(folder, 'sicherung', path.join('.ask', 'sicherung')));
+  const key = path.resolve(folder).toLowerCase();
+  if (!snapshotsByFolder.has(key)) {
+    snapshotsByFolder.set(key, new Snapshots(folder, projectFile(folder, 'sicherung', path.join('.ask', 'sicherung'))));
   }
-  return snapshots;
+  return snapshotsByFolder.get(key);
 }
 
 // Denkaufwand aus den Einstellungen; ältere Werte des früheren Schalters werden übernommen.
@@ -283,6 +343,7 @@ function state() {
     thinking: thinkingLevel(),
     webSearchAvailable: !!ask.webSearch,
     chat: agent.state(),
+    running: runningChats(),
     update: updater.snapshot(),
     prefs: prefs(),
     version: app.getVersion(),
@@ -324,10 +385,29 @@ function chatGroups() {
 
 // Chat (id oder NEW) in einem Ordner öffnen; bei anderem Ordner zuerst wechseln.
 let pendingChat = null;
+
+// Sichtbaren Chat wechseln: einen laufenden Agenten zeigen oder einen untätigen im Projekt weiterverwenden
+function showAgent(a) {
+  if (a === agent) return;
+  agent = a;
+  releaseIdle();
+  appWindow?.send('chat:changed', agent.state());
+  pushState();
+}
+
+function openInRuntime(rt, id) {
+  const existing = id === NEW ? null : agentFor(rt, id);
+  if (existing) { showAgent(existing); return true; }
+  // Läuft der sichtbare Agent, bleibt er im Hintergrund; der Chat bekommt einen eigenen
+  const a = !agent.running && !agent.undoing && rt.agents.has(agent) ? agent : [...rt.agents].find((x) => !x.running && !x.undoing) || makeAgent(rt.folder, rt);
+  const ok = id === NEW ? a.newChat() : a.open(id);
+  if (ok) showAgent(a);
+  return ok;
+}
+
 async function openChat(folder, id) {
-  if (agent.running) return { ok: false, reason: 'Das Modell arbeitet noch. Zuerst stoppen.' };
   if (sameFolder(folder, settings.get('folder')) && terminal.state === 'läuft') {
-    return { ok: id === NEW ? agent.newChat() : agent.open(id) };
+    return { ok: openInRuntime(runtime(folder), id) };
   }
   pendingChat = id;
   const res = await openFolder(folder);
@@ -335,25 +415,38 @@ async function openChat(folder, id) {
   return res;
 }
 
-// Solange das Modell arbeitet, bleibt der Ordner: Sonst schreibt der laufende Auftrag seinen Chat in den
-// neuen Ordner, und seine Befehle treffen ein Terminal, das gerade neu startet.
-const BUSY = 'Das Modell arbeitet noch. Zuerst stoppen (Esc), dann den Ordner wechseln.';
+// Projekt sichtbar machen. Laufende Aufträge in anderen Projekten arbeiten im Hintergrund weiter, jeder mit
+// seinem eigenen Terminal und Ordner (ENTSCHEIDE E46).
+const BUSY = 'Das Modell arbeitet noch in diesem Projekt. Zuerst stoppen (Esc).';
 
 async function openFolder(folder, name = '') {
-  if (agent.running) return { ok: false, reason: BUSY };
   const result = checkFolder(folder);
   if (!result.ok) return result;
-  const previous = workspace.root;
+  const rt = runtime(result.path);
   try {
-    workspace.open(result.path);
+    if (rt.workspace.root !== result.path) rt.workspace.open(result.path);
   } catch (err) {
-    try { if (previous) workspace.open(previous); else workspace.close(); } catch { workspace.close(); }
+    if (!isActiveRt(rt) && !rt.agents.size) runtimes.delete(path.resolve(result.path).toLowerCase());
     return { ok: false, reason: `Der Ordner kann nicht vorbereitet werden: ${err.message}` };
   }
   settings.addRecent(result.path, name);
-  if (sameFolder(result.path, chatFolder)) chatFolder = null; // gleicher Ordner neu: letzten Chat wieder öffnen
+  terminal = rt.terminal;
+  workspace = rt.workspace;
+  appWindow?.send('files', workspace.files());
+  if (rt.terminal.state === 'läuft') {
+    // schon offen (z. B. weil dort ein Auftrag im Hintergrund läuft): gewünschten oder letzten Chat zeigen
+    const want = pendingChat;
+    pendingChat = null;
+    const running = [...rt.agents].find((a) => a.running);
+    if (want) openInRuntime(rt, want);
+    else if (running) showAgent(running);
+    else openLatestIn(rt);
+  } else {
+    if (!rt.agents.size) makeAgent(rt.folder, rt);
+    startTerminal();
+  }
+  releaseIdle();
   pushState();
-  startTerminal();
   // Alte Sicherungen aufräumen, mit derselben Instanz, die auch sichert, und nicht beim Öffnen bremsen
   setTimeout(() => {
     try { if (sameFolder(settings.get('folder'), result.path)) snapshotsFor(result.path).prune(); } catch { /* beim nächsten Mal */ }
@@ -385,6 +478,14 @@ async function newProject(name) {
   return openFolder(target, title);
 }
 
+// Letzten Chat eines Projekts zeigen (beim Öffnen des Projekts)
+function openLatestIn(rt, wanted = null) {
+  const a = [...rt.agents].find((x) => !x.running && !x.undoing) || makeAgent(rt.folder, rt);
+  a.openLatest(wanted);
+  showAgent(a);
+  if (a === agent) { appWindow?.send('chat:changed', agent.state()); pushState(); }
+}
+
 function startTerminal() {
   const { folder, askUrl, port } = settings.load();
   if (!folder || !askUrl) return;
@@ -399,15 +500,15 @@ function startTerminal() {
 
 // Auftrag des Modells aus .ask/auftraege/<id>.json: Datei mit Office in PDF umwandeln.
 const ordersInProgress = new Set();
-async function handleOrder(file) {
-  const root = workspace.root;
+async function handleOrder(file, ws = workspace) {
+  const root = ws.root;
   if (!root || ordersInProgress.has(file)) return;
   ordersInProgress.add(file);
   const base = file.slice(0, -'.json'.length);
   let res;
   try {
     const order = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const source = order.typ === 'pdf' ? workspace.resolve(String(order.quelle || '')) : null;
+    const source = order.typ === 'pdf' ? ws.resolve(String(order.quelle || '')) : null;
     if (!source) res = { fehler: 'Datei nicht gefunden oder ausserhalb des Arbeitsordners.' };
     else if (fs.statSync(source).size > 50 * 1024 * 1024) res = { fehler: 'Die Datei ist grösser als 50 MB.' };
     else res = await convertToPdf(root, source);
@@ -415,7 +516,7 @@ async function handleOrder(file) {
     res = { fehler: `Auftrag nicht lesbar: ${err.message}` };
   }
   try {
-    if (workspace.root === root) {
+    if (ws.root === root) {
       if (res.ok) fs.writeFileSync(`${base}.ok`, path.relative(root, res.target));
       else fs.writeFileSync(`${base}.fehler`, res.fehler);
       fs.rmSync(file, { force: true });
@@ -436,7 +537,8 @@ function browserAddress(text) {
 // Ordner aus der Liste nehmen. Beim aktuellen Ordner auch Terminal und Beobachtung beenden.
 function forgetFolder(f) {
   const current = sameFolder(f, settings.get('folder'));
-  if (current && agent.running) {
+  const rt = runtimes.get(path.resolve(f).toLowerCase());
+  if (rt && [...rt.agents].some((a) => a.running)) {
     appWindow?.send('folder:error', BUSY);
     return false;
   }
@@ -444,7 +546,10 @@ function forgetFolder(f) {
   if (current) {
     workspace.close();
     terminal.stop();
-    chatFolder = null;
+    terminal = makeTerminal();
+    workspace = new Workspace();
+    agent = makeAgent('', { terminal, workspace, agents: new Set() });
+    if (rt) runtimes.delete(path.resolve(f).toLowerCase());
   }
   pushState();
   appWindow?.send('chat:changed', agent.state());
@@ -559,8 +664,13 @@ function setupIpc() {
     if (patch.theme) applyTheme();
     pushState();
   });
-  ipcMain.handle('chat:approve', (_e, id, answer) => agent.answerApproval(id, answer));
-  ipcMain.handle('chat:answer', (_e, id, text) => agent.answerQuestion(id, text));
+  ipcMain.handle('chat:approve', (_e, id, answer) => allAgents().some((a) => a.answerApproval(id, answer)));
+  ipcMain.handle('chat:answer', (_e, id, text) => allAgents().some((a) => a.answerQuestion(id, text)));
+  ipcMain.handle('chat:stop-chat', (_e, folder, id) => {
+    const rt = runtimes.get(path.resolve(String(folder || '')).toLowerCase());
+    const a = rt && agentFor(rt, String(id || ''));
+    if (a) a.stop();
+  });
   ipcMain.handle('workspace:list', (_e, rel) => workspace.list(String(rel || '')));
   ipcMain.handle('workspace:find', (_e, query) => workspace.find(String(query || '')));
   ipcMain.handle('workspace:import', (_e, rel, files) => {
@@ -699,7 +809,14 @@ function setupIpc() {
       type: 'question', buttons: ['Löschen', 'Abbrechen'], defaultId: 1, cancelId: 1,
       message: 'Chat löschen?', detail: `«${title}» wird aus ${folder} entfernt. Die Dateien im Ordner bleiben.`,
     });
-    return res.response === 0 && agent.remove(folder, id);
+    const rt = runtimes.get(path.resolve(String(folder || '')).toLowerCase());
+    const busy = rt && agentFor(rt, String(id || ''));
+    if (busy && busy.running) return false;
+    if (res.response !== 0) return false;
+    const ok = agent.remove(folder, id);
+    if (busy && busy !== agent) rt.agents.delete(busy);
+    if (busy === agent) agent.newChat();
+    return ok;
   });
   ipcMain.handle('chat:transcript', () => ({ ...agent.state(), items: agent.transcript() }));
   ipcMain.handle('ask:reload', () => {
@@ -798,34 +915,50 @@ function loadAsk() {
   appWindow.loadAsk(url);
 }
 
-let chatFolder = null;
+// Terminal und Ordner eines Projekts: Zustand nur für das sichtbare Projekt an die Oberfläche
+function wireRuntime(rt) {
+  let started = false;
+  rt.terminal.on('port', (port) => settings.set({ port }));
+  rt.terminal.on('state', (snap) => {
+    if (snap.state === 'läuft' && !started) {
+      started = true;
+      if (isActiveRt(rt)) {
+        const want = pendingChat;
+        pendingChat = null;
+        if (want) openInRuntime(rt, want); else openLatestIn(rt);
+      }
+    }
+    if (snap.state !== 'läuft' && snap.state !== 'startet') started = false;
+    if (isActiveRt(rt) && (snap.state === 'läuft' || snap.state === 'fehler')) pendingChat = null;
+    if (isActiveRt(rt)) pushState();
+  });
+  rt.workspace.on('auftrag', (file) => handleOrder(file, rt.workspace));
+  rt.workspace.on('files', (files) => { if (rt.workspace === workspace) appWindow?.send('files', files); });
+}
+
+// Ereignisse eines Agenten: an die Oberfläche mit Chat und Ordner, damit sie nur den sichtbaren Chat zeigt
+function wireAgent(a, folder) {
+  a.on('event', (ev) => {
+    // Frage oder Rückfrage: Fenster in der Taskleiste aufblinken lassen, wenn es im Hintergrund ist
+    if ((ev.type === 'approval' || ev.type === 'question') && appWindow && !appWindow.win.isFocused()) appWindow.win.flashFrame(true);
+    appWindow?.send('chat:event', { ...ev, chatId: a.chat.id, folder });
+  });
+  a.on('changed', () => {
+    if (a === agent) appWindow?.send('chat:changed', agent.state());
+    pushState();
+    appWindow?.send('chat:groups-changed');
+    if (anyRunning()) updater.busyChanged();
+    else updater.idle();
+    if (!a.running) setTimeout(releaseIdle, 0);
+  });
+}
 
 function wireEvents() {
-  terminal.on('port', (port) => settings.set({ port }));
-  terminal.on('state', (snap) => {
-    if (snap.state === 'läuft' && !sameFolder(snap.folder, chatFolder)) {
-      chatFolder = snap.folder;
-      agent.openLatest(pendingChat);
-    }
-    if (snap.state === 'läuft' || snap.state === 'fehler') pendingChat = null; // nicht in den nächsten Wechsel mitnehmen
-    pushState();
-  });
-  // Frage oder Rückfrage des Modells: Fenster in der Taskleiste aufblinken lassen, wenn es im Hintergrund ist
-  agent.on('event', (ev) => {
-    if ((ev.type === 'approval' || ev.type === 'question') && appWindow && !appWindow.win.isFocused()) appWindow.win.flashFrame(true);
-  });
   updater.on('status', () => pushState());
   ask.on('status', (s) => {
     if (s.state === 'angemeldet') images.discover();
     else if (s.state === 'nicht-angemeldet') images.forget();
     pushState();
-  });
-  agent.on('event', (ev) => appWindow?.send('chat:event', ev));
-  agent.on('changed', () => {
-    appWindow?.send('chat:changed', agent.state());
-    pushState();
-    if (agent.running) updater.busyChanged();
-    else updater.idle();
   });
   updater.on('changed', () => {
     pushState();
@@ -834,8 +967,6 @@ function wireEvents() {
     const bar = u.state === 'lädt' ? u.percent / 100 : u.state === 'neustart' || u.state === 'installiert' ? 2 : -1;
     try { appWindow?.win?.setProgressBar(bar); } catch { /* Fenster schon zu */ }
   });
-  workspace.on('auftrag', (file) => handleOrder(file));
-  workspace.on('files', (files) => appWindow?.send('files', files));
 }
 
 // Verknüpfung im Startmenü wieder anlegen, wenn sie fehlt. Der Installer legt sie bei Updates und bei einer
@@ -888,26 +1019,33 @@ app.whenReady().then(() => {
     if (app.isPackaged && !isPortable()) ensureStartMenuLink();
   }
   if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) {
-    require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, ask, agent, workspace, settings, openFolder, pushState, folderMenuItems });
+    // Test: terminal, agent und workspace zeigen immer auf das sichtbare Projekt (parallele Chats)
+    const live = (get) => new Proxy({}, {
+      get: (_t, k) => { const v = get()[k]; return typeof v === 'function' ? v.bind(get()) : v; },
+      set: (_t, k, v) => { get()[k] = v; return true; },
+    });
+    require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal: live(() => terminal), ask, agent: live(() => agent), workspace: live(() => workspace),
+      settings, openFolder, pushState, folderMenuItems });
   }
 });
 
 // Beim Beenden den laufenden Auftrag stoppen und abwarten, bis er gespeichert ist (höchstens 5 s)
 async function waitForAgent(ms = 5000) {
   const end = Date.now() + ms;
-  while (agent.running && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+  while (anyRunning() && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
 }
 
 app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  agent.stop();
+  for (const a of allAgents()) a.stop();
   updater.stop();
   waitForAgent().finally(() => {
     visual.closeRenderer();
     workspace.close();
-    terminal.stop().finally(() => app.quit());
+    for (const rt of runtimes.values()) rt.workspace.close();
+    Promise.allSettled([terminal.stop(), ...[...runtimes.values()].map((rt) => rt.terminal.stop())]).finally(() => app.quit());
   });
 });
 

@@ -142,6 +142,8 @@ export default function App() {
   }, []);
 
   const onChatEvent = useCallback((ev) => {
+    // Parallele Chats: Ereignisse anderer Chats laufen im Hintergrund weiter, die Seitenleiste zeigt sie
+    if (ev.chatId && ev.chatId !== chatIdRef.current) return;
     if (ev.type === 'live') { onLive(ev); return; }
     switch (ev.type) {
       case 'assistant-start': setAct(ev.webSearch ? 'Sucht im Web …' : 'Denkt nach …'); break;
@@ -535,7 +537,7 @@ export default function App() {
       <UpdateBar u={state.update} />
       <main className="layout" style={{ gridTemplateColumns: cols.join(' ') }}>
         {leftOpen ? (
-          <Sidebar groups={groups} chatId={chatId} running={running} query={query} setQuery={setQuery}
+          <Sidebar groups={groups} chatId={chatId} running={running} runningChats={state.running || []} query={query} setQuery={setQuery}
             renaming={renaming} onRenameDone={async (folder, name) => { setRenaming(null); if (name.trim()) await api().projectUpdate(folder, { name }); loadChats(); }}
             onNewChat={() => newChat()} onOpenChat={openChat}
             onDeleteChat={async (folder, id, title) => { if (await api().chatDelete(folder, id, title)) loadChats(); }}

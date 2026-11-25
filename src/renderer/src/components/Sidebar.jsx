@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { formatTime, shortTime } from '../lib/format.js';
 
 // Linke Leiste: Projekte (ein Projekt = ein Arbeitsordner) mit ihren Chats
-export default function Sidebar({ groups, chatId, running, query, setQuery, renaming, onRenameDone, onNewChat, onOpenChat, onDeleteChat,
+export default function Sidebar({ groups, chatId, running, runningChats = [], query, setQuery, renaming, onRenameDone, onNewChat, onOpenChat, onDeleteChat,
   onNewProject, onProjectMenu, onNewInProject, state, onSettings, onStatus, update, onUpdate, onRefresh }) {
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [menu, setMenu] = useState(null); // { folder, chat, x, y }
@@ -65,6 +65,7 @@ export default function Sidebar({ groups, chatId, running, query, setQuery, rena
                 <button type="button" className="group-toggle" onClick={() => toggle(g.folder)} aria-expanded={!isCollapsed}>
                   <span className="swatch" style={{ background: g.color }} />
                   {renaming === g.folder ? null : <span className="gname">{g.name}</span>}
+                  {!g.current && runningChats.some((r) => r.folder && r.folder.toLowerCase() === g.folder.toLowerCase()) ? <span className="spin small" title="Arbeitet im Hintergrund" /> : null}
                   <Icon name={isCollapsed ? 'chevRight' : 'chevDown'} size={14} className="chev" />
                 </button>
                 {renaming === g.folder ? <RenameField name={g.name} onDone={(name) => onRenameDone(g.folder, name)} /> : null}
@@ -97,7 +98,7 @@ export default function Sidebar({ groups, chatId, running, query, setQuery, rena
                           title={`${c.title}\n${c.count} ${c.count === 1 ? 'Auftrag' : 'Aufträge'} · ${formatTime(c.updated)} (${shortTime(c.updated)})\nRechtsklick: Menü`}
                           onClick={() => { if (!active) onOpenChat(g.folder, c.id); }}
                           onContextMenu={(e) => { if (!c.placeholder) openMenu(e, g.folder, c); else e.preventDefault(); }}>
-                          {active && running ? <span className="spin small" aria-hidden="true" /> : null}
+                          {(active && running) || runningChats.some((r) => r.id === c.id) ? <span className="spin small" title="Arbeitet" aria-hidden="true" /> : null}
                           {c.pinned ? <Icon name="pin" size={12} className="cpin" title="Angeheftet" /> : null}
                           <span className="ctitle">{c.title}</span>
                           {!c.placeholder ? (
