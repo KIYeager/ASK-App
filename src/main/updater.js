@@ -200,7 +200,7 @@ class Updater extends EventEmitter {
       return;
     }
     const res = await this.dialog({ type: 'question', message: `ASK ${this.info?.version || ''} ist bereit.`,
-      detail: 'Jetzt neu starten? Sonst installiert sich das Update, wenn du ASK das nächste Mal schliesst.',
+      detail: 'Jetzt neu starten? ASK schliesst sich, ein Fenster zeigt das Installieren, danach startet ASK von selbst. Bitte ASK in dieser Zeit nicht von Hand öffnen. Sonst installiert sich das Update, wenn du ASK das nächste Mal schliesst.',
       buttons: ['Jetzt neu starten', 'Beim Beenden'], defaultId: 0, cancelId: 1 });
     if (res !== 0) return;
     if (this.busy()) { // inzwischen ein Auftrag gestartet
@@ -208,7 +208,9 @@ class Updater extends EventEmitter {
       return;
     }
     await this.beforeInstall();
-    this.updater.quitAndInstall(true, true); // still installieren, danach wieder starten
+    // Nicht still: Der Installer zeigt seinen Fortschritt und startet ASK danach wieder. Still sah es aus,
+    // als käme ASK nicht zurück, und ein Klick auf die Verknüpfung während des Installierens bot an, sie zu löschen.
+    this.updater.quitAndInstall(false, true);
   }
 
   // Nie zwei Dialoge übereinander

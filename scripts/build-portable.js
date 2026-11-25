@@ -12,6 +12,7 @@ const { version } = require('../package.json');
 const repo = path.join(__dirname, '..');
 
 async function main() {
+  require('./pack-python').pack(); // python-pack für die App (ENTSCHEIDE E39)
   await build({ targets: Platform.WINDOWS.createTarget('dir', Arch.x64), config, publish: 'never' });
   const appDir = path.join(config.directories.output, 'win-unpacked');
   const outFile = path.join(config.directories.output, `ASK-${version}.exe`);

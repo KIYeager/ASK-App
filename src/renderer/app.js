@@ -89,7 +89,7 @@ function askText(a) {
 function blocker() {
   if (!state?.folder) return 'Zuerst einen Arbeitsordner wählen.';
   if (state.ask.state !== 'angemeldet') return 'Zuerst bei ASK anmelden.';
-  if (state.terminal.state === 'startet') return 'Das Terminal startet …';
+  if (state.terminal.state === 'startet') return state.terminal.detail ? `${state.terminal.detail} Danach geht es los.` : 'Das Terminal startet …';
   if (state.terminal.state !== 'läuft') return 'Das Terminal läuft nicht (unten auf «Terminal» klicken).';
   if (!state.model) return 'ASK bietet kein Modell an.';
   return '';
@@ -123,7 +123,7 @@ function renderStatus() {
 
   const t = s.terminal;
   const [tText, tClass] = TERMINAL_TEXT[t.state] || [t.state, ''];
-  $('terminal-text').textContent = tText;
+  $('terminal-text').textContent = t.state === 'startet' && t.detail ? t.detail : tText;
   $('terminal-pill').className = `pill ${tClass}`;
   $('terminal-pill').title = t.state === 'läuft'
     ? `Läuft im Ordner ${t.folder}${t.lowIntegrity ? '. Ausserhalb des Ordners kann nichts geschrieben werden.' : ''}`

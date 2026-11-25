@@ -6,14 +6,25 @@ const { buildDir } = require('./build-dir');
 
 const repoRoot = path.join(__dirname, '..', '..');
 
+// Python der installierten App: einmal entpackt nach %LOCALAPPDATA%\ASK-Desktop\python\<id> (python.js, ENTSCHEIDE E39)
+let runtime = null;
+function pythonRuntime() {
+  if (!runtime) {
+    const { PythonRuntime, runtimeRoot } = require('./python');
+    runtime = new PythonRuntime({ packDir: resources('python-pack'), root: runtimeRoot() });
+  }
+  return runtime;
+}
+
 function resources(...parts) {
   return app.isPackaged ? path.join(process.resourcesPath, ...parts) : path.join(repoRoot, 'resources', ...parts);
 }
 
 module.exports = {
   pythonExe: () => app.isPackaged
-    ? path.join(process.resourcesPath, 'python', 'python.exe')
+    ? pythonRuntime().exe()
     : path.join(buildDir(), 'python', 'python.exe'),
+  pythonRuntime,
   launcherPy: () => app.isPackaged
     ? path.join(process.resourcesPath, 'ask_terminal', 'launcher.py')
     : path.join(repoRoot, 'python', 'ask_terminal', 'launcher.py'),

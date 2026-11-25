@@ -45,7 +45,7 @@ test('ohne Paket (npm start) oder ohne Release-Repository: aus', async () => {
   assert.strictEqual(new Updater({ app: { isPackaged: true }, config: {} }).enabled, false);
 });
 
-test('neue Version: fragt, lädt, fragt nach Neustart, installiert still', async () => {
+test('neue Version: fragt, lädt, fragt nach Neustart, installiert mit Fortschrittsfenster', async () => {
   const { u, calls } = setup({ result: available('0.2.0', '<ul><li>Neu: Updates</li></ul>'), answers: [0, 0] });
   await u.check();
   assert.strictEqual(calls.dialogs.length, 2);
@@ -53,7 +53,7 @@ test('neue Version: fragt, lädt, fragt nach Neustart, installiert still', async
   assert.match(calls.dialogs[0].detail, /• Neu: Updates/);
   assert.strictEqual(calls.downloads, 1);
   assert.strictEqual(calls.beforeInstall, 1);
-  assert.deepStrictEqual(calls.installs, [[true, true]]);
+  assert.deepStrictEqual(calls.installs, [[false, true]]);
 });
 
 test('«Später»: nicht von selbst nochmals fragen, aber auf Klick', async () => {
