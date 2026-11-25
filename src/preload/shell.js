@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('ask', {
   setPrefs: (values) => ipcRenderer.invoke('prefs:set', values),
   chatUndo: (snapshot) => ipcRenderer.invoke('chat:undo', snapshot),
   chatStop: () => ipcRenderer.invoke('chat:stop'),
+  chatStopChat: (folder, id) => ipcRenderer.invoke('chat:stop-chat', folder, id),
   chatApprove: (id, answer) => ipcRenderer.invoke('chat:approve', id, answer),
   chatAnswer: (id, text) => ipcRenderer.invoke('chat:answer', id, text),
   chatGoal: (text) => ipcRenderer.invoke('chat:goal', text),

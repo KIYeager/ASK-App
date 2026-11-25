@@ -133,7 +133,9 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
       {menu ? <ChatMenu menu={menu} onClose={() => setMenu(null)}
         onRename={() => setRenamingChat({ folder: menu.folder, id: menu.chat.id })}
         onPin={async () => { await api().chatPin(menu.folder, menu.chat.id, !menu.chat.pinned); onRefresh?.(); }}
-        onDelete={() => onDeleteChat(menu.folder, menu.chat.id, menu.chat.title)} /> : null}
+        onDelete={() => onDeleteChat(menu.folder, menu.chat.id, menu.chat.title)}
+        // Chat, der im Hintergrund arbeitet (parallele Chats): von hier aus anhalten
+        onStop={runningChats.some((r) => r.id === menu.chat.id) ? () => api().chatStopChat(menu.folder, menu.chat.id) : null} /> : null}
       <div className="side-foot">
         {update && ['verfügbar', 'lädt', 'geladen', 'neustart'].includes(update.state) ? (
           <button type="button" id="update-pill" className="update-chip" onClick={onUpdate} disabled={update.state === 'lädt'}
@@ -173,7 +175,7 @@ function initials(name) {
 }
 
 // Menü eines Chats: Umbenennen, Anheften, Löschen (Pfeiltasten, Esc schliesst)
-function ChatMenu({ menu, onClose, onRename, onPin, onDelete }) {
+function ChatMenu({ menu, onClose, onRename, onPin, onDelete, onStop }) {
   const ref = useRef(null);
   useEffect(() => {
     ref.current?.querySelector('button')?.focus();
@@ -196,6 +198,7 @@ function ChatMenu({ menu, onClose, onRename, onPin, onDelete }) {
   const top = Math.max(4, Math.min(menu.y, window.innerHeight - 130));
   return (
     <div ref={ref} className="chat-menu popover" role="menu" aria-label="Chat" style={{ left, top }} onKeyDown={onKey}>
+      {onStop ? item('Stoppen', onStop) : null}
       {item('Umbenennen', onRename)}
       {item(menu.chat.pinned ? 'Nicht mehr anheften' : 'Anheften', onPin)}
       {item('Löschen', onDelete, 'danger')}

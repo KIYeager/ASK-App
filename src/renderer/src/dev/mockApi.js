@@ -141,7 +141,7 @@ export function install() {
     setAskUrl: async () => ({ ok: true }), connectAsk: async () => state.ask, logout: async () => {}, models: async () => state.models,
     setModel: async (id) => { state = { ...state, model: id }; push(); }, setWebSearch: async (v) => { state = { ...state, webSearch: v }; push(); },
     setChatMemory: async (v) => { state = { ...state, chatMemory: v }; push(); }, setThinking: async (v) => { state = { ...state, thinking: v }; push(); },
-    chatSend: async (text) => { demoRun(text); return { ok: true }; }, chatUndo: async () => ({ ok: true }), chatStop: async () => {},
+    chatSend: async (text) => { demoRun(text); return { ok: true }; }, chatUndo: async () => ({ ok: true }), chatStop: async () => {}, chatStopChat: async () => true,
     chatGoal: async () => {}, chatApprove: async (_id, a) => { pendingApproval?.(a); return true; }, chatAnswer: async (_id, t) => { pendingAnswer?.(t); return true; },
     githubStatus: async () => ({ connected: false }), githubConnect: async () => ({ ok: false, message: 'Nur in der App.' }), githubDisconnect: async () => {}, githubUntrust: async () => {},
     chatNew: async () => { state = { ...state, chat: { id: `neu${Date.now()}`, title: '', running: false } }; transcriptItems = []; push(); return { ok: true }; },
