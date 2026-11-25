@@ -77,6 +77,7 @@ export default function App() {
   const [activity, setActivity] = useState('Denkt nach …');
   const [browser, setBrowser] = useState(BROWSER0);
   const [browserBig, setBrowserBig] = useState(false);
+  const [servers, setServers] = useState([]); // Entwicklungsserver des sichtbaren Projekts
   const [tabs, setTabs] = useState([]);
   const [widths, setWidths] = useState(loadWidths);
   const [follow, setFollow] = useState(true);
@@ -173,6 +174,7 @@ export default function App() {
         const prev = stateRef.current;
         stateRef.current = s;
         setState(s);
+        if (s.servers) setServers(s.servers);
         if (prev && s.folder !== prev.folder) loadChats();
         if (s.chat.running !== runningRef.current) {
           runningRef.current = s.chat.running;
@@ -198,12 +200,14 @@ export default function App() {
       a.onAskLoaded(() => setAskFailed(null)),
       a.onAskLoadFailed((info) => setAskFailed(info)),
       a.onBrowserState((s) => setBrowser((b) => ({ ...b, ...s }))),
+      a.onServers?.((list) => setServers(list || [])),
       a.onBrowserNotice((text) => setBrowser((b) => ({ ...b, log: [...b.log, { text, level: 'warning' }].slice(-6) }))),
     ].filter(Boolean);
     (async () => {
       const s = await a.getState();
       stateRef.current = s;
       setState(s);
+      if (s.servers) setServers(s.servers);
       await loadTranscript();
       await loadChats();
       setFiles(await a.files());
@@ -613,7 +617,7 @@ export default function App() {
             onSelect={setSelected} onBig={() => setDialog({ name: 'preview' })} browser={browser} browserActive={browserActive}
             onBrowserClose={() => { api().browserClose(); setBrowser(BROWSER0); setBrowserBig(false); setTab('dateien'); }}
             onBrowserBig={() => setBrowserBig(!browserBig)} browserBig={browserBig}
-            onMention={(p) => composer.current?.insert(`\`${String(p).replaceAll('\\', '/')}\``)} notice={notice} />
+            onMention={(p) => composer.current?.insert(`\`${String(p).replaceAll('\\', '/')}\``)} notice={notice} servers={servers} />
         ) : <span />}
       </main>
 

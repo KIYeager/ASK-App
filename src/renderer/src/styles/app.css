@@ -443,6 +443,35 @@ button.work-head:hover { background: var(--hover); }
 .live-log .warning { color: var(--warn); }
 .bp-hint { padding: 6px 10px; border-top: 1px solid var(--line); }
 
+/* Entwicklungsserver (ENTSCHEIDE E48): einklappbar über der Seite */
+.servers { border-bottom: 1px solid var(--line); background: var(--side); font-size: 12.5px; }
+.srv-head { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: none; padding: 6px 12px; color: var(--muted); text-align: left; }
+.srv-head:hover { color: var(--text); }
+.srv-title { font-weight: 600; color: var(--text); }
+.srv-body { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 6px; }
+.srv-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 38vh; overflow-y: auto; }
+.srv { background: var(--pane); border: 1px solid var(--line); border-radius: 8px; }
+.srv-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; padding: 5px 6px 5px 10px; min-width: 0; }
+.srv-acts { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.srv-row .btn.small { padding: 3px 9px; font-size: 12px; }
+.srv-row .btn.on { background: var(--hover); }
+.srv-main { flex: 1 1 150px; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.srv-name { font-weight: 500; }
+.srv-url { font-family: var(--mono); font-size: 11.5px; text-align: left; max-width: 100%; }
+.srv-state { color: var(--muted); font-size: 11.5px; }
+.srv-state.bad { color: var(--bad); }
+.srv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; flex: none; }
+.srv-dot.up { background: var(--ok); }
+.srv-dot.starting { background: var(--warn); animation: blink 1.2s steps(2) infinite; }
+.srv-dot.failed { background: var(--bad); }
+.rt .srv-dot { width: 7px; height: 7px; }
+.srv.stopped .srv-name, .srv.failed .srv-name { color: var(--muted); }
+.srv-out { margin: 0; border-top: 1px solid var(--line); padding: 6px 10px; font: 11.5px/1.45 var(--mono); max-height: 160px; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere; background: var(--code); border-radius: 0 0 8px 8px; }
+.srv-start { display: flex; gap: 6px; }
+.srv-input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; background: var(--pane); outline: none; font: 12px var(--mono); }
+.srv-input:focus { border-color: var(--acc); }
+
 /* ---------- Anmeldung ---------- */
 .login-area { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--pane); z-index: 4; }
 .login-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
