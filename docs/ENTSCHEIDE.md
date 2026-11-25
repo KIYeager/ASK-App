@@ -379,3 +379,16 @@ Teilen ohne Server: Export als `name.md`, Import einer solchen Datei. Der Import
 **@Datei.** `@` im Eingabefeld schlägt Dateien des Projekts vor (dieselbe Suche wie im Dateibereich). Gewählt steht `@pfad` im Text, mit Leerzeichen `@"pfad"`. Beim Senden prüft die App, welche erwähnten Pfade es gibt, und hängt für das Modell einen Hinweis an («Mit @ erwähnt, liegt im Arbeitsordner: …»). Den Inhalt schickt sie nicht mit; das Modell liest die Datei selbst, wenn es sie braucht. So bleibt der Verlauf klein, und eine grosse Datei sprengt den Kontext nicht.
 
 Tests: `tests/modi.test.js`.
+
+## E53 Anmeldung, wenn die ASK-Seite nicht lädt
+
+Lernende mit neu installierter App sahen statt der Anmeldeseite den gesperrten Chat («ASK: Fehler», in 0.3.2 ein endloses «Verbinde mit ASK …»). Ursache: Lädt die ASK-Seite nicht (offline, Proxy, Zertifikat), meldet Electron `did-fail-load` und danach für die Fehlerseite von Chromium trotzdem `did-finish-load`, und `getURL()` gibt weiter die Adresse von ASK zurück. Der Hinweis «ASK ist nicht erreichbar» kam als einmaliges Ereignis an die Oberfläche, das `did-finish-load` gleich wieder löschte (oder das die Oberfläche beim Start verpasste). Danach las die App das Token aus der Fehlerseite, was scheitert und bis 0.3.1 zum Status «fehler» führte.
+
+Jetzt:
+- Der Ladefehler steht im Status von ASK (`loadError`), den die Oberfläche beim Start abholt. Er bleibt bis zu einem erfolgreich geladenen Dokument; `did-finish-load` nach einem Ladefehler zählt nicht. Die Ereignisse `ask:loaded` und `ask:load-failed` gibt es nicht mehr.
+- Nach einem Ladefehler liest die App kein Token und lädt die Seite alle 15 Sekunden von selbst neu. Ein Token, das sich nicht lesen lässt, ist kein Fehler von ASK; der Grund steht als `detail` im Status.
+- Ist die Seite fertig geladen, aber nicht auf ASK (gleich zur Microsoft-Anmeldung weitergeleitet, Seite des Netzes), gilt «nicht angemeldet»: Die Seite wird gezeigt, statt hinter dem Kreisel zu warten.
+- Dauert «Verbinde mit ASK …» länger als 15 Sekunden, zeigt die Oberfläche einen Hinweis mit «Seite neu laden» und dem Grund, falls bekannt.
+- Meldet ASK nach der Anmeldung einen Fehler (z. B. kein Modell für das Konto), steht er über dem Eingabefeld, mit «Erneut prüfen» und «Abmelden und neu anmelden».
+
+Tests: `tests/askapi.test.js`. In der Oberfläche mit Beispieldaten: `?offline=1`, `?askfehler=1`.

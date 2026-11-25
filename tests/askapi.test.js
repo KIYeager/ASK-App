@@ -234,16 +234,18 @@ test('Denkaufwand: abgelehnte Stufe durch die nächste erlaubte ersetzen', async
 // Nachgebaute ASK-Seite (WebContents) für check()
 function fakePage({ url = 'https://ask.example.ch/auth', read }) {
   const handlers = {};
+  const page = { url, loads: [] };
   const wc = {
     on: (name, fn) => { handlers[name] = fn; },
-    isDestroyed: () => false, isLoading: () => false, getURL: () => url,
+    isDestroyed: () => false, isLoading: () => false, getURL: () => page.url,
     executeJavaScript: async () => read(),
+    loadURL: async (u) => { page.loads.push(u); },
   };
   const ask = new AskSession();
   ask.setBase('https://ask.example.ch');
   ask.attach({ webContents: { ...wc, session: {} } });
   clearInterval(ask.timer);
-  return { ask, handlers };
+  return { ask, handlers, page };
 }
 
 test('ASK-Seite lädt nicht: kein «Fehler», Status bleibt, damit der Anmeldebereich «nicht erreichbar» zeigt', async () => {
@@ -255,10 +257,46 @@ test('ASK-Seite lädt nicht: kein «Fehler», Status bleibt, damit der Anmeldebe
   // auch ohne Meldung des Ladefehlers: Token nicht lesbar ist kein Fehler von ASK
   handlers['did-start-navigation']({ isMainFrame: true });
   assert.strictEqual((await ask.check(true)).state, 'unbekannt');
-  assert.deepStrictEqual(seen, []);
+  assert.ok(!seen.includes('fehler') && !seen.includes('nicht-angemeldet'), seen.join());
 });
 
 test('ASK-Seite geladen, ohne Token: nicht angemeldet', async () => {
   const { ask } = fakePage({ read: () => '' });
   assert.strictEqual((await ask.check(true)).state, 'nicht-angemeldet');
+});
+
+test('Ladefehler steht im Status (auch wenn die Oberfläche das Ereignis verpasst) und verschwindet nach dem Laden', async () => {
+  const { ask, handlers } = fakePage({ read: () => '' });
+  handlers['did-fail-load']({}, -202, 'ERR_CERT_AUTHORITY_INVALID', 'https://ask.example.ch/', true);
+  assert.deepStrictEqual(ask.status, { state: 'unbekannt', loadError: { code: -202, description: 'ERR_CERT_AUTHORITY_INVALID', url: 'https://ask.example.ch/' } });
+  handlers['did-finish-load'](); // Electron: auch die Fehlerseite meldet «fertig geladen»; der Fehler bleibt
+  assert.strictEqual(ask.status.loadError?.code, -202);
+  handlers['did-fail-load']({}, -3, 'ERR_ABORTED', 'https://ask.example.ch/', true); // Abbruch ist kein Fehler
+  handlers['did-start-navigation']({ isMainFrame: true, isSameDocument: false });
+  handlers['did-finish-load']();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual(ask.status.loadError, undefined);
+  assert.strictEqual(ask.status.state, 'nicht-angemeldet');
+});
+
+test('Nach einem Ladefehler lädt die Seite nach 15 s von selbst nochmals', async () => {
+  const { ask, handlers, page } = fakePage({ read: () => '' });
+  handlers['did-fail-load']({}, -106, 'ERR_INTERNET_DISCONNECTED', 'https://ask.example.ch/', true);
+  ask.tick();
+  assert.deepStrictEqual(page.loads, [], 'nicht sofort');
+  ask.failedAt -= 16000;
+  ask.tick();
+  assert.deepStrictEqual(page.loads, ['https://ask.example.ch']);
+});
+
+test('Seite fertig, aber nicht auf ASK (z. B. Microsoft-Anmeldung): zeigen statt warten', async () => {
+  const { ask } = fakePage({ url: 'https://login.microsoftonline.com/abc/oauth2/authorize', read: () => { throw new Error('nie gelesen'); } });
+  assert.strictEqual((await ask.check(true)).state, 'nicht-angemeldet');
+});
+
+test('Token nicht lesbar: Status bleibt, Grund steht im Status', async () => {
+  const { ask } = fakePage({ read: () => { throw new Error('Script failed to execute'); } });
+  const st = await ask.check(true);
+  assert.strictEqual(st.state, 'unbekannt');
+  assert.match(st.detail, /Script failed to execute/);
 });
