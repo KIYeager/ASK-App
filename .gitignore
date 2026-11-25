@@ -7,3 +7,6 @@ __pycache__/
 *.pyc
 .vscode/
 src/renderer/dist/
+
+# Arbeitskopien von Hilfsagenten
+.claude/worktrees/
