@@ -168,12 +168,12 @@ Erst möglich, wenn Flux in ASK für dein Konto läuft (beim Bau nur im Beta-Arb
 
 ### E. Updates
 
-Erst möglich, wenn ASK-Releases und das Secret eingerichtet sind (README, «Neue Version veröffentlichen»).
+Erst möglich, wenn ASK-Releases, das Secret und die Schreibrechte der Workflows eingerichtet sind (README, «Neue Version veröffentlichen», Einmal einrichten). Stand 25.11.2026: v0.2.1 ist so entstanden (PR mit Label `release`); Installer und `latest.yml` sind geprüft (Grösse und SHA-512 stimmen, `app-update.yml` zeigt auf ASK-Releases).
 
-1. `npm run release -- 0.1.1 "Test der Updates"`. Erwartet: Im Reiter «Actions» von ASK-App läuft «Release» durch, in ASK-Releases steht «ASK 0.1.1» als Latest mit sechs Dateien.
-2. Den Link `…/releases/latest/download/ASK-Setup.exe` aus dem README öffnen und installieren. Erwartet: ASK 0.1.1 (Ordner-Menü «Nach Updates suchen (ASK 0.1.1)»).
-3. `npm run release -- 0.1.2 "Zweiter Test"`, warten, bis das Release da ist, ASK neu starten. Erwartet: nach etwa 20 Sekunden «ASK 0.1.2 ist da. Jetzt aktualisieren?» mit «Neu: Zweiter Test»; «Jetzt aktualisieren», unten «Update lädt …», dann «Jetzt neu starten?»; ASK startet als 0.1.2, der Chat ist noch da.
-4. `npm run release -- 0.1.3-beta.1 "Beta"`. Erwartet: In ASK-Releases als Pre-release; ASK 0.1.2 bietet nichts an. Im Ordner-Menü «Beta-Versionen erhalten» einschalten. Erwartet: «ASK 0.1.3-beta.1 (Beta) ist da».
+1. Den Link `…/releases/latest/download/ASK-Setup.exe` aus dem README öffnen und installieren. Erwartet: In den Einstellungen steht die aktuelle Version (z. B. «Version 0.2.1»).
+2. Einen PR mit Label `release` mergen. Erwartet: Die Prüfung «Release-Art gewählt» nennt vorher die neue Version; nach dem Merge läuft im Reiter «Actions» «Release» durch (Jobs «version» und «release»), in ASK-Releases steht die neue Version als Latest mit sechs Dateien, auf `main` liegt ein Commit «Version …».
+3. ASK neu starten. Erwartet: nach etwa 20 Sekunden «ASK <neue Version> ist da. Jetzt aktualisieren?» mit «Neu:» und dem Release-Text; «Jetzt aktualisieren», unten «Update lädt …», dann «Jetzt neu starten?»; ASK startet mit der neuen Version, Chats und Ordner sind noch da.
+4. Einen PR mit Label `beta` mergen. Erwartet: In ASK-Releases als Pre-release; ASK bietet nichts an. In den Einstellungen «Beta-Versionen erhalten» einschalten. Erwartet: «ASK <Version>-beta.1 (Beta) ist da».
 5. Mit der einzelnen EXE einer älteren Version: Erwartet «… ist da» mit «Download öffnen», das die Seite des Releases öffnet.
 6. Während eines laufenden Auftrags «Nach Updates suchen»: Erwartet keine Frage, bis der Auftrag fertig ist.
 
