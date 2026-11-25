@@ -346,6 +346,7 @@ export default function App() {
   const notice = (text) => dispatch({ type: 'events', evs: [{ type: 'notice', text }] });
 
   const blocker = !state?.folder ? 'Zuerst ein Projekt wählen.'
+    : ask.state === 'fehler' ? 'ASK meldet einen Fehler (Hinweis über dem Eingabefeld).'
     : ask.state !== 'angemeldet' ? 'Zuerst bei ASK anmelden.'
     : state.terminal.state === 'startet' ? 'Das Terminal startet …'
     : state.terminal.state !== 'läuft' ? 'Das Terminal läuft nicht (unten links auf «Terminal» klicken).'
@@ -605,6 +606,18 @@ export default function App() {
             </div>
           </div>
           {<button id="jump-btn" type="button" className="jump-btn" hidden={!(showJump && !follow)} onClick={jump}><Icon name="chevDown" size={14} /> nach unten</button>}
+          {ask.state === 'fehler' && !needsLogin ? (
+            // Angemeldet, aber ASK lässt nicht arbeiten (z. B. kein Modell für das Konto): Fehler zeigen und einen Weg zurück zur Anmeldung
+            <div id="ask-error" className="column ask-error" role="alert">
+              <div className="ask-error-box">
+                <p><strong>ASK meldet einen Fehler:</strong> {ask.message || 'unbekannt'}</p>
+                <div className="ask-error-actions">
+                  <button id="ask-error-retry" type="button" className="btn small" onClick={async () => { await api().connectAsk(); await api().models(); }}>Erneut prüfen</button>
+                  <button id="ask-error-relogin" type="button" className="btn small" onClick={() => api().logout()}><Icon name="logout" size={14} /> Abmelden und neu anmelden</button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {/* auch während der Anmeldung da (unter der Anmeldeseite), mit Hinweis im Platzhalter */}
           {(
             <Composer ref={composer} state={state} running={running} block={blocker} goal={state.chat?.goal} tasks={tasks} tasksLive={tasksLive}
