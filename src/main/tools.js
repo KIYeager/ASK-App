@@ -655,6 +655,9 @@ TOOLS.push({
   },
 });
 
+// Gedächtnis und eigene Skills (memorytools.js)
+TOOLS.push(...require('./memorytools').KNOWLEDGE_TOOLS);
+
 const byName = new Map(TOOLS.map((t) => [t.name, t]));
 
 // Werkzeugbeschreibungen im OpenAI-Format; die Befehlsbeschreibung kommt aus resources/anweisungen.

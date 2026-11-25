@@ -8,6 +8,7 @@ const { EventEmitter } = require('node:events');
 const { toolSpecs, runTool, describe, clip } = require('./tools');
 const { parseTextToolCalls } = require('./askapi');
 const { assessRisk } = require('./approvals');
+const { MEMORY_TOOLS } = require('./memorytools');
 
 // Keine feste Schrittgrenze für normale Aufträge; der Schleifenschutz (loopReason) hält ein
 // festgefahrenes Modell an. MAX_STEPS ist nur die Notbremse.
@@ -97,10 +98,12 @@ function textModePrompt(specs) {
 }
 
 // Text einer Eingabe mit Anhängen: das Modell erfährt, wo die Dateien liegen.
+// Mit /name aufgerufener Skill (skills.js): Die Anleitung geht vor dem Text an das Modell, die Person sieht nur ihre Eingabe.
 function userText(m) {
   const files = (m.attachments || []).map((a) => a.path);
-  if (!files.length) return m.content;
-  return `${m.content || 'Siehe Anhang.'}\n\n[Angehängt, liegt im Arbeitsordner: ${files.join(', ')}]`;
+  const skill = m.skill?.text ? `[Die Person ruft ihren Skill «${m.skill.name}» auf. Anleitung des Skills:]\n${m.skill.text}\n[Ende der Anleitung]\n\n` : '';
+  if (!files.length) return skill + m.content;
+  return `${skill}${m.content || 'Siehe Anhang.'}\n\n[Angehängt, liegt im Arbeitsordner: ${files.join(', ')}]`;
 }
 
 // Verlauf für die Anfrage: ohne Denktexte, alte Ergebnisse gekürzt, im Textmodus ohne tool-Rollen
@@ -159,7 +162,7 @@ function apiMessages(system, messages, textMode = false, imageUrl = null, budget
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer, knowledge }) {
     super();
     this.getContextLimit = getContextLimit || (() => 0); // Kontextfenster des Modells in Token, 0: unbekannt
     this.onContextLimit = onContextLimit || (() => {}); // ASK hat die Grenze in einer Fehlermeldung genannt
@@ -170,6 +173,7 @@ class Agent extends EventEmitter {
     this.approvals = new Map();
     this.questions = new Map(); // offene Fragen des Modells (frage_stellen) nach Werkzeug-id
     this.autoAnswer = autoAnswer || null; // nur in automatischen Tests
+    this.knowledge = knowledge || null; // Gedächtnis und eigene Skills (memorytools.js); memoryOn() aus: ohne merken/vergessen
     this.allowed = new Set(); // «Immer in diesem Chat», pro Art (loeschen, ueberschreiben, …)
     this.madeThisTurn = new Set(); // in diesem Auftrag vom Modell geschriebene Dateien
     this.images = images || null; // bild_erstellen mit Flux (bild.js), nur wenn ASK das Werkzeug anbietet
@@ -428,12 +432,14 @@ class Agent extends EventEmitter {
   }
 
   // attachments: bereits in .ask/anhaenge/<Chat>/ gespeicherte Anhänge (siehe attachments.js)
-  async send(text, attachments = []) {
+  // extra.skill: { name, text } eines mit /name aufgerufenen Skills
+  async send(text, attachments = [], extra = {}) {
     text = String(text || '').trim();
     if ((!text && !attachments.length) || this.running || this.undoing) return;
     if (!this.chat.title) this.chat.title = (text || attachments.map((a) => a.name).join(', ')).replace(/\s+/g, ' ').slice(0, 80);
     const message = { role: 'user', content: text, time: Date.now() };
     if (attachments.length) message.attachments = attachments;
+    if (extra?.skill?.text) message.skill = { name: String(extra.skill.name), text: String(extra.skill.text) };
     this.push(message);
     this.event({ type: 'user', text, attachments });
     this.turnSources = { read: [], found: [] }; // web_fetch und web_search in diesem Auftrag
@@ -443,6 +449,7 @@ class Agent extends EventEmitter {
     const { signal } = this.controller;
     this.emit('changed');
     const snapshots = this.getSnapshots();
+    let failed = false;
     try {
       // Stand des Ordners vor dem Auftrag, für «Rückgängig»
       if (snapshots) await this.backup(snapshots, message);
@@ -475,6 +482,7 @@ class Agent extends EventEmitter {
         if (step === MAX_STEPS - 1) this.event({ type: 'notice', text: `Nach ${MAX_STEPS} Schritten angehalten. Schreib «weiter», um fortzufahren.` });
       }
     } catch (err) {
+      failed = true;
       if (!signal.aborted && err.name !== 'AbortError') this.event({ type: 'error', text: err.message });
     } finally {
       if (signal.aborted) this.event({ type: 'notice', text: 'Gestoppt.' });
@@ -482,7 +490,7 @@ class Agent extends EventEmitter {
       this.running = false;
       this.controller = null;
       this.save();
-      this.event({ type: 'done' });
+      this.event({ type: 'done', stopped: signal.aborted, failed }); // main.js: danach im Hintergrund merken (memory.js)
       this.emit('changed');
     }
   }
@@ -494,7 +502,8 @@ class Agent extends EventEmitter {
     const goal = this.chat.goal && !this.chat.goal.done ? this.chat.goal : null;
     const memory = !!this.getChatMemory();
     const flux = !!this.images?.available();
-    const offered = (name) => (memory || !name.startsWith('chat_')) && (flux || name !== 'bild_erstellen');
+    const remember = !this.knowledge?.memoryOn || !!this.knowledge.memoryOn();
+    const offered = (name) => (memory || !name.startsWith('chat_')) && (flux || name !== 'bild_erstellen') && (remember || !MEMORY_TOOLS.includes(name));
     const specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => offered(s.function.name)), QUESTION_TOOL, ...(goal ? [GOAL_TOOL] : [])];
     let sentImages = false;
     const request = () => {
@@ -607,6 +616,8 @@ class Agent extends EventEmitter {
           onLive: (data) => this.event({ type: 'live', id: call.id, ...data }),
           canSee,
           chat: this.chat.id,
+          chatTitle: this.chat.title,
+          knowledge: this.knowledge,
           folder: this.getFolder(),
           confirm: this.confirm,
         });

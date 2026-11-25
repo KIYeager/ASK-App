@@ -22,6 +22,7 @@ const { Web } = require('./web');
 const { historyPrompt, search: searchChats } = require('./history');
 const { Images } = require('./bild');
 const { MODES: APPROVAL_MODES } = require('./approvals');
+const { Knowledge } = require('./knowledge');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -135,6 +136,10 @@ async function browserPane() {
     giveBack: () => { if (!ui.isDestroyed()) ui.focus(); }, close: () => {} };
 }
 
+// Gedächtnis und eigene Skills, nur in userData (ENTSCHEIDE E50, E51)
+const knowledge = new Knowledge({ dir: app.getPath('userData'), settings, ask, getModel: () => currentModel(),
+  send: (channel, data) => appWindow?.send(channel, data), log: (m) => console.log(`[gedaechtnis] ${m}`) });
+
 const visual = new Visual({ electron: { BrowserWindow, nativeImage }, convertToPdf, renderPage: path.join(__dirname, 'render', 'pdf.html'),
   getPane: browserPane, allowLocal: testMode });
 
@@ -151,7 +156,8 @@ function makeAgent(folder, rt) {
     getFolder: () => folder,
     getModel: () => currentModel(),
     getSystemPrompt: (chat) => readInstruction('systemprompt.md', folder, chat) + projectNotes(folder)
-      + (settings.get('chatMemory') ? historyPrompt(folder, chat) : '') + thinkingSwitch(),
+      + knowledge.systemPrompt(folder) + (settings.get('chatMemory') ? historyPrompt(folder, chat) : '') + thinkingSwitch(),
+    knowledge: knowledge.forAgent(),
     getChatMemory: () => !!settings.get('chatMemory'),
     getCommandHint: (chat) => readInstruction('befehle.md', folder, chat),
     getWebSearch: () => !!ask.webSearch && settings.get('webSearch'),
@@ -340,6 +346,7 @@ function state() {
     model: currentModel(),
     webSearch: !!s.webSearch,
     chatMemory: !!s.chatMemory,
+    memory: knowledge.memoryOn(),
     thinking: thinkingLevel(),
     webSearchAvailable: !!ask.webSearch,
     chat: agent.state(),
@@ -664,6 +671,8 @@ function setupIpc() {
     if (patch.theme) applyTheme();
     pushState();
   });
+  knowledge.setupIpc({ ipcMain, dialog, getWindow: () => appWindow?.win, confirm, onSettings: pushState,
+    projects: () => settings.load().projects.map((p) => ({ folder: p.folder, name: p.name, color: p.color })) });
   ipcMain.handle('chat:approve', (_e, id, answer) => allAgents().some((a) => a.answerApproval(id, answer)));
   ipcMain.handle('chat:answer', (_e, id, text) => allAgents().some((a) => a.answerQuestion(id, text)));
   ipcMain.handle('chat:stop-chat', (_e, folder, id) => {
@@ -758,7 +767,8 @@ function setupIpc() {
         return { ok: false, reason: `Anhänge nicht gespeichert: ${err.message}` };
       }
     }
-    agent.send(text, attachments);
+    const skill = knowledge.skillFor(text); // «/name …»: eigener Skill (ENTSCHEIDE E51)
+    agent.send(text, attachments, skill ? { skill } : {});
     return { ok: true };
   });
   ipcMain.handle('chat:undo', (_e, snapshot) => agent.undo(String(snapshot || '')));
@@ -942,6 +952,7 @@ function wireAgent(a, folder) {
     // Frage oder Rückfrage: Fenster in der Taskleiste aufblinken lassen, wenn es im Hintergrund ist
     if ((ev.type === 'approval' || ev.type === 'question') && appWindow && !appWindow.win.isFocused()) appWindow.win.flashFrame(true);
     appWindow?.send('chat:event', { ...ev, chatId: a.chat.id, folder });
+    if (ev.type === 'done') knowledge.afterTurn(a, folder, ev); // im Hintergrund merken (ENTSCHEIDE E50)
   });
   a.on('changed', () => {
     if (a === agent) appWindow?.send('chat:changed', agent.state());
