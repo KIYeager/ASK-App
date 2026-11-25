@@ -1,0 +1,6 @@
+app/target/
+app/gen/
+app/node_modules/
+sidecar/.data/
+!results/**/run.log
+results/**/stderr.log

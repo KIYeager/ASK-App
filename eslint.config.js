@@ -5,7 +5,7 @@ const react = require('eslint-plugin-react');
 const reactHooks = require('eslint-plugin-react-hooks');
 
 module.exports = [
-  { ignores: ['node_modules/', '.claude/', 'src/vendor/', 'build/', 'dist/', 'src/renderer/dist/'] },
+  { ignores: ['node_modules/', '.claude/', 'src/vendor/', 'build/', 'dist/', 'src/renderer/dist/', 'spike/'] }, // spike/: Tauri-Spike, nicht Teil der App (docs/TAURI-SPIKE.md)
   js.configs.recommended,
   {
     files: ['**/*.js'],

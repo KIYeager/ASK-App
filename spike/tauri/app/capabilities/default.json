@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "ui-only",
+  "description": "Nur die eigene Oberfläche (Webview ui, lokaler Inhalt) darf Befehle und Ereignisse nutzen. ask und browser bekommen nichts.",
+  "windows": [],
+  "webviews": ["ui"],
+  "permissions": ["core:event:default"]
+}

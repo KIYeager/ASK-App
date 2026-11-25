@@ -1,0 +1,94 @@
+libEGL warning: DRI3 error: Could not get DRI3 device
+libEGL warning: Ensure your X server supports DRI3 to get accelerated rendering
+[sidecar] echter Workspace aus src/main/workspace.js offen: /tmp/tmp.Ra8i6L53K8/folder
+[sidecar] bereit (112 Kanäle, echt: workspace:import, workspace:list, workspace:files)
+SPIKE {"data":{"tauri":"2.12.7","webviews":["ui","ask","browser"]},"step":"started"}
+SPIKE {"data":{"args":[false],"channel":"ui:ask-visible"},"step":"native"}
+SPIKE {"data":{"channel":"skills:list","ok":true},"step":"sidecar"}
+SPIKE {"data":{"channel":"state:get","ok":true},"step":"sidecar"}
+SPIKE {"data":{"channel":"chat:transcript","ok":true},"step":"sidecar"}
+SPIKE {"data":{"channel":"chat:groups","ok":true},"step":"sidecar"}
+SPIKE {"data":{"ask":"object","methods":112,"root":1,"text":"\nASK\n\nNeuer Chat\n\n\nNeuer Chat\n\nPROJEKTE\n\nNoch keine Projekte\n\nUpdate 0.2.4\nLM\nLea Muster\nVerbunden\n\n\nWoran arbeiten wir?\n\n\nWeb\n\nMittel\n\nAuto\n14 %\n\n\nDateien zeig"},"step":"ui-rendered"}
+SPIKE {"data":{"channel":"workspace:files","ok":true},"step":"sidecar"}
+SPIKE {"data":{"channel":"workspace:list","ok":true},"step":"sidecar"}
+SPIKE {"data":{"channel":"workspace:import","ok":true},"step":"sidecar"}
+SPIKE {"data":{"channel":"workspace:list","ok":true},"step":"sidecar"}
+SPIKE {"data":{"channel":"workspace:list","ok":true},"step":"sidecar"}
+SPIKE {"data":{"bytes_on_disk":300000,"intact":true,"result":{"ok":true,"paths":["spike-anhang.bin"]}},"step":"binary-import"}
+SPIKE {"data":{"file":"1-oberflaeche.png","ok":true},"step":"screenshot"}
+SPIKE {"data":{"args":[{"height":825,"width":810,"x":265,"y":95}],"channel":"ui:ask-bounds"},"step":"native"}
+SPIKE {"data":{"args":[true],"channel":"ui:ask-visible"},"step":"native"}
+SPIKE {"data":{"args":[{"height":825,"width":810,"x":265,"y":95}],"channel":"ui:ask-bounds"},"step":"native"}
+SPIKE {"data":{"bounds":"Rect { position: Logical(LogicalPosition { x: 0.0, y: 0.0 }), size: Logical(LogicalSize { width: 810.0, height: 825.0 }) }","inside":{"h":825,"title":"ASK Anmeldung (Attrappe)","w":810}},"step":"ask-webview"}
+SPIKE {"data":{"file":"2-anmeldung.png","ok":true},"step":"screenshot"}
+SPIKE {"data":{"length":16,"read":true},"step":"ask-token"}
+SPIKE {"data":{"args":[false],"channel":"ui:ask-visible"},"step":"native"}
+SPIKE {"data":{"args":[{"height":530.25,"width":360,"x":1080,"y":322.75}],"channel":"ui:browser-bounds"},"step":"native"}
+SPIKE {"data":{"args":[true],"channel":"ui:browser-visible"},"step":"native"}
+SPIKE {"data":{"clicked":true},"step":"browser-tab"}
+SPIKE {"data":{"args":[{"height":530.25,"width":360,"x":1080,"y":322.75}],"channel":"ui:browser-bounds"},"step":"native"}
+SPIKE {"data":{"args":[true],"channel":"ui:browser-visible"},"step":"native"}
+SPIKE {"data":{"args":[{"height":530.25,"width":360,"x":1080,"y":322.75}],"channel":"ui:browser-bounds"},"step":"native"}
+SPIKE {"data":{"args":[true],"channel":"ui:browser-visible"},"step":"native"}
+SPIKE {"data":{"allowed":true,"url":"http://127.0.0.1:18765/seite"},"step":"navigation"}
+SPIKE {"data":{"bounds":"Rect { position: Logical(LogicalPosition { x: 0.0, y: 0.0 }), size: Logical(LogicalSize { width: 360.0, height: 530.0 }) }","page":{"h":530,"title":"Testseite Browser","url":"http://127.0.0.1:18765/seite","w":360}},"step":"browser-page"}
+SPIKE {"data":{"call":"Err(\"WebKitGTK hat keine API für echte Eingaben; nur über GDK-Ereignisse (nicht gebaut)\")","page":"noch nicht geklickt"},"step":"click-trusted"}
+SPIKE {"data":{"call":"Err(\"auf Linux nicht verfügbar\")","page":""},"step":"type-trusted"}
+SPIKE {"data":{"result":"geklickt, isTrusted=false"},"step":"click-js"}
+SPIKE {"data":{"result":"Eingabe: Lea, isTrusted=false"},"step":"type-js"}
+SPIKE {"data":{"logs":["error: Testfehler aus der Seite"]},"step":"console"}
+SPIKE {"data":{"result":"Ok((360, 530))"},"step":"snapshot"}
+SPIKE {"data":{"allowed":false,"url":"http://127.0.0.1:18765/gesperrt"},"step":"navigation"}
+SPIKE {"data":{"path":"/seite"},"step":"navigation-after-blocked-link"}
+SPIKE {"data":{"allowed":true,"url":"http://127.0.0.1:18765/datei.bin"},"step":"navigation"}
+SPIKE {"data":{"allowed":false,"url":"http://127.0.0.1:18765/datei.bin"},"step":"download"}
+SPIKE {"data":{"args":[{"height":493.25,"width":360,"x":1080,"y":322.75}],"channel":"ui:browser-bounds"},"step":"native"}
+SPIKE {"data":{"args":[true],"channel":"ui:browser-visible"},"step":"native"}
+SPIKE {"data":{"allowed":false,"url":"https://example.org/"},"step":"new-window"}
+SPIKE {"data":{"result":"abgelehnt: ask_invoke not allowed. Plugin not found"},"step":"ipc-from-browser"}
+SPIKE {"data":{"result":"abgelehnt: ask_invoke not allowed. Plugin not found"},"step":"ipc-from-ask"}
+SPIKE {"data":{"file":"3-browser-bereich.png","ok":true},"step":"screenshot"}
+SPIKE {"data":{"type":"user"},"step":"chat:event"}
+SPIKE {"data":{"channel":"chat:send","ok":true},"step":"sidecar"}
+SPIKE {"data":{"result":"gesendet"},"step":"chat-input"}
+SPIKE {"data":{"type":"assistant-start"},"step":"chat:event"}
+SPIKE {"data":{"type":"reasoning"},"step":"chat:event"}
+SPIKE {"data":{"type":"reasoning"},"step":"chat:event"}
+SPIKE {"data":{"type":"reasoning"},"step":"chat:event"}
+SPIKE {"data":{"type":"reasoning"},"step":"chat:event"}
+SPIKE {"data":{"type":"reasoning"},"step":"chat:event"}
+SPIKE {"data":{"type":"reasoning"},"step":"chat:event"}
+SPIKE {"data":{"type":"assistant-end"},"step":"chat:event"}
+SPIKE {"data":{"type":"tool-start"},"step":"chat:event"}
+SPIKE {"data":{"type":"tool-end"},"step":"chat:event"}
+SPIKE {"data":{"type":"tool-start"},"step":"chat:event"}
+SPIKE {"data":{"type":"question"},"step":"chat:event"}
+SPIKE {"data":{"visible":true},"step":"chat-question-visible"}
+SPIKE {"data":{"file":"5-chat-frage.png","ok":true},"step":"screenshot"}
+SPIKE {"data":{"clicked":true},"step":"chat-answer"}
+SPIKE {"data":{"type":"question-end"},"step":"chat:event"}
+SPIKE {"data":{"type":"tool-end"},"step":"chat:event"}
+SPIKE {"data":{"type":"tool-start"},"step":"chat:event"}
+SPIKE {"data":{"type":"approval"},"step":"chat:event"}
+SPIKE {"data":{"channel":"chat:answer","ok":true},"step":"sidecar"}
+SPIKE {"data":{"result":"Ablehnen"},"step":"chat-approval"}
+SPIKE {"data":{"type":"approval-end"},"step":"chat:event"}
+SPIKE {"data":{"type":"tool-end"},"step":"chat:event"}
+SPIKE {"data":{"type":"assistant-start"},"step":"chat:event"}
+SPIKE {"data":{"type":"text"},"step":"chat:event"}
+SPIKE {"data":{"channel":"chat:approve","ok":true},"step":"sidecar"}
+SPIKE {"data":{"type":"text"},"step":"chat:event"}
+SPIKE {"data":{"type":"text"},"step":"chat:event"}
+SPIKE {"data":{"type":"text"},"step":"chat:event"}
+SPIKE {"data":{"type":"text"},"step":"chat:event"}
+SPIKE {"data":{"type":"text"},"step":"chat:event"}
+SPIKE {"data":{"visible":true},"step":"chat-done-visible"}
+SPIKE {"data":{"type":"text"},"step":"chat:event"}
+SPIKE {"data":{"type":"text"},"step":"chat:event"}
+SPIKE {"data":{"type":"text"},"step":"chat:event"}
+SPIKE {"data":{"type":"assistant-end"},"step":"chat:event"}
+SPIKE {"data":{"type":"changes"},"step":"chat:event"}
+SPIKE {"data":{"type":"done"},"step":"chat:event"}
+SPIKE {"data":{"channel":"chat:groups","ok":true},"step":"sidecar"}
+SPIKE {"data":{"file":"6-chat-fertig.png","ok":true},"step":"screenshot"}
+SPIKE {"data":{},"step":"end"}

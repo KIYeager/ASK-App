@@ -1,0 +1,8 @@
+{
+  "name": "ask-tauri-spike",
+  "private": true,
+  "description": "Nur für den Tauri-Spike (docs/TAURI-SPIKE.md): Tauri-CLI für Bündel und Installer",
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}
