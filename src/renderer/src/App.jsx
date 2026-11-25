@@ -386,6 +386,7 @@ export default function App() {
     { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api().setWebSearch(!state.webSearch); } },
     { cmd: '/chats', text: 'Frühere Chats für das Modell ein- oder ausschalten', run: () => api().setChatMemory(!state.chatMemory) },
     { cmd: '/einstellungen', text: 'Einstellungen: Darstellung, Rückfragen, Version', run: () => setDialog({ name: 'settings' }) },
+    { cmd: '/nutzung', text: 'Nutzung: Aufträge, Token und Dateien pro Projekt', run: () => setDialog({ name: 'usage' }) },
     { cmd: '/update', text: 'Nach einer neuen Version von ASK suchen', run: () => api().updateAction() },
     { cmd: '/beta', text: 'Beta-Versionen erhalten ein- oder ausschalten', run: () => api().setBetaUpdates(!state.update?.beta, true) },
     { cmd: '/neustart', text: 'Terminal neu starten', run: () => api().restartTerminal() },

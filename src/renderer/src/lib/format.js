@@ -36,3 +36,19 @@ export const fileUrl = (p, v = '') => `askfile://datei/${String(p).replaceAll('\
 
 // Kurzbezeichnung im farbigen Dateisymbol
 export const fileBadge = (name, dir = false) => (dir ? 'DIR' : (extOf(name) || 'Datei').slice(0, 4).toUpperCase());
+
+// Zahlen mit Apostroph als Tausendertrennzeichen (1’234), ab einer Million kurz («1.2 Mio.»)
+export function formatCount(n) {
+  const v = Math.round(Number(n) || 0);
+  if (v >= 1e6) return `${(v / 1e6).toLocaleString('de-CH', { maximumFractionDigits: 1 })} Mio.`;
+  return v.toLocaleString('de-CH');
+}
+
+// Dauer kurz: «45 s», «12 min», «3 h 05 min»
+export function formatDuration(ms) {
+  const s = Math.round((Number(ms) || 0) / 1000);
+  if (s < 60) return `${s} s`;
+  const min = Math.round(s / 60);
+  if (min < 60) return `${min} min`;
+  return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, '0')} min`;
+}

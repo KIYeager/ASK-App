@@ -47,6 +47,7 @@ const PATHS = {
   map: <><path d="m9 4-6 2.5v13L9 17l6 2.5 6-2.5v-13L15 6.5z" /><path d="M9 4v13M15 6.5v13" /></>,
   bell: <><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z" /><path d="M10 20a2 2 0 0 0 4 0" /></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>,
+  chart: <path d="M4 20h16M7 16v-5M12 16V6M17 16v-8" />,
 };
 
 export default function Icon({ name, size = 16, className = '', title, strokeWidth = 1.8 }) {

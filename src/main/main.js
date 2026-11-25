@@ -22,6 +22,7 @@ const { Web } = require('./web');
 const { historyPrompt, search: searchChats } = require('./history');
 const { Images } = require('./bild');
 const { MODES: APPROVAL_MODES } = require('./approvals');
+const usage = require('./usage');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -364,7 +365,8 @@ function state() {
 }
 
 // Einstellungen der Oberfläche, die sich die App merkt (Dialog «Einstellungen»)
-const PREFS = { verbose: false, todoCollapsed: true, notify: true }; // wie bisher: die Aufgabenliste schrumpft nach dem Auftrag auf eine Zeile
+// tourDone: Einführung gesehen (ENTSCHEIDE E49); notify: Benachrichtigungen (E52)
+const PREFS = { verbose: false, todoCollapsed: true, notify: true, tourDone: false }; // wie bisher: die Aufgabenliste schrumpft nach dem Auftrag auf eine Zeile
 function prefs() {
   const stored = settings.get('prefs') || {};
   return Object.fromEntries(Object.entries(PREFS).map(([k, v]) => [k, typeof stored[k] === typeof v ? stored[k] : v]));
@@ -786,6 +788,12 @@ function setupIpc() {
     }
     return hits.sort((a, b) => b.score - a.score || b.updated - a.updated).slice(0, 30);
   });
+  // Nutzungsübersicht (ENTSCHEIDE E49): lokal aus den Chats aller Projekte; withAsk=false ohne Anfrage an ASK
+  ipcMain.handle('usage:get', async (_e, withAsk = true) => {
+    const result = usage.aggregate(settings.load().projects);
+    result.ask = withAsk === false ? null : await usage.askUsage(ask).catch(() => null);
+    return result;
+  });
   ipcMain.handle('prefs:set', (_e, values) => {
     const next = { ...prefs() };
     for (const [k, v] of Object.entries(values || {})) if (k in PREFS && typeof v === typeof PREFS[k]) next[k] = v;
@@ -1029,7 +1037,15 @@ app.on('second-instance', () => {
   }
 });
 
+// Wer ASK schon benutzt hat, sieht die Einführung nach dem Update nicht von selbst (E49), nur über die Einstellungen.
+function skipTourForExistingUsers() {
+  const s = settings.load();
+  const stored = s.prefs || {};
+  if (s.warningAccepted && typeof stored.tourDone !== 'boolean') settings.set({ prefs: { ...stored, tourDone: true } });
+}
+
 app.whenReady().then(() => {
+  skipTourForExistingUsers();
   applyTheme();
   setupProtocol();
   setupIpc();
