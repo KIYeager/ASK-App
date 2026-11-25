@@ -293,6 +293,8 @@ button.work-head:hover { background: var(--hover); }
 .msg.stats { font-size: 11.5px; color: var(--dim); display: flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .msg.notice { font-size: 12.5px; color: var(--muted); display: flex; align-items: flex-start; gap: 6px; }
 .msg.notice .icon { margin-top: 3px; }
+.msg.notice.remembered { align-items: center; }
+.msg.notice.remembered .btn { margin-left: 4px; }
 .msg.error { font-size: 13px; color: var(--bad); background: var(--bad-soft); border-radius: 10px; padding: 8px 12px; display: flex; gap: 8px; align-items: flex-start; }
 .msg.error .icon { margin-top: 3px; }
 

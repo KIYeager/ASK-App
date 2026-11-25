@@ -57,14 +57,31 @@ class Memory {
     this.items = null;
   }
 
+  // Liest das Gedächtnis. Fehlt die Datei, ist es leer. Lässt sie sich gerade nicht lesen (z. B. vom Virenscanner
+  // gesperrt), gilt sie nicht als leer: save() verweigert dann, damit nichts überschrieben wird, und der nächste
+  // Aufruf liest erneut. Eine kaputte Datei (halb geschrieben) wird beiseitegelegt, nicht überschrieben.
   load() {
     if (this.items) return this.items;
     let stored = [];
+    let text;
     try {
-      const data = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      stored = Array.isArray(data?.items) ? data.items : [];
-    } catch {
-      stored = [];
+      text = fs.readFileSync(this.file, 'utf8');
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        this.readError = err;
+        return [];
+      }
+      text = null;
+    }
+    this.readError = null;
+    if (text !== null) {
+      try {
+        const data = JSON.parse(text);
+        stored = Array.isArray(data?.items) ? data.items : [];
+      } catch {
+        try { fs.renameSync(this.file, `${this.file}.defekt-${this.now()}`); } catch { /* bleibt liegen */ }
+        stored = [];
+      }
     }
     // Beim Lesen prüfen: nur gültige Einträge
     this.items = stored.filter((i) => i && typeof i.id === 'string' && typeof i.text === 'string' && i.text.trim()).map((i) => ({
@@ -78,6 +95,9 @@ class Memory {
   }
 
   save() {
+    if (!this.items || this.readError) {
+      throw new Error(`Das Gedächtnis lässt sich gerade nicht lesen (${this.readError?.code || 'unbekannt'}). Nichts geändert, damit nichts verloren geht.`);
+    }
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const text = JSON.stringify({ version: 1, items: this.items }, null, 1);
     const tmp = `${this.file}.tmp`;
@@ -126,14 +146,13 @@ class Memory {
   update(id, patch = {}) {
     const item = this.get(id);
     if (!item) return null;
-    if (patch.text !== undefined) {
-      const clean = cleanText(patch.text);
-      if (clean.length < 3) throw new Error('Der Text ist zu kurz.');
-      item.text = clean;
-    }
+    // zuerst alles prüfen, dann ändern: ein Fehler darf keine halbe Änderung hinterlassen
+    const clean = patch.text !== undefined ? cleanText(patch.text) : null;
+    if (clean !== null && clean.length < 3) throw new Error('Der Text ist zu kurz.');
+    if (SCOPES.includes(patch.scope) && patch.scope === 'projekt' && !(patch.project || item.project)) throw new Error('Für einen Eintrag zum Projekt fehlt das Projekt.');
+    if (clean !== null) item.text = clean;
     if (patch.tags !== undefined) item.tags = cleanTags(patch.tags);
     if (SCOPES.includes(patch.scope)) {
-      if (patch.scope === 'projekt' && !(patch.project || item.project)) throw new Error('Für einen Eintrag zum Projekt fehlt das Projekt.');
       item.scope = patch.scope;
       item.project = patch.scope === 'projekt' ? String(patch.project || item.project) : null;
     }

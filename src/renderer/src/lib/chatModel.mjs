@@ -64,6 +64,22 @@ function ensureAssistant(model) {
 
 export const QUESTION = 'frage_stellen';
 export const PLAN = 'plan_vorlegen';
+const REMEMBER = 'merken';
+
+// Hat sich das Modell mit «merken» etwas gemerkt, steht das sichtbar im Chat, mit «Vergessen» (ENTSCHEIDE E50).
+// Kennung und Text kommen aus dem Ergebnis des Werkzeugs (memorytools.js).
+function remembered(entry, result) {
+  if (entry?.name !== REMEMBER || result.ok === false) return null;
+  const m = /^Gemerkt \(id ([\w-]+), ([^)]*)\): ([\s\S]+)$/.exec(String(result.output || ''));
+  return m ? { k: 'remembered', memoryId: m[1], scope: m[2], text: m[3].trim() } : null;
+}
+
+function finishWithMemory(model, i, result) {
+  const entry = model.entries[i];
+  const m = update(model, i, (e) => finishTool(e, result));
+  const note = remembered(entry, result);
+  return note ? add(m, note) : m;
+}
 
 function toolEntry(call) {
   const entry = { k: 'tool', id: call.id, name: call.name, label: call.label || call.name, detail: call.detail || '',
@@ -116,7 +132,7 @@ export function fromTranscript(items, running = false) {
       for (const call of item.calls || []) m = add(m, toolEntry(call));
     } else if (item.role === 'tool') {
       const i = findIndex(m, (e) => e.k === 'tool' && e.id === item.id);
-      if (i >= 0) m = update(m, i, (e) => finishTool(e, item));
+      if (i >= 0) m = finishWithMemory(m, i, item);
     }
   }
   // Werkzeuge ohne Ergebnis (App beendet während des Schritts)
@@ -160,7 +176,7 @@ export function applyEvent(model, ev) {
     }
     case 'tool-end': {
       const i = findIndex(model, (e) => e.k === 'tool' && e.id === ev.id);
-      return i < 0 ? model : update(model, i, (e) => finishTool(e, ev));
+      return i < 0 ? model : finishWithMemory(model, i, ev);
     }
     case 'question': {
       const i = findIndex(model, (e) => e.k === 'tool' && e.id === ev.id);

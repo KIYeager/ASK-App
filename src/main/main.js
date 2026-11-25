@@ -222,6 +222,7 @@ function runtime(folder) {
   const key = path.resolve(folder).toLowerCase();
   let rt = runtimes.get(key);
   if (rt) return rt;
+  migrateProject(folder);
   rt = { folder, terminal: makeTerminal(), workspace: new Workspace(), agents: new Set() };
   // Entwicklungsserver (ENTSCHEIDE E48) über die Terminal-API dieses Projekts; die Ports der Terminals gibt der
   // Browser nie frei
@@ -295,19 +296,32 @@ function applyTheme() {
 // Datei oder Ordner der App zu einem Arbeitsordner, ausserhalb davon (paths.projectDataDir). Frühere
 // Versionen legten Sicherung und GitHub-Verbindung in .ask ab: einmal übernehmen. Was von dort kommt,
 // prüfen snapshot.js und github.js beim Lesen, denn das Modell konnte es ändern.
+// Nur beim ersten Blick der App auf den Ordner (Marke «.uebernommen-<name>»), bevor ein Auftrag darin lief:
+// Sonst könnte das Modell später eine eigene .ask/github.json anlegen und so bestimmen, wohin hochgeladen wird.
 function projectFile(folder, name, legacy) {
   const target = path.join(paths.projectDataDir(folder), name);
   const old = path.join(folder, legacy);
+  const marker = path.join(paths.projectDataDir(folder), `.uebernommen-${name}`);
   try {
-    if (!fs.existsSync(target) && fs.existsSync(old)) {
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.cpSync(old, target, { recursive: true });
+    if (!fs.existsSync(marker)) {
+      if (!fs.existsSync(target) && fs.existsSync(old)) {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.cpSync(old, target, { recursive: true });
+      }
+      fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(marker, '');
     }
     if (fs.existsSync(old)) fs.rmSync(old, { recursive: true, force: true });
   } catch {
     // nicht übernommen: Die App beginnt eine neue Ablage
   }
   return target;
+}
+
+// Alte Ablagen eines Ordners übernehmen, sobald die App ihn öffnet (vor dem ersten Auftrag)
+function migrateProject(folder) {
+  projectFile(folder, 'github.json', path.join('.ask', 'github.json'));
+  projectFile(folder, 'sicherung', path.join('.ask', 'sicherung'));
 }
 
 // Sicherung des Arbeitsordners (snapshot.js), eine Instanz pro Ordner

@@ -149,3 +149,19 @@ test('Fragen des Modells stehen unter der Karte und zählen nicht als Arbeitssch
   const q = buildTurns(saved)[0].steps[0].entry;
   assert.deepStrictEqual([q.question.frage, q.question.optionen, q.summary], ['Welche?', ['A'], 'A']);
 });
+
+test('«merken» steht als eigener Eintrag im Chat, live und aus dem gespeicherten Chat', async () => {
+  const { emptyChat, applyEvent, fromTranscript, buildTurns } = await load();
+  const output = 'Gemerkt (id m1a2b3c4, alle Projekte): Mag Antworten in Stichworten.';
+  let m = [{ type: 'user', text: 'Merk dir das' }, { type: 'assistant-start' }, { type: 'tool-start', id: 't1', name: 'merken', label: 'Merken', detail: 'x' },
+    { type: 'tool-end', id: 't1', ok: true, summary: 'x', output }, { type: 'text', text: 'Gemerkt.' }, { type: 'assistant-end', content: 'Gemerkt.', stats }]
+    .reduce(applyEvent, emptyChat());
+  const note = m.entries.find((e) => e.k === 'remembered');
+  assert.deepStrictEqual({ id: note.memoryId, scope: note.scope, text: note.text }, { id: 'm1a2b3c4', scope: 'alle Projekte', text: 'Mag Antworten in Stichworten.' });
+  assert.ok(buildTurns(m)[0].after.some((e) => e.k === 'remembered'));
+  m = fromTranscript([{ role: 'user', content: 'Merk dir das' }, { role: 'assistant', content: '', calls: [{ id: 't1', name: 'merken' }] },
+    { role: 'tool', id: 't1', ok: true, output }]);
+  assert.ok(m.entries.some((e) => e.k === 'remembered' && e.memoryId === 'm1a2b3c4'));
+  const failed = [{ type: 'tool-start', id: 't2', name: 'merken' }, { type: 'tool-end', id: 't2', ok: false, output: 'Nicht gemerkt' }].reduce(applyEvent, emptyChat());
+  assert.ok(!failed.entries.some((e) => e.k === 'remembered'));
+});

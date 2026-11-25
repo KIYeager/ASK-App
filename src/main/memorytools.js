@@ -13,6 +13,7 @@ function need(ctx, part) {
   return k[part];
 }
 
+const SKILL_SHOWN = 3000; // so lang darf eine Anleitung sein, die das Modell anlegt (ganz in der Rückfrage)
 const clipLine = (t, n = 80) => { const s = String(t ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 
 const KNOWLEDGE_TOOLS = [
@@ -104,8 +105,15 @@ const KNOWLEDGE_TOOLS = [
       const problem = checkName(slug);
       if (problem) throw new Error(problem);
       const exists = !!skills.get(slug);
+      // Die Person sieht vor dem Speichern die ganze Anleitung: Was danach in jedem passenden Auftrag gilt,
+      // darf nicht hinter einem «…» stehen. Längere Skills legt die Person selbst in den Einstellungen an.
+      const anleitung = String(a.anleitung || '');
+      if (anleitung.length > SKILL_SHOWN) {
+        return { ok: false, summary: 'zu lang', output: `Die Anleitung hat ${anleitung.length} Zeichen; höchstens ${SKILL_SHOWN} gehen, damit die Person sie vor dem Speichern ganz lesen kann. `
+          + 'Fasse sie kürzer, oder die Person legt den Skill in den Einstellungen unter «Skills» selbst an.' };
+      }
       const ok = ctx.confirm ? await ctx.confirm(exists ? `Skill «${slug}» ersetzen?` : `Skill «${slug}» speichern?`,
-        `${clipLine(a.beschreibung, 200)}\n\n${String(a.anleitung || '').slice(0, 600)}${String(a.anleitung || '').length > 600 ? ' …' : ''}\n\n`
+        `${clipLine(a.beschreibung, 200)}\n\n${anleitung}\n\n`
         + `Aufrufen mit /${slug}. Ändern und löschen in den Einstellungen unter «Skills».`) : false;
       if (!ok) return { ok: false, output: 'Die Person hat das Speichern abgelehnt.', summary: 'abgelehnt' };
       const s = skills.save({ name: slug, description: a.beschreibung, body: a.anleitung }, { overwrite: true });

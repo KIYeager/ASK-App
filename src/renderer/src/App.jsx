@@ -102,6 +102,12 @@ export default function App() {
   const loadChats = useCallback(async () => setGroups(await api().chatGroups()), []);
   const loadTranscript = useCallback(async () => {
     const t = await api().chatTranscript();
+    // Anderer Chat: noch gesammelte Ereignisse gehören zum vorherigen, verwerfen, sonst landen sie im neuen
+    if (t.id !== chatIdRef.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = 0;
+      buf.current = [];
+    }
     chatIdRef.current = t.id;
     runningRef.current = t.running;
     setChatId(t.id);
@@ -511,6 +517,7 @@ export default function App() {
     copy: (t) => api().copy(t),
     approve: (id, a) => api().chatApprove(id, a),
     answer: (id, t) => api().chatAnswer(id, t),
+    forgetMemory: async (id) => { try { return !!(await api().memoryRemove(id)); } catch { return false; } },
     undo: async (snap) => { const res = await api().chatUndo(snap); if (res && !res.ok && !res.cancelled) dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] }); },
     undoSnapshot: lastChanges?.snapshot,
     lastPlanKey,
