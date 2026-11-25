@@ -10,20 +10,28 @@
   "scripts": {
     "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup.ps1",
     "build:python": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-python.ps1",
-    "start": "electron .",
+    "build:ui": "vite build",
+    "dev:ui": "vite",
+    "start": "vite build && electron .",
     "test": "node --test tests/*.test.js",
     "lint": "eslint .",
-    "test:e2e": "node tests/e2e/run.js chat && node tests/e2e/run.js anmelden && node tests/e2e/run.js erststart && node tests/e2e/run.js coworker",
-    "dist": "node scripts/pack-python.js && electron-builder --config electron-builder.config.js --win --publish never",
-    "dist:portable": "node scripts/build-portable.js",
+    "test:e2e": "vite build && node tests/e2e/run.js chat && node tests/e2e/run.js anmelden && node tests/e2e/run.js erststart && node tests/e2e/run.js coworker",
+    "dist": "node scripts/pack-python.js && vite build && electron-builder --config electron-builder.config.js --win --publish never",
+    "dist:portable": "vite build && node scripts/build-portable.js",
     "release": "node scripts/release.js"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
+    "@vitejs/plugin-react": "6.3.0",
     "electron": "44.6.0",
     "electron-builder": "26.15.3",
     "eslint": "9.39.5",
-    "globals": "17.14.0"
+    "eslint-plugin-react": "7.37.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.14.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "vite": "8.3.8"
   },
   "dependencies": {
     "electron-updater": "6.8.12"

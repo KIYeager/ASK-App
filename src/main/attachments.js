@@ -24,6 +24,8 @@ function cleanName(name, type = '') {
     base = `bild-${stamp()}${ext.toLowerCase()}`;
   }
   if (base.length > 120) base = base.slice(0, 120 - path.extname(base).length) + path.extname(base);
+  // Gerätenamen von Windows (nul.txt landet sonst im Nichts)
+  if (/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i.test(base)) base = `_${base}`;
   return base;
 }
 
@@ -87,4 +89,4 @@ function nativeResize(nativeImage) {
   };
 }
 
-module.exports = { saveAttachments, imageUrl, nativeResize, cleanName, INBOX, MAX_FILES, MAX_SIZE, MAX_IMAGE_SIDE };
+module.exports = { saveAttachments, imageUrl, nativeResize, cleanName, freeName, INBOX, MAX_FILES, MAX_SIZE, MAX_IMAGE_SIDE };

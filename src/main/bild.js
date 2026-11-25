@@ -462,7 +462,10 @@ class Images {
     const url = new URL(ref, origin);
     let res;
     if (url.origin === origin) res = await this.ask.raw(url.pathname + url.search, { signal });
-    else res = await this.fetchImpl(checkUrl(url.href, this.allowLocal).href, { signal });
+    else {
+      res = await this.fetchImpl(checkUrl(url.href, this.allowLocal).href, { signal });
+      if (res.url) checkUrl(res.url, this.allowLocal); // Weiterleitung ins lokale Netz: Bild nicht übernehmen
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     if (Number(res.headers.get('content-length') || 0) > MAX_BYTES) throw new Error('grösser als 40 MB');
     const data = Buffer.from(await res.arrayBuffer());

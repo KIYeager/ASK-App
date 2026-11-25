@@ -32,7 +32,7 @@ module.exports = {
   instructionsDir: () => resources('anweisungen'),
   appConfigFile: () => resources('app-config.json'),
   iconFile: () => resources('icon.ico'),
-  rendererDir: () => path.join(repoRoot, 'src', 'renderer'),
+  rendererDir: () => path.join(repoRoot, 'src', 'renderer', 'dist'), // gebaut mit «npm run build:ui» (Vite)
   preloadDir: () => path.join(repoRoot, 'src', 'preload'),
   // Daten der App zu einem Arbeitsordner, die das Modell nicht ändern darf (Sicherung für «Rückgängig»,
   // Verbindung mit GitHub). Liegt darum nicht im Arbeitsordner und nicht im Laufzeitordner des

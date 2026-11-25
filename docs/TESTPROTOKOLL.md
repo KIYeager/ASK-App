@@ -68,6 +68,12 @@ Entpacken beim ersten Mal über `<id>.neu` mit Fortschritt (0 bis 100), schon en
 
 Mit nachgebautem electron-updater und nachgebauter Uhr: ohne Paket oder ohne Release-Repository aus; neue Version: eine Frage, Download, 10 s Countdown, Installieren mit Fortschrittsfenster nach dem Beenden des Terminals; «Jetzt neu starten» ohne Countdown; «Später» bei der Frage fragt nicht von selbst nochmals, ein Klick schon; «Später» im Balken startet nicht neu, auch nicht nach einem Auftrag; während das Modell arbeitet keine Frage und kein Neustart, ein Auftrag im Countdown hält ihn an, danach beginnt er neu; einzelne EXE nur mit Link, ohne Download; Beta-Schalter setzt `allowPrerelease`; Fehler beim automatischen Prüfen still, beim Klick gemeldet; Release-Text ohne HTML und gekürzt; einzelne EXE am Ordner erkennen; Versionen und Reihenfolge für `npm run release` (Beta vor der normalen Version); nächste Version beim Merge mit `beta` und `release`, mit und ohne eigene Nummer, abgelehnte Nummern; Zeilen `Version:` und `Release-Text:` aus dem PR-Text, die PR-Vorlage selbst gibt keine. Nicht getestet: der Workflow auf GitHub und ein echtes Update (siehe Teil 2, E).
 
+### Neue Oberfläche, Rückfragen, Fragen (`tests/chatmodel.test.js`, `tests/approvals.test.js`, `tests/rueckfrage.test.js`, `tests/haertung.test.js`)
+
+Datenmodell des Chats (Live und gespeichert ergeben dasselbe, Gruppen von Leseschritten, Fragen und Rückfragen in der Karte, Rückgängig, Statistik, Markdown maskiert). Erkennung heikler Befehle (Löschen in cmd, PowerShell und Python, Pfade ausserhalb, Überschreiben, Stufen). Arbeitsschleife: abgelehnter Löschbefehl wird nicht ausgeführt, «Immer in diesem Chat», Stopp während der Rückfrage, `frage_stellen` mit Antwort und mit Stopp. Härtungen: lokale Adressen in anderen Schreibweisen, Pfade von GitHub, Gerätenamen von Windows.
+
+Die Oberfläche selbst wurde unter Linux im Browser mit der Attrappe (`npm run dev:ui`) und in Electron unter Xvfb gegen den Nachbau von ASK geprüft (lädt, Projekte übernommen, angemeldet; das Terminal läuft nur unter Windows). Der End-to-End-Test ist an die neue Oberfläche angepasst, aber noch nicht unter Windows gelaufen.
+
 ### App im Entwicklungsmodus (`tests/e2e/run.js`, 214 Prüfungen in 4 Szenarien)
 
 | Szenario | Prüfungen | Inhalt |

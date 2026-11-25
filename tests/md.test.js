@@ -1,7 +1,14 @@
 // Tests für den Markdown-Renderer der Oberfläche (node --test tests/).
 const test = require('node:test');
 const assert = require('node:assert');
-const { renderMarkdown: md } = require('../src/renderer/md');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+// Der Renderer ist ein ES-Modul der Oberfläche (src/renderer/src/lib/md.mjs)
+let md;
+test.before(async () => {
+  ({ renderMarkdown: md } = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'renderer', 'src', 'lib', 'md.mjs')).href));
+});
 
 test('nummerierte Liste behält die Zahlen über Leerzeile und Codeblock', () => {
   assert.strictEqual(md('1. a\n\n2. b'), '<ol><li>a</li><li>b</li></ol>');

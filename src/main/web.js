@@ -131,7 +131,8 @@ function checkUrl(raw, allowLocal = false) {
     throw new Error(`Keine gültige Adresse: ${raw}`);
   }
   if (!/^https?:$/.test(url.protocol)) throw new Error('Nur http- und https-Adressen.');
-  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  // «localhost.» mit Punkt am Ende ist dieselbe Adresse
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '');
   // IPv4 in IPv6-Schreibweise (::ffff:7f00:1 ist 127.0.0.1) zählt wie die IPv4-Adresse
   const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
   const v4 = mapped ? [parseInt(mapped[1], 16) >> 8, parseInt(mapped[1], 16) & 255, parseInt(mapped[2], 16) >> 8, parseInt(mapped[2], 16) & 255].join('.') : host;

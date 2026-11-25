@@ -13,7 +13,8 @@ module.exports = {
   productName: 'ASK',
   copyright: 'TF Bern',
   directories: { output: path.join(buildDir, 'dist') },
-  files: ['src/**/*', 'package.json'],
+  // Oberfläche nur gebaut (src/renderer/dist, «npm run build:ui»), ohne Quellen
+  files: ['src/main/**/*', 'src/preload/**/*', 'src/vendor/**/*', 'src/renderer/dist/**/*', 'package.json'],
   extraResources: [
     { from: path.join(buildDir, 'python-pack'), to: 'python-pack' },
     { from: 'python/ask_terminal', to: 'ask_terminal', filter: ['*.py'] },

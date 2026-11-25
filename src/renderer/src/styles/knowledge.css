@@ -1,0 +1,121 @@
+/* Gedächtnis (Netz und Liste) und Skills, Dialoge aus components/Knowledge.jsx. Farben aus app.css. */
+
+.dialog.mem-dialog { width: min(1120px, 100%); height: min(760px, calc(100vh - 40px)); }
+.dialog.skills-dialog { width: min(920px, 100%); height: min(640px, calc(100vh - 40px)); }
+.mem-dialog .dialog-head, .skills-dialog .dialog-head { gap: 10px; }
+.mem-dialog .dialog-head h1, .skills-dialog .dialog-head h1 { flex: none; }
+.mem-dialog .dialog-body { padding: 10px 20px 0; }
+.mem-dialog .actions, .skills-dialog .actions { align-items: center; padding-top: 14px; }
+.mem-count { white-space: nowrap; }
+
+.btn.danger { color: var(--bad); }
+.btn.danger:hover:not(:disabled) { background: var(--bad-soft); }
+
+/* Ausgeschaltet */
+.mem-off { display: flex; align-items: center; gap: 12px; justify-content: space-between; padding: 8px 12px; border-radius: 9px; background: var(--warn-soft); border: 1px solid var(--warn-line); color: var(--warn); font-size: 13px; }
+
+/* Noch leer */
+.mem-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 8px; padding: 30px; }
+.mem-empty p { max-width: 440px; }
+.mem-empty .btn { margin-top: 6px; }
+.mem-empty-mark { position: relative; width: 64px; height: 44px; margin-bottom: 6px; }
+.mem-empty-mark span { position: absolute; border-radius: 50%; background: var(--acc-soft); border: 1.5px solid var(--acc-line); }
+.mem-empty-mark span:nth-child(1) { width: 22px; height: 22px; left: 21px; top: 11px; background: var(--acc); border-color: var(--acc); }
+.mem-empty-mark span:nth-child(2) { width: 11px; height: 11px; left: 2px; top: 2px; }
+.mem-empty-mark span:nth-child(3) { width: 13px; height: 13px; right: 2px; bottom: 0; }
+.mem-empty-small { padding: 12px 4px; }
+
+/* Netz */
+.mem-net { position: relative; flex: 1; min-height: 0; display: flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); }
+.mem-canvas { position: relative; flex: 1; min-width: 0; cursor: grab; touch-action: none; user-select: none;
+  background-image: radial-gradient(var(--line) 1px, transparent 1.2px); background-size: 24px 24px; }
+.mem-canvas:active { cursor: grabbing; }
+.mem-canvas > svg { display: block; position: absolute; inset: 0; }
+.mem-link { stroke: var(--line-2); stroke-width: 1; transition: opacity .15s, stroke .15s; }
+.mem-link.projekt { stroke-width: 1.8; }
+.mem-link.tag { stroke-dasharray: 2 3; }
+.mem-link.dim { opacity: .14; }
+.mem-link.lit { stroke: var(--acc); opacity: .85; }
+.mem-node { cursor: pointer; transition: opacity .15s; }
+.mem-node.du { cursor: default; }
+.mem-node.dim { opacity: .2; }
+.mem-node circle:not(.hit) { stroke: var(--card); stroke-width: 2; transition: r .12s; }
+.mem-node.tag circle:not(.hit) { stroke: var(--dim); stroke-width: 1.4; }
+.mem-node.item:hover circle:not(.hit) { r: 7.5; }
+.mem-node.item.sel circle:not(.hit) { r: 7.5; stroke: var(--text); stroke-width: 2; }
+.mem-node .hit { fill: transparent; stroke: none; }
+.mem-label { font-size: 12px; fill: var(--text); pointer-events: none; paint-order: stroke; stroke: var(--card); stroke-width: 3.5px; stroke-linejoin: round; }
+.mem-label.du { fill: var(--bg); stroke: none; font-weight: 650; font-size: 13px; }
+.mem-label.projekt { font-weight: 600; font-size: 12.5px; }
+.mem-label.tag { fill: var(--muted); font-size: 11px; }
+.mem-tip { position: absolute; transform: translate(-50%, calc(-100% - 12px)); width: max-content; max-width: 280px; padding: 6px 10px; border-radius: 8px;
+  background: var(--text); color: var(--bg); font-size: 12.5px; line-height: 1.4; pointer-events: none; box-shadow: var(--shadow); z-index: 2; }
+.mem-zoom { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 2px; padding: 3px;
+  background: var(--pane); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); }
+.mem-legend { position: absolute; left: 12px; bottom: 10px; display: flex; gap: 14px; padding: 4px 8px; border-radius: 8px; font-size: 11.5px; color: var(--muted);
+  background: color-mix(in srgb, var(--card) 88%, transparent); pointer-events: none; }
+.mem-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.mem-legend .dot.ring { border: 1.4px solid var(--dim); background: var(--pane); }
+.mem-legend .dot.small { width: 7px; height: 7px; vertical-align: 0; }
+
+/* Seitenfeld zum Eintrag */
+.mem-panel { width: 300px; flex: none; border-left: 1px solid var(--line); background: var(--pane); padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+.mem-panel-head { display: flex; align-items: center; justify-content: space-between; margin-right: -6px; }
+.mem-panel-text { font-size: 15px; line-height: 1.5; margin: 0; }
+.mem-panel-btns { display: flex; gap: 8px; margin-top: 4px; }
+.mem-scope { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.mem-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.mem-tag { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--hover); color: var(--muted); font-size: 11.5px; }
+
+/* Formular */
+.mem-form, .skill-form { display: flex; flex-direction: column; gap: 10px; }
+.mem-row { display: flex; gap: 10px; align-items: flex-end; }
+.mem-row > .mem-field { flex: 1; min-width: 0; }
+.mem-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.dialog .mem-field input, .dialog .mem-field select { height: 38px; }
+.dialog .mem-field input, .dialog .mem-field select, .dialog .mem-field textarea { font-weight: 400; font-size: 13.5px; color: var(--text); width: 100%; padding: 8px 11px; border-radius: 9px;
+  border: 1px solid var(--line-2); background: var(--pane); outline: none; }
+.dialog .mem-field input:focus, .dialog .mem-field select:focus, .dialog .mem-field textarea:focus { border-color: var(--acc); }
+.setting-ctl { display: flex; gap: 8px; align-items: center; flex: none; }
+.mem-form-btns { display: flex; justify-content: flex-end; gap: 8px; }
+.mem-panel .mem-row { flex-direction: column; align-items: stretch; }
+
+/* Liste */
+.mem-list-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.mem-search { display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: 9px; color: var(--dim); }
+.mem-search:focus-within { border-color: var(--acc); }
+.dialog .mem-search input[type=text] { border: 0; padding: 8px 0; background: none; height: 36px; }
+.mem-new { padding: 12px 14px; border: 1px solid var(--acc-line); border-radius: 10px; background: var(--acc-soft); }
+.mem-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; }
+.mem-list li { display: flex; align-items: flex-start; gap: 12px; padding: 10px 6px; border-bottom: 1px solid var(--line); }
+.mem-list li:last-child { border-bottom: 0; }
+.mem-list li.editing { display: block; padding: 12px 6px; }
+.mem-list li > .dot { margin-top: 7px; }
+.mem-item { flex: 1; min-width: 0; }
+.mem-item-text { line-height: 1.45; }
+.mem-item-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 3px; font-size: 12px; color: var(--muted); }
+.mem-item-btns { display: flex; gap: 2px; opacity: 0; transition: opacity .1s; }
+.mem-list li:hover .mem-item-btns, .mem-list li:focus-within .mem-item-btns { opacity: 1; }
+
+/* Skills */
+.skills-dialog .dialog-body { padding: 10px 20px 0; }
+.skills { flex: 1; min-height: 0; display: flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.skills-nav { width: 250px; flex: none; display: flex; flex-direction: column; background: var(--side); border-right: 1px solid var(--line); }
+.skills-nav ul { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; min-height: 0; }
+.skills-nav li button { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; border: 0; border-radius: 8px; background: none; }
+.skills-nav li button:hover { background: var(--hover); }
+.skills-nav li button.on { background: var(--acc-soft); }
+.skill-cmd { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.skills-nav li button.on .skill-cmd { color: var(--acc-text); }
+.skill-desc { font-size: 12px; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.35; }
+.skills-add { display: flex; align-items: center; gap: 6px; margin: 6px; padding: 8px 10px; border: 1px dashed var(--line-2); border-radius: 8px; background: none; color: var(--muted); font-weight: 500; }
+.skills-add:hover, .skills-add.on { color: var(--acc-text); border-color: var(--acc-line); background: var(--acc-soft); }
+.skills-main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 16px 18px; overflow-y: auto; }
+.skills-intro { margin: auto; max-width: 420px; display: flex; flex-direction: column; gap: 8px; text-align: center; }
+.skills-intro code, .skill-call code { font-family: var(--mono); font-size: 12px; padding: 1px 5px; border-radius: 5px; background: var(--code); }
+.skill-form { flex: 1; min-height: 0; }
+.skill-call { padding-bottom: 9px; min-width: 120px; }
+.mem-field.grow { flex: 1; min-height: 160px; }
+.dialog .mem-field textarea { flex: 1; resize: none; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
+.skill-btns { display: flex; gap: 8px; align-items: center; }

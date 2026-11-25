@@ -433,7 +433,7 @@ class AskSession extends EventEmitter {
     if (this.view) {
       await this.view.webContents.executeJavaScript('localStorage.removeItem("token")', true).catch(() => {});
       await this.session.clearStorageData({ origin: new URL(this.base).origin, storages: ['cookies'] }).catch(() => {});
-      this.view.webContents.loadURL(`${this.base}/auth`);
+      this.view.webContents.loadURL(`${this.base}/auth`).catch(() => {});
     }
     this.publish({ state: 'nicht-angemeldet' });
   }
