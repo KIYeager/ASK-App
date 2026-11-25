@@ -242,3 +242,16 @@ Die installierte App fragt vor dem Herunterladen und vor dem Neustart (Wunsch: d
 Beta: Tags wie `v0.3.0-beta.1` werden Vorabversionen. Der Schalter «Beta-Versionen erhalten» setzt `allowPrerelease`. Jedes Release hat nur `latest.yml`; electron-updater sucht bei einer Vorabversion zuerst `beta.yml` und nimmt dann `latest.yml` desselben Releases. Wer den Schalter wieder ausschaltet, behält die Beta, bis eine grössere normale Version kommt (kein Zurückstufen).
 
 Die Angabe des Repositorys steht einmal in `resources/app-config.json` (`updates`); electron-builder schreibt daraus `app-update.yml` in die installierte App, die einzelne EXE setzt sie zur Laufzeit. electron-builder lädt selbst nichts hoch (`--publish never`), das macht `gh release create` im Workflow mit dem Secret `RELEASES_TOKEN` (Fine-grained Token nur für ASK-Releases). Installer und EXE bleiben unsigniert; electron-updater prüft die Signatur nur, wenn `publisherName` gesetzt ist, und die Prüfsumme aus `latest.yml` (SHA-512) schützt vor beschädigten Downloads, nicht vor einem fremden Release im Repository.
+
+## E38 Neue Version beim Merge, Beta oder Vollversion per Label
+
+Eine neue Version soll ohne eigenen Befehl entstehen, und bei jeder soll man bewusst wählen, ob sie Beta oder für alle ist. Darum hat jeder PR nach `main` genau eines der Labels `beta`, `release` oder `kein-release`; die Prüfung «Release-Art gewählt» (`release-label.yml`) ist rot, bis eines gesetzt ist, und zeigt die Version, die beim Merge entsteht. Ein Label statt eines Ankreuzfelds, weil es sich zuverlässig auslesen lässt und auch nach dem Merge am PR sichtbar bleibt; `kein-release`, damit Doku- und Test-PRs nicht jedes Mal eine Version an alle schicken.
+
+Beim Merge setzt der Job «version» in `release.yml` die nächste Version (`scripts/release.js --auto`), macht Commit und Tag auf `main` (`git push --atomic`, mit dem `GITHUB_TOKEN`) und ruft danach im selben Lauf den Bau auf. Im selben Lauf, weil ein Tag, den der `GITHUB_TOKEN` setzt, keine weiteren Workflows auslöst. Merges kurz nacheinander warten aufeinander (`concurrency`), damit jede Version auf dem Commit der vorherigen aufbaut.
+
+Nummern: Eine Beta zählt auf die nächste Vollversion hin (0.2.0 → 0.2.1-beta.1 → 0.2.1-beta.2 → mit `release` 0.2.1). Eine eigene Nummer steht als Zeile `Version: 0.3.0` im PR-Text, damit man dafür nicht pro Version ein Label anlegen muss. Den Text für den Update-Dialog nimmt die App aus dem Tag: PR-Titel oder die Zeile `Release-Text:`. `npm run release` von Hand bleibt für Arbeit direkt auf `main`.
+
+Voraussetzung: Workflows dürfen auf `main` schreiben (Einstellung «Read and write permissions», bei geschütztem `main` eine Ausnahme für GitHub Actions).
+
+Dabei behoben: v0.2.0 scheiterte beim Veröffentlichen mit `no matches found for '-'` von `gh release create`. Die Argumente gingen als `@flags` an gh, und `$flags` war nach `if` nur ein Text statt einer Liste. Vermutlich hat PowerShell den Text beim Splatting nicht als Argument übergeben; nachgestellt ist das nicht. Jetzt bekommt gh eine ausdrückliche Liste `[string[]]`, und der Workflow schreibt den Aufruf ins Log.
+
