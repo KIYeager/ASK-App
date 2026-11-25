@@ -60,7 +60,7 @@ Lokal bauen braucht es nur noch zum Ausprobieren. Veröffentlichte Versionen bau
 
 ## Neue Version veröffentlichen
 
-Neue Versionen baut GitHub, nicht der eigene Rechner. Man gibt einen Befehl ein, GitHub baut auf einem Windows-Rechner Installer und EXE und stellt sie in das öffentliche Repository [KIYeager/ASK-Releases](https://github.com/KIYeager/ASK-Releases). Alle installierten Apps bieten das Update danach von selbst an (ENTSCHEIDE E37). Der Code in ASK-App bleibt privat; ASK-Releases enthält nur die fertigen Dateien, und die App holt sie ohne Token.
+Neue Versionen baut GitHub, nicht der eigene Rechner. Normalerweise entsteht eine neue Version beim Merge eines Pull Requests; dazu wählt man mit einem Label, ob es eine Beta, eine Version für alle oder keine neue Version wird. GitHub baut auf einem Windows-Rechner Installer und EXE und stellt sie in das öffentliche Repository [KIYeager/ASK-Releases](https://github.com/KIYeager/ASK-Releases). Alle installierten Apps bieten das Update danach von selbst an (ENTSCHEIDE E37, E38). Der Code in ASK-App bleibt privat; ASK-Releases enthält nur die fertigen Dateien, und die App holt sie ohne Token.
 
 ### Einmal einrichten
 
@@ -73,48 +73,50 @@ Nur vor dem allerersten Release nötig.
    - Permissions, Repository permissions: «Contents: Read and write»
    - Expiration: nach Wunsch. Läuft das Token ab, scheitert das nächste Release beim Veröffentlichen, dann ein neues anlegen und Schritt 3 wiederholen.
 3. **Token in ASK-App eintragen.** Im Repository ASK-App: Settings, Secrets and variables, Actions, «New repository secret». Name `RELEASES_TOKEN`, Wert das Token aus Schritt 2.
+4. **Workflows dürfen schreiben.** Im Repository ASK-App: Settings, Actions, General, ganz unten «Workflow permissions»: «Read and write permissions» wählen und speichern. Beim Merge macht der Workflow den Commit «Version …» und den Tag auf `main`. Ist `main` geschützt (Settings, Branches oder Rules), dort «GitHub Actions» als Ausnahme erlauben, sonst scheitert der Schritt «Version setzen».
+5. **Optional: Merge erst mit gewählter Release-Art.** In einer Regel für `main` (Settings, Rules oder Branches) die Prüfung «Release-Art gewählt» als erforderlich eintragen. Ohne das ist sie nur rot, ein Merge geht trotzdem.
 
-### Ein Release machen
+### Vom Pull Request zur neuen Version
 
-1. **Vorbereiten.** Am besten auf `main` (nach dem Merge der Änderungen). Alles committet, Tests grün:
+1. **PR öffnen** nach `main`, wie gewohnt. Die Vorlage erinnert an die Wahl.
+2. **Release-Art wählen:** rechts beim PR unter «Labels» genau eines setzen:
 
-   ```powershell
-   git checkout main
-   ```
+   | Label | Beim Merge |
+   |---|---|
+   | `beta` | Beta-Version, nur für «Beta-Versionen erhalten» |
+   | `release` | neue Version für alle |
+   | `kein-release` | keine neue Version (z. B. nur Doku oder Tests) |
 
-   ```powershell
-   git pull
-   ```
+   Die Prüfung «Release-Art gewählt» bleibt rot, bis genau eines gesetzt ist. Ist sie grün, steht in ihren Details, welche Version beim Merge entsteht («Beim Merge wird daraus ASK 0.2.1-beta.1»).
+3. **Versionsnummer:** Ohne Angabe zählt sie automatisch hoch:
 
-   ```powershell
-   npm test
-   ```
+   | Aktuell | `beta` | `release` |
+   |---|---|---|
+   | `0.2.0` | `0.2.1-beta.1` | `0.2.1` |
+   | `0.2.1-beta.1` | `0.2.1-beta.2` | `0.2.1` |
 
-2. **Versionsnummer wählen.** Die aktuelle steht in `package.json`. Faustregel: kleine Korrekturen die letzte Zahl erhöhen (`0.2.0` → `0.2.1`), neue Funktionen die mittlere (`0.2.1` → `0.3.0`). Die neue Version muss grösser sein als die aktuelle.
+   Eigene Nummer, zum Beispiel für neue Funktionen: im PR-Text eine eigene Zeile `Version: 0.3.0`. Mit `release` wird daraus `0.3.0`, mit `beta` `0.3.0-beta.1` (bzw. die nächste Beta von `0.3.0`). Eine volle Beta-Nummer wie `Version: 0.3.0-beta.4` gilt so, wie sie ist. Die Nummer muss grösser sein als die aktuelle, sonst ist die Prüfung rot.
+4. **Text im Update-Dialog:** der Titel des PRs. Eigener Text für die Lernenden: im PR-Text eine Zeile `Release-Text: Die Seitenleiste lässt sich jetzt breiter ziehen`.
+5. **Mergen.** Der Workflow «Release» setzt die Version in `package.json`, macht den Commit «Version 0.2.1» und den Tag `v0.2.1` auf `main` und baut dann rund 15 bis 20 Minuten (Reiter «Actions»): npm-Pakete, Lint und Tests, Python, Installer, einzelne EXE, Veröffentlichen.
+6. **Prüfen.** In [ASK-Releases, Releases](https://github.com/KIYeager/ASK-Releases/releases) steht «ASK 0.2.1» mit sechs Dateien: `ASK-Setup-0.2.1.exe`, `ASK-Setup-0.2.1.exe.blockmap`, `latest.yml`, `ASK-0.2.1.exe` und mit festem Namen `ASK-Setup.exe` und `ASK.exe`; eine Vollversion mit «Latest», eine Beta mit «Pre-release». Installierte Apps fragen spätestens 6 Stunden später oder beim nächsten Start; sofort geht es mit «Nach Updates suchen» in den Einstellungen.
 
-3. **Release starten.** Version und ein kurzer Text, was neu ist. Der Text erscheint im Update-Dialog der App, also für die Lernenden verständlich schreiben:
-
-   ```powershell
-   npm run release -- 0.2.0 "Updates kommen jetzt automatisch"
-   ```
-
-   Das Skript (`scripts/release.js`) prüft, dass alles committet ist und die Version grösser ist, setzt sie in `package.json` und `package-lock.json`, macht den Commit «Version 0.2.0» und den Tag `v0.2.0` mit dem Text und lädt beides hoch.
-
-4. **Warten.** Im Repository ASK-App, Reiter «Actions», läuft jetzt «Release», rund 15 bis 20 Minuten: npm-Pakete, Lint und Tests, Python, Installer, einzelne EXE, Veröffentlichen.
-
-5. **Prüfen.** In [ASK-Releases, Releases](https://github.com/KIYeager/ASK-Releases/releases) steht «ASK 0.2.0» mit dem Vermerk «Latest» und sechs Dateien: `ASK-Setup-0.2.0.exe`, `ASK-Setup-0.2.0.exe.blockmap`, `latest.yml`, `ASK-0.2.0.exe` und mit festem Namen `ASK-Setup.exe` und `ASK.exe`. Der Link für die Lernenden (Abschnitt «Installation») liefert ab jetzt diese Version. Installierte Apps fragen spätestens 6 Stunden später oder beim nächsten Start; sofort geht es mit «Nach Updates suchen» in den Einstellungen.
+Nach dem Merge liegt auf `main` ein Commit «Version …» mehr. Vor der nächsten Arbeit darum `git pull`.
 
 Jedes Release braucht rund 30 bis 40 der 2000 Gratis-Minuten von GitHub Actions pro Monat (Windows-Rechner zählen bei privaten Repositories doppelt).
 
-### Beta-Version zum Testen
+### Ohne Pull Request, von Hand
 
-Gleich wie oben, nur mit `-beta.<Nummer>` hinter der Version:
+Für den Fall, dass man direkt auf `main` arbeitet oder eine Version neu bauen will. Im Projektordner, auf `main`, alles committet:
 
 ```powershell
-npm run release -- 0.3.0-beta.1 "Zum Testen: neue Seitenleiste"
+npm run release -- 0.3.0 "Was ist neu"
 ```
 
-Die Version erscheint in ASK-Releases als «Pre-release». Angeboten bekommt sie nur, wer «Beta-Versionen erhalten» eingeschaltet hat (Einstellungen, Ordner-Menü oder `/beta`). Alle anderen sehen sie nicht, und der Link für die Lernenden zeigt weiter auf die letzte normale Version. Weitere Betas zählen hoch (`0.3.0-beta.2`), die fertige Version heisst dann `0.3.0` und geht an alle.
+Für eine Beta `0.3.0-beta.1`. Das Skript (`scripts/release.js`) prüft, dass alles committet und die Version grösser ist, setzt sie in `package.json` und `package-lock.json`, macht Commit und Tag mit dem Text und lädt beides hoch; dann baut der Workflow wie oben. Dafür braucht es nur Node und Git, kein `npm install`.
+
+### Beta-Versionen
+
+Eine Beta erscheint in ASK-Releases als «Pre-release». Angeboten bekommt sie nur, wer «Beta-Versionen erhalten» eingeschaltet hat (Einstellungen, Ordner-Menü oder `/beta`). Alle anderen sehen sie nicht, und der Link für die Lernenden zeigt weiter auf die letzte Vollversion. Weitere PRs mit `beta` zählen hoch (`0.2.1-beta.2`); der nächste PR mit `release` macht daraus `0.2.1` für alle, auch für die Beta-Tester.
 
 ### Wenn etwas schiefgeht
 
@@ -124,9 +126,12 @@ Im Reiter «Actions» den roten Lauf öffnen; der Schritt mit dem roten Kreuz ne
 |---|---|
 | «Secret RELEASES_TOKEN fehlt» | Einmal einrichten, Schritt 3. Danach im Lauf oben rechts «Re-run jobs». |
 | Fehler beim Veröffentlichen mit `401` oder `Bad credentials` | Token abgelaufen oder ohne Recht auf ASK-Releases: neues Token (Schritt 2), Secret ersetzen (Schritt 3), «Re-run jobs». |
-| «Tag … passt nicht zu package.json» | Der Tag wurde von Hand gesetzt. Immer `npm run release` verwenden. |
+| «Tag … passt nicht zu package.json» | Der Tag wurde von Hand gesetzt. Immer per PR-Label oder `npm run release`. |
+| Prüfung «Release-Art gewählt» rot | Genau eines der Labels `beta`, `release`, `kein-release` setzen; bei einer Zeile `Version:` im PR die Meldung in den Details lesen. |
+| Schritt «Version setzen» scheitert mit `403` oder «protected branch» | Einmal einrichten, Schritt 4. Danach den Lauf mit «Re-run jobs» wiederholen. |
+| PR gemergt, aber kein Lauf «Release» | Kein Label `beta` oder `release` gesetzt. Nachholen von Hand: `npm run release` auf `main`. |
 | Fehler beim Herunterladen (npm, Python, NuGet) | Meist vorübergehend: einmal «Re-run jobs». |
-| Tests oder Build scheitern wegen des Codes | Fehler beheben, committen und eine neue Version veröffentlichen (`0.2.1`). Die gescheiterte Version wird nie veröffentlicht; ihr Tag kann bleiben. |
+| Tests oder Build scheitern wegen des Codes | Fehler beheben und als neuer PR mit Label mergen; daraus entsteht die nächste Nummer. Die gescheiterte Version wird nie veröffentlicht; ihr Tag kann bleiben. |
 | Release in ASK-Releases ist halb da (Dateien fehlen) | Das Release in ASK-Releases löschen («Delete»), dann «Re-run jobs». |
 | Eine veröffentlichte Version hat einen Fehler | Nicht löschen, sondern schnell eine korrigierte Version nachschieben (`0.2.1`). Apps gehen nie auf eine ältere Version zurück. |
 

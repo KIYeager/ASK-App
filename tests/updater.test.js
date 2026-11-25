@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const { Updater, notesText, releaseUrl, isBeta } = require('../src/main/updater');
 const { isPortable } = require('../src/main/portable');
-const { compare, VERSION } = require('../scripts/release');
+const { compare, VERSION, nextVersion, fromPrBody } = require('../scripts/release');
 
 const config = { owner: 'KIYeager', repo: 'ASK-Releases' };
 
@@ -142,4 +142,33 @@ test('Versionen für npm run release', () => {
   assert.strictEqual(compare('0.3.0-beta.2', '0.3.0-beta.1'), 1);
   assert.strictEqual(compare('0.3.0-beta.1', '0.2.5'), 1);
   assert.strictEqual(compare('0.1.0', '0.1.0'), 0);
+});
+
+test('Version beim Merge: automatisch hochzählen', () => {
+  const v = (...a) => nextVersion(...a).version;
+  assert.strictEqual(v('0.2.0', 'beta'), '0.2.1-beta.1');
+  assert.strictEqual(v('0.2.0', 'release'), '0.2.1');
+  assert.strictEqual(v('0.2.1-beta.1', 'beta'), '0.2.1-beta.2');
+  assert.strictEqual(v('0.2.1-beta.2', 'release'), '0.2.1');
+});
+
+test('Version beim Merge: eigene Nummer aus dem PR', () => {
+  const v = (...a) => nextVersion(...a).version;
+  assert.strictEqual(v('0.2.0', 'release', '0.3.0'), '0.3.0');
+  assert.strictEqual(v('0.2.0', 'beta', '0.3.0'), '0.3.0-beta.1');
+  assert.strictEqual(v('0.3.0-beta.1', 'beta', '0.3.0'), '0.3.0-beta.2');
+  assert.strictEqual(v('0.2.0', 'beta', '0.3.0-beta.4'), '0.3.0-beta.4');
+  assert.match(nextVersion('0.2.0', 'release', '0.2.0').error, /nicht grösser/);
+  assert.match(nextVersion('0.2.0', 'release', '0.3.0-beta.1').error, /Beta/);
+  assert.match(nextVersion('0.2.0', 'release', 'v1').error, /Form/);
+  assert.match(nextVersion('0.2.0', 'kein-release').error, /Release-Art/);
+});
+
+test('Angaben aus dem Text des PRs', () => {
+  assert.deepStrictEqual(fromPrBody('Text\n\n**Version:** `0.3.0`\nRelease-Text: Neue Seitenleiste\n'), { wanted: '0.3.0', text: 'Neue Seitenleiste' });
+  assert.deepStrictEqual(fromPrBody('- version: 1.0.0'), { wanted: '1.0.0', text: '' });
+  assert.deepStrictEqual(fromPrBody(''), { wanted: '', text: '' });
+  // Die Vorlage selbst erwähnt «Version: 0.3.0» nur in einem Kommentar mitten im Satz
+  const template = require('node:fs').readFileSync(path.join(__dirname, '..', '.github', 'pull_request_template.md'), 'utf8');
+  assert.deepStrictEqual(fromPrBody(template), { wanted: '', text: '' });
 });

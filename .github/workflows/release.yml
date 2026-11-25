@@ -1,29 +1,74 @@
-# Baut ASK bei jedem Versions-Tag (v0.2.0, v0.3.0-beta.1) auf Windows und veröffentlicht Installer,
-# einzelne EXE und latest.yml im öffentlichen Repository KIYeager/ASK-Releases (ENTSCHEIDE E37).
-# Auslösen: npm run release -- <Version> "Was ist neu" (scripts/release.js).
+# Baut ASK auf Windows und veröffentlicht Installer, einzelne EXE und latest.yml im öffentlichen
+# Repository KIYeager/ASK-Releases (ENTSCHEIDE E37, E38). Zwei Wege:
+# - Merge eines PRs in main mit Label «beta» oder «release»: Job «version» setzt die nächste Version
+#   (oder die aus der Zeile «Version: …» im PR), macht Commit und Tag auf main, dann baut «release».
+#   Label «kein-release»: nichts. Die Wahl prüft release-label.yml schon im PR.
+# - Tag von Hand: npm run release -- <Version> "Was ist neu" (scripts/release.js).
 # Braucht das Secret RELEASES_TOKEN: Fine-grained Token nur für ASK-Releases, Recht «Contents: Read and write».
 name: Release
 
 on:
   push:
     tags: ['v*']
+  pull_request:
+    types: [closed]
+    branches: [main]
 
 permissions:
   contents: read
 
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
+  version:
+    if: >-
+      github.event_name == 'pull_request' && github.event.pull_request.merged &&
+      (contains(github.event.pull_request.labels.*.name, 'beta') || contains(github.event.pull_request.labels.*.name, 'release')) &&
+      !contains(github.event.pull_request.labels.*.name, 'kein-release')
+    runs-on: ubuntu-latest
+    # Merges nacheinander: jede Version baut auf dem Commit der vorherigen auf.
+    concurrency:
+      group: release-version
+      cancel-in-progress: false
+    permissions:
+      contents: write # Commit «Version …» und Tag auf main
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Version setzen, Commit und Tag
+        id: bump
+        env:
+          KIND: ${{ contains(github.event.pull_request.labels.*.name, 'beta') && 'beta' || 'release' }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/release.js --auto "$KIND"
+
   release:
+    needs: version
+    # Bei einem Tag von Hand ist «version» übersprungen; beim Merge nur, wenn «version» einen Tag gesetzt hat.
+    if: always() && (github.event_name == 'push' || needs.version.outputs.tag != '')
     runs-on: windows-latest
     timeout-minutes: 60
+    concurrency:
+      group: release-${{ needs.version.outputs.tag || github.ref_name }}
+      cancel-in-progress: false
+    env:
+      TAG: ${{ needs.version.outputs.tag || github.ref_name }}
     defaults:
       run:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag || github.ref }}
 
       - name: Version prüfen
         id: version
@@ -31,7 +76,7 @@ jobs:
           HAS_TOKEN: ${{ secrets.RELEASES_TOKEN != '' }}
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} passt nicht zu package.json ($version)." }
+          if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG passt nicht zu package.json ($version)." }
           if ($env:HAS_TOKEN -ne 'true') { throw "Secret RELEASES_TOKEN fehlt (siehe README, Abschnitt «Neue Version veröffentlichen»)." }
           "version=$version" >> $env:GITHUB_OUTPUT
           "beta=$(if ($version -match '-') { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
@@ -93,6 +138,12 @@ jobs:
           $notesFile = Join-Path $env:RUNNER_TEMP 'notes.md'
           Set-Content $notesFile -Encoding utf8 -Value $notes
 
-          $flags = if ($env:BETA -eq 'true') { @('--prerelease') } else { @('--latest') }
-          gh release create "v$env:VERSION" --repo KIYeager/ASK-Releases --title "ASK $env:VERSION" --notes-file $notesFile @flags (Get-ChildItem $out).FullName
+          # Argumente als echte Liste: Ein einzelnes Element aus «if» wird in PowerShell zum Text, und
+          # «@flags» mit einem Text gab gh ein einzelnes «-» als Datei (Fehler in v0.2.0).
+          [string[]]$ghArgs = @('release', 'create', "v$env:VERSION", '--repo', 'KIYeager/ASK-Releases',
+            '--title', "ASK $env:VERSION", '--notes-file', $notesFile)
+          $ghArgs += if ($env:BETA -eq 'true') { '--prerelease' } else { '--latest' }
+          $ghArgs += [string[]](Get-ChildItem $out -File).FullName
+          Write-Host "gh $($ghArgs -join ' ')"
+          & gh $ghArgs
           if ($LASTEXITCODE -ne 0) { throw "gh release create fehlgeschlagen" }
