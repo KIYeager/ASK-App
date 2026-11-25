@@ -135,7 +135,7 @@ function renderComposer() {
   input.placeholder = running ? 'Das Modell arbeitet … (Esc stoppt)' : (block || 'Was soll ich im Arbeitsordner erledigen?');
   $('input-box').classList.toggle('disabled', !!block && !running);
   const send = $('send-btn');
-  send.textContent = running ? '■' : '↵';
+  send.textContent = running ? '■' : '↑';
   send.title = running ? 'Stoppen (Esc)' : 'Senden (Enter)';
   send.classList.toggle('stop', running);
   send.disabled = !running && !!block;

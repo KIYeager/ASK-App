@@ -1,7 +1,7 @@
 // Hauptfenster: eigene Oberfläche (Chat, Seitenleiste, Dialoge). Die ASK-Seite liegt als
 // WebContentsView darüber und ist nur für die Anmeldung sichtbar.
 const path = require('node:path');
-const { BrowserWindow, WebContentsView, Menu, shell, session, clipboard } = require('electron');
+const { BrowserWindow, WebContentsView, Menu, shell, session, clipboard, nativeTheme } = require('electron');
 const paths = require('./paths');
 const { allowedNavigation } = require('./visual');
 
@@ -19,7 +19,7 @@ class AppWindow {
 
     this.win = new BrowserWindow({
       width: 1440, height: 920, minWidth: 960, minHeight: 600,
-      title: 'ASK', icon: paths.iconFile(), backgroundColor: '#141414', show: false, autoHideMenuBar: true,
+      title: 'ASK', icon: paths.iconFile(), backgroundColor: nativeTheme.shouldUseDarkColors ? '#1D1C25' : '#FAFAFC', show: false, autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(paths.preloadDir(), 'shell.js'),
         contextIsolation: true, sandbox: true, plugins: true, spellcheck: false,
