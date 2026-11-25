@@ -222,3 +222,11 @@ Ordnerwechsel während eines Auftrags lehnt die App ab: Der laufende Auftrag sch
 ## E35 Langer Verlauf
 
 Die App weiss nicht, wie gross das Kontextfenster des Modells in ASK ist. Sie schickt darum ältere Arbeitsschritte von Anfang an gekürzt mit (Ergebnisse und lange Argumente, etwa den Inhalt einer geschriebenen Datei; die Datei liegt ja im Ordner) und kürzt stärker, sobald ASK meldet, dass der Verlauf zu lang ist. Reicht auch das nicht, sagt sie, dass ein neuer Chat nötig ist. Der gespeicherte Chat bleibt immer vollständig. Eine Zusammenfassung des Verlaufs durch das Modell gibt es nicht.
+
+## E36 Eingabe ändern, Chat-Menü, Kontextanzeige, Einstellungen, Tastatur
+
+- **Eingabe ändern oder neu senden** gibt es nur für die letzte Eingabe. Sie nimmt die Eingabe und alles danach aus dem Chat und setzt den Ordner nach Rückfrage mit derselben Sicherung zurück wie «Rückgängig» (E24); lehnt die Person das Zurücksetzen ab, bleibt auch der Chat, wie er ist. So kann der Chat nie etwas anderes behaupten, als im Ordner liegt.
+- **Chat-Menü**: Umbenennen und Anheften stehen in der Chat-Datei selbst (`title`, `pinned`), damit sie mit dem Ordner mitgehen. Die Suche im Inhalt läuft über alle Ordner der Liste, mit derselben Suche, die das Modell mit `chat_search` benutzt (E28).
+- **Kontextanzeige**: Die Grösse des Kontextfensters kennt die App nur, wenn ASK sie zum Modell angibt oder sie einmal in einer Fehlermeldung genannt hat (dann merkt sich die App die Zahl pro Modell). Sonst zeigt sie nur die Tokenzahl, ohne Prozent.
+- **Aufgabenliste**: Sie gehörte in der Oberfläche schon zum Chat (aus dessen Arbeitsschritten). Die Datei `.ask/tasks.json` für den ganzen Ordner las niemand mehr; das Werkzeug schreibt sie nicht mehr.
+- **Tastatur**: Was sich anklicken lässt, ist mit Tab erreichbar; Dialoge halten den Fokus und geben ihn beim Schliessen zurück. Die gedämpfte Schrift ist heller (Kontrast etwa 4.7:1 statt 3:1).

@@ -233,7 +233,7 @@ function state() {
 }
 
 // Einstellungen der Oberfläche, die sich die App merkt (Dialog «Einstellungen»)
-const PREFS = { verbose: false, todoCollapsed: false };
+const PREFS = { verbose: false, todoCollapsed: true }; // wie bisher: die Aufgabenliste schrumpft nach dem Auftrag auf eine Zeile
 function prefs() {
   const stored = settings.get('prefs') || {};
   return Object.fromEntries(Object.entries(PREFS).map(([k, v]) => [k, typeof stored[k] === typeof v ? stored[k] : v]));
