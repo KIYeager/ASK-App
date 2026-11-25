@@ -542,6 +542,7 @@ body.browser-big .browser-pane { position: fixed; left: 0; right: 0; bottom: 0; 
 .ctx.unknown .ctx-bar { display: none; }
 .dialog .row { display: flex; gap: 8px; }
 .dialog .row input { flex: 1; }
+.dialog .row.spread { align-items: center; justify-content: space-between; }
 .dialog input[type=url] { width: 100%; }
 .dialog label[for=settings-url] { display: block; margin-bottom: 4px; color: var(--muted); font-size: 13px; }
 

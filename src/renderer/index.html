@@ -109,6 +109,7 @@
           <div class="statusline">
             <button id="terminal-pill" class="pill" title="Terminal"><span class="dot"></span><span id="terminal-text">Terminal gestoppt</span></button>
             <button id="ask-pill" class="pill" title="ASK"><span class="dot"></span><span id="ask-text">ASK: unbekannt</span></button>
+            <button id="update-pill" class="pill ok" hidden><span class="dot"></span><span id="update-text">Update</span></button>
             <span class="spacer"></span>
             <span id="ctx" class="ctx" hidden><span id="ctx-text"></span><span class="ctx-bar" aria-hidden="true"><span id="ctx-fill"></span></span></span>
             <span class="muted hint">Enter senden · Shift+Enter Zeile · / Befehle · Ctrl+T Aufgaben · </span>
@@ -239,13 +240,17 @@
       <p id="settings-error" class="error" role="alert" hidden></p>
       <label class="check"><input type="checkbox" id="pref-verbose"> Details immer zeigen (Gedanken und Ausgaben)</label>
       <label class="check"><input type="checkbox" id="pref-todo"> Aufgabenliste nach dem Auftrag eingeklappt</label>
+      <label class="check"><input type="checkbox" id="pref-beta"> Beta-Versionen erhalten (Vorabversionen zum Testen, können Fehler haben)</label>
       <div class="actions left">
         <button id="settings-github" class="btn">GitHub …</button>
         <button id="settings-terminal" class="btn">Terminal-Details</button>
         <button id="settings-clear" class="btn">Anmeldungen im Browser löschen</button>
         <button id="settings-logout" class="btn">Bei ASK abmelden</button>
       </div>
-      <p id="settings-version" class="muted small"></p>
+      <div class="row spread">
+        <p id="settings-version" class="muted small"></p>
+        <button id="settings-update" class="btn small">Nach Updates suchen</button>
+      </div>
       <div class="actions"><button id="settings-close" class="btn primary">Schliessen</button></div>
     </div>
 

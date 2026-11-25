@@ -60,6 +60,10 @@ Liste im Systemprompt ohne den laufenden Chat, neueste zuerst; Verlauf als Text 
 
 Gegen ein nachgebautes ASK: Argumente für Flux nur, wenn gesetzt und gültig (Format und Qualität aus der Liste, Anzahl höchstens 4, beim Bearbeiten `bearbeiten` und keine Referenzen); Bildtyp an den ersten Bytes; Bilder in Antworten finden (Dateien vom Typ Bild mit Adresse oder nur id, `/api/v1/files/…` mit und ohne `/content`, `/cache/image/…`, eingebettete Bilder, HTML-kodierte Werkzeugergebnisse; Links auf andere Server nur als Ausweichlösung, Wikipedia-Bilder nie, ASK-Pfade auf fremden Servern nie mit Anmeldung); Dateinamen (neu unter `bilder/` ohne Überschreiben, nummeriert, gewünschter Pfad, Vorlage ersetzen, bei anderem Format daneben, Anhang nach `bilder/`, Pfad ausserhalb abgelehnt, bevor Flux gefragt wird); Flux-Werkzeug in der Liste finden, ohne oder bei verweigertem Zugriff nicht; Ablauf wie die Webseite (vorübergehender Chat, Antwort im Hintergrund, Bild als Datei im Chat, Fortschritt, Chat danach gelöscht); gestreamter Link in kleinen Stücken, ohne Chat, Vorlage als Bild in der Nachricht, dasselbe Bild unter zwei Adressen nur einmal; kein Bild: Fehler mit der Antwort von ASK und abgelegter Antwort; zurückgegebener statt ausgeführter Aufruf; von ASK abgelehnt; ohne Flux; Stopp hält auch die Aufgabe in ASK an.
 
+### Updates und Release (`tests/updater.test.js`, 12 Tests)
+
+Mit nachgebautem electron-updater: ohne Paket oder ohne Release-Repository aus; neue Version: Frage, Download, Frage nach Neustart, stilles Installieren nach dem Beenden des Terminals; «Später» fragt nicht von selbst nochmals, ein Klick schon; «Beim Beenden» startet nicht neu; während das Modell arbeitet keine Frage, danach schon; einzelne EXE nur mit Link, ohne Download; Beta-Schalter setzt `allowPrerelease`; Fehler beim automatischen Prüfen still, beim Klick gemeldet; Release-Text ohne HTML und gekürzt; einzelne EXE am Ordner erkennen; Versionen und Reihenfolge für `npm run release` (Beta vor der normalen Version). Nicht getestet: der Workflow auf GitHub und ein echtes Update (siehe Teil 2, E).
+
 ### App im Entwicklungsmodus (`tests/e2e/run.js`, 214 Prüfungen in 4 Szenarien)
 
 | Szenario | Prüfungen | Inhalt |
@@ -162,4 +166,15 @@ Erst möglich, wenn Flux in ASK für dein Konto läuft (beim Bau nur im Beta-Arb
 3. Ein eigenes Foto anhängen: «Mach daraus ein Comic.» Erwartet: Ergebnis unter `bilder/`, das Foto im Anhang bleibt.
 4. Kommt kein Bild, steht im Chat «ASK hat kein Bild zurückgegeben …» oder «ASK hat Flux nicht selbst ausgeführt …» mit einem Pfad `.ask/arbeit/<Chat>/flux-….json`. Diese Datei und die Meldung bitte schicken: Daran sieht man, wie ASK das Bild zurückgibt.
 
-Bitte zurückmelden: ASK-Version, ob A4 bis A6 wie beschrieben liefen (vor allem, ob Werkzeugzeilen erscheinen), für B1 bis B3 das Ergebnis und wie viele Rückfragen oder Fehlversuche das Modell brauchte, Auffälligkeiten bei C und für D die Meldung bzw. die Datei aus D4.
+### E. Updates
+
+Erst möglich, wenn ASK-Releases und das Secret eingerichtet sind (README, «Neue Version veröffentlichen»).
+
+1. `npm run release -- 0.1.1 "Test der Updates"`. Erwartet: Im Reiter «Actions» von ASK-App läuft «Release» durch, in ASK-Releases steht «ASK 0.1.1» als Latest mit sechs Dateien.
+2. Den Link `…/releases/latest/download/ASK-Setup.exe` aus dem README öffnen und installieren. Erwartet: ASK 0.1.1 (Ordner-Menü «Nach Updates suchen (ASK 0.1.1)»).
+3. `npm run release -- 0.1.2 "Zweiter Test"`, warten, bis das Release da ist, ASK neu starten. Erwartet: nach etwa 20 Sekunden «ASK 0.1.2 ist da. Jetzt aktualisieren?» mit «Neu: Zweiter Test»; «Jetzt aktualisieren», unten «Update lädt …», dann «Jetzt neu starten?»; ASK startet als 0.1.2, der Chat ist noch da.
+4. `npm run release -- 0.1.3-beta.1 "Beta"`. Erwartet: In ASK-Releases als Pre-release; ASK 0.1.2 bietet nichts an. Im Ordner-Menü «Beta-Versionen erhalten» einschalten. Erwartet: «ASK 0.1.3-beta.1 (Beta) ist da».
+5. Mit der einzelnen EXE einer älteren Version: Erwartet «… ist da» mit «Download öffnen», das die Seite des Releases öffnet.
+6. Während eines laufenden Auftrags «Nach Updates suchen»: Erwartet keine Frage, bis der Auftrag fertig ist.
+
+Bitte zurückmelden: ASK-Version, ob A4 bis A6 wie beschrieben liefen (vor allem, ob Werkzeugzeilen erscheinen), für B1 bis B3 das Ergebnis und wie viele Rückfragen oder Fehlversuche das Modell brauchte, Auffälligkeiten bei C und für D die Meldung bzw. die Datei aus D4, für E wo es hakte (Meldung im Reiter «Actions» oder in der App).

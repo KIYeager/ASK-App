@@ -4,6 +4,8 @@
 const path = require('node:path');
 
 const buildDir = require('./src/main/build-dir').buildDir();
+// Release-Repository für Updates (ENTSCHEIDE E33), dieselbe Angabe liest die App zur Laufzeit.
+const { updates } = require('./resources/app-config.json');
 
 module.exports = {
   appId: 'ch.tfbern.ask',
@@ -20,6 +22,9 @@ module.exports = {
     { from: 'resources/icon.ico', to: 'icon.ico' },
   ],
   asar: true,
+  // Schreibt app-update.yml in die App und latest.yml neben den Installer. Hochgeladen wird nicht
+  // von electron-builder, sondern im Workflow .github/workflows/release.yml.
+  publish: [{ provider: 'github', owner: updates.owner, repo: updates.repo }],
   electronLanguages: ['de', 'en-US'],
   win: {
     target: [{ target: 'nsis', arch: ['x64'] }],

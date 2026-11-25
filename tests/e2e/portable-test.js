@@ -164,7 +164,7 @@ function watchSplash(stubPid, png = '') {
 }
 
 function launch() {
-  const child = spawn(exe, [`--remote-debugging-port=${debugPort}`], { stdio: 'ignore' });
+  const child = spawn(exe, [`--remote-debugging-port=${debugPort}`], { stdio: 'ignore', env: { ...process.env, ASK_NO_UPDATES: '1' } });
   child.started = Date.now();
   return child;
 }

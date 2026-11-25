@@ -1,3 +1,4 @@
 {
-  "askUrl": "https://ask.ict-tfbern.ch"
+  "askUrl": "https://ask.ict-tfbern.ch",
+  "updates": { "owner": "KIYeager", "repo": "ASK-Releases" }
 }

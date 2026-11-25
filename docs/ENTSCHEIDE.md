@@ -230,3 +230,15 @@ Die App weiss nicht, wie gross das Kontextfenster des Modells in ASK ist. Sie sc
 - **Kontextanzeige**: Die Grösse des Kontextfensters kennt die App nur, wenn ASK sie zum Modell angibt oder sie einmal in einer Fehlermeldung genannt hat (dann merkt sich die App die Zahl pro Modell). Sonst zeigt sie nur die Tokenzahl, ohne Prozent.
 - **Aufgabenliste**: Sie gehörte in der Oberfläche schon zum Chat (aus dessen Arbeitsschritten). Die Datei `.ask/tasks.json` für den ganzen Ordner las niemand mehr; das Werkzeug schreibt sie nicht mehr.
 - **Tastatur**: Was sich anklicken lässt, ist mit Tab erreichbar; Dialoge halten den Fokus und geben ihn beim Schliessen zurück. Die gedämpfte Schrift ist heller (Kontrast etwa 4.7:1 statt 3:1).
+
+## E37 Updates über ein öffentliches Release-Repository
+
+Neue Versionen kamen bisher nur als Datei, die jemand auf dem eigenen Windows-Rechner bauen (`setup.ps1`, `npm run dist`) und verteilen musste. Neu baut der Workflow `.github/workflows/release.yml` bei jedem Tag `v<Version>` auf `windows-latest` und veröffentlicht in einem eigenen, öffentlichen Repository `KIYeager/ASK-Releases`; die App aktualisiert sich mit electron-updater.
+
+Warum ein zweites Repository: ASK-App ist privat. electron-updater könnte private Releases nur mit einem Token in der App lesen, und ein Token in jeder Kopie der App wäre öffentlich. Im öffentlichen Repository liegen nur die fertigen Dateien. Gefunden wird die neueste Version über `github.com/<repo>/releases.atom` und `releases/latest`, nicht über die API von GitHub; die API erlaubt ohne Token nur 60 Anfragen pro Stunde und Adresse, und im Schulnetz teilen sich viele Laptops eine Adresse.
+
+Die installierte App fragt vor dem Herunterladen und vor dem Neustart (Wunsch: die Lernenden entscheiden), nie während eines Auftrags. «Beim Beenden» installiert beim nächsten Schliessen. Vor dem Neustart beendet die App das Terminal, damit keine Python-Prozesse Dateien im Programmordner sperren. Die einzelne EXE (E18) prüft mit derselben Quelle, zeigt aber nur einen Link: Sie müsste ihren eigenen Starter ersetzen, und dafür gibt es in electron-updater nichts.
+
+Beta: Tags wie `v0.3.0-beta.1` werden Vorabversionen. Der Schalter «Beta-Versionen erhalten» setzt `allowPrerelease`. Jedes Release hat nur `latest.yml`; electron-updater sucht bei einer Vorabversion zuerst `beta.yml` und nimmt dann `latest.yml` desselben Releases. Wer den Schalter wieder ausschaltet, behält die Beta, bis eine grössere normale Version kommt (kein Zurückstufen).
+
+Die Angabe des Repositorys steht einmal in `resources/app-config.json` (`updates`); electron-builder schreibt daraus `app-update.yml` in die installierte App, die einzelne EXE setzt sie zur Laufzeit. electron-builder lädt selbst nichts hoch (`--publish never`), das macht `gh release create` im Workflow mit dem Secret `RELEASES_TOKEN` (Fine-grained Token nur für ASK-Releases). Installer und EXE bleiben unsigniert; electron-updater prüft die Signatur nur, wenn `publisherName` gesetzt ist, und die Prüfsumme aus `latest.yml` (SHA-512) schützt vor beschädigten Downloads, nicht vor einem fremden Release im Repository.

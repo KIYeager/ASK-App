@@ -12,7 +12,8 @@ const { Agent, NEW } = require('./agent');
 const { Workspace } = require('./workspace');
 const { AppWindow, BROWSER_PARTITION } = require('./window');
 const { convertToPdf } = require('./office');
-const { cleanupOldVersions } = require('./portable');
+const { cleanupOldVersions, isPortable } = require('./portable');
+const { Updater } = require('./updater');
 const { GitHub } = require('./github');
 const { saveAttachments, imageUrl, nativeResize } = require('./attachments');
 const { Snapshots } = require('./snapshot');
@@ -78,6 +79,28 @@ const githubTrust = {
 
 // Internet für das Modell; lokale Adressen nur im Test (Mock-Server auf 127.0.0.1)
 const web = new Web({ ask, fetchImpl: (url, options) => net.fetch(url, options), allowLocal: testMode });
+
+// Updates (ENTSCHEIDE E37): fragt vor dem Herunterladen und vor dem Neustart, nie während eines Auftrags.
+const updater = new Updater({
+  app,
+  config: process.env.ASK_NO_UPDATES === '1' ? null : settings.appConfig().updates, // aus für automatische Tests
+  portable: isPortable(),
+  beta: () => !!settings.get('betaUpdates'),
+  busy: () => agent.running,
+  ask: async (options) => {
+    if (testMode || !appWindow) return -1;
+    return (await dialog.showMessageBox(appWindow.win, options)).response;
+  },
+  openExternal: (url) => shell.openExternal(url),
+  beforeInstall: async () => {
+    quitting = true; // before-quit soll nicht ein zweites Mal aufräumen
+    agent.stop();
+    visual.closeRenderer();
+    workspace.close();
+    await terminal.stop();
+  },
+  log: (m) => console.log(`[update] ${m}`),
+});
 
 // Bilder mit Flux über ASK (bild.js); angeboten, sobald ASK dem Konto das Werkzeug anbietet
 const images = new Images({ ask, getModel: () => currentModel(), fetchImpl: (url, options) => net.fetch(url, options),
@@ -227,6 +250,7 @@ function state() {
     thinking: thinkingLevel(),
     webSearchAvailable: !!ask.webSearch,
     chat: agent.state(),
+    update: updater.snapshot(),
     prefs: prefs(),
     version: app.getVersion(),
   };
@@ -378,10 +402,28 @@ function folderMenuItems() {
   if (recent.length) {
     items.push({ label: 'Aus der Liste entfernen', submenu: recent.map((f) => ({ label: f, click: () => forgetFolder(f) })) });
   }
+  items.push({ type: 'separator' });
+  items.push({ label: `Nach Updates suchen (ASK ${app.getVersion()})`, click: () => updater.check({ manual: true }) });
+  items.push({ label: 'Beta-Versionen erhalten', type: 'checkbox', checked: !!settings.get('betaUpdates'), click: (item) => setBeta(item.checked) });
   return items;
 }
 
+// tell: mit /beta ausgelöst; das Menü zeigt den Zustand selbst als Häkchen.
+async function setBeta(on, tell = false) {
+  settings.set({ betaUpdates: !!on });
+  pushState();
+  if (tell && appWindow && !testMode) {
+    await dialog.showMessageBox(appWindow.win, { type: 'info', buttons: ['OK'],
+      message: on ? 'Beta-Versionen an' : 'Beta-Versionen aus',
+      detail: on ? 'ASK bietet dir auch Vorabversionen zum Testen an. Sie können Fehler haben.'
+        : 'ASK bietet dir nur noch normale Versionen an. Eine installierte Beta bleibt, bis eine neuere normale Version kommt.' });
+  }
+  if (on) updater.check(); // eine vorhandene Beta gleich anbieten
+}
+
 function setupIpc() {
+  ipcMain.handle('update:action', () => updater.action());
+  ipcMain.handle('update:beta', (_e, on, tell) => setBeta(on, !!tell));
   ipcMain.handle('file:pdf', async (_e, rel) => {
     const source = workspace.resolve(rel);
     if (!source) return { fehler: 'Datei nicht gefunden.' };
@@ -656,7 +698,9 @@ function wireEvents() {
   agent.on('changed', () => {
     appWindow?.send('chat:changed', agent.state());
     pushState();
+    if (!agent.running) updater.idle();
   });
+  updater.on('changed', () => pushState());
   workspace.on('auftrag', (file) => handleOrder(file));
   workspace.on('files', (files) => appWindow?.send('files', files));
 }
@@ -689,7 +733,10 @@ app.whenReady().then(() => {
     visual.closeRenderer(); // unsichtbare Fenster halten die App sonst offen
     app.quit();
   });
-  if (singleInstance) cleanupOldVersions();
+  if (singleInstance) {
+    cleanupOldVersions();
+    updater.start();
+  }
   if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) {
     require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, ask, agent, workspace, settings, openFolder, pushState, folderMenuItems });
   }
