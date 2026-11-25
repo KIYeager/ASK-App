@@ -428,6 +428,7 @@ async function setBeta(on, tell = false) {
 
 function setupIpc() {
   ipcMain.handle('update:action', () => updater.action());
+  ipcMain.handle('update:later', () => updater.postpone());
   ipcMain.handle('update:beta', (_e, on, tell) => setBeta(on, !!tell));
   ipcMain.handle('file:pdf', async (_e, rel) => {
     const source = workspace.resolve(rel);
@@ -703,9 +704,16 @@ function wireEvents() {
   agent.on('changed', () => {
     appWindow?.send('chat:changed', agent.state());
     pushState();
-    if (!agent.running) updater.idle();
+    if (agent.running) updater.busyChanged();
+    else updater.idle();
   });
-  updater.on('changed', () => pushState());
+  updater.on('changed', () => {
+    pushState();
+    // Fortschritt auch in der Taskleiste: Download, danach der Countdown bis zum Neustart
+    const u = updater.snapshot();
+    const bar = u.state === 'lädt' ? u.percent / 100 : u.state === 'neustart' || u.state === 'installiert' ? 2 : -1;
+    try { appWindow?.win?.setProgressBar(bar); } catch { /* Fenster schon zu */ }
+  });
   workspace.on('auftrag', (file) => handleOrder(file));
   workspace.on('files', (files) => appWindow?.send('files', files));
 }

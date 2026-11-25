@@ -21,6 +21,9 @@ function setup({ result = null, error = null, answers = [], busy = false, beta =
     quitAndInstall(...args) { calls.installs.push(args); },
   };
   const state = { busy, beta };
+  // Nachgebaute Uhr für den Countdown: tick(n) lässt n Sekunden vergehen
+  const clock = { fn: null, setInterval(fn) { this.fn = fn; return 1; }, clearInterval() { this.fn = null; } };
+  const tick = (n = 1) => { for (let i = 0; i < n && clock.fn; i++) clock.fn(); };
   const u = new Updater({
     app: { isPackaged: packaged, getVersion: () => '0.1.0' },
     config,
@@ -31,9 +34,12 @@ function setup({ result = null, error = null, answers = [], busy = false, beta =
     openExternal: (url) => calls.opened.push(url),
     beforeInstall: async () => { calls.beforeInstall++; },
     updater: fake,
+    timers: clock,
   });
-  return { u, calls, state };
+  return { u, calls, state, tick, clock };
 }
+
+const settle = () => new Promise((r) => setImmediate(r));
 
 const available = (version, releaseNotes = '') => ({ isUpdateAvailable: true, updateInfo: { version, releaseNotes } });
 
@@ -45,18 +51,32 @@ test('ohne Paket (npm start) oder ohne Release-Repository: aus', async () => {
   assert.strictEqual(new Updater({ app: { isPackaged: true }, config: {} }).enabled, false);
 });
 
-test('neue Version: fragt, lädt, fragt nach Neustart, installiert mit Fortschrittsfenster', async () => {
-  const { u, calls } = setup({ result: available('0.2.0', '<ul><li>Neu: Updates</li></ul>'), answers: [0, 0] });
+test('neue Version: eine Frage, Download, Countdown, dann Neustart mit Fortschrittsfenster', async () => {
+  const { u, calls, tick } = setup({ result: available('0.2.0', '<ul><li>Neu: Updates</li></ul>'), answers: [0] });
   await u.check();
-  assert.strictEqual(calls.dialogs.length, 2);
+  assert.strictEqual(calls.dialogs.length, 1); // nur «Jetzt aktualisieren?», keine zweite Frage
   assert.match(calls.dialogs[0].message, /ASK 0\.2\.0 ist da/);
   assert.match(calls.dialogs[0].detail, /• Neu: Updates/);
   assert.strictEqual(calls.downloads, 1);
+  assert.strictEqual(u.snapshot().state, 'neustart');
+  assert.strictEqual(u.snapshot().countdown, 10);
+  tick(9);
+  assert.strictEqual(u.snapshot().countdown, 1);
+  assert.strictEqual(calls.installs.length, 0);
+  tick(1);
+  await settle();
   assert.strictEqual(calls.beforeInstall, 1);
   assert.deepStrictEqual(calls.installs, [[false, true]]);
 });
 
-test('«Später»: nicht von selbst nochmals fragen, aber auf Klick', async () => {
+test('«Jetzt neu starten» im Balken wartet nicht auf den Countdown', async () => {
+  const { u, calls } = setup({ result: available('0.2.0'), answers: [0] });
+  await u.check();
+  await u.action();
+  assert.strictEqual(calls.installs.length, 1);
+});
+
+test('«Später» bei der Frage: nicht von selbst nochmals fragen, aber auf Klick', async () => {
   const { u, calls } = setup({ result: available('0.2.0'), answers: [1] });
   await u.check();
   await u.check();
@@ -67,21 +87,41 @@ test('«Später»: nicht von selbst nochmals fragen, aber auf Klick', async () =
   assert.strictEqual(calls.downloads, 0);
 });
 
-test('«Beim Beenden»: kein Neustart, Zustand geladen', async () => {
-  const { u, calls } = setup({ result: available('0.2.0'), answers: [0, 1] });
+test('«Später» im Balken: kein Neustart, beim Schliessen installieren', async () => {
+  const { u, calls, tick, clock } = setup({ result: available('0.2.0'), answers: [0] });
   await u.check();
+  u.postpone();
+  assert.strictEqual(clock.fn, null);
+  tick(20);
   assert.strictEqual(calls.installs.length, 0);
+  assert.deepStrictEqual([u.snapshot().state, u.snapshot().postponed], ['geladen', true]);
+  u.idle(); // auch nach einem Auftrag nicht von selbst
   assert.strictEqual(u.snapshot().state, 'geladen');
+  await u.action(); // aber auf Klick
+  assert.strictEqual(calls.installs.length, 1);
 });
 
-test('während das Modell arbeitet: keine Frage, erst danach', async () => {
-  const { u, calls, state } = setup({ result: available('0.2.0'), busy: true, answers: [0, 0] });
+test('während das Modell arbeitet: keine Frage und kein Neustart, erst danach', async () => {
+  const { u, calls, state, tick } = setup({ result: available('0.2.0'), busy: true, answers: [0] });
   await u.check();
   assert.strictEqual(calls.dialogs.length, 0);
   state.busy = false;
   u.idle();
-  await new Promise((r) => setImmediate(r));
+  await settle();
   assert.strictEqual(calls.downloads, 1);
+  assert.strictEqual(u.snapshot().state, 'neustart');
+  // Auftrag startet während des Countdowns: anhalten, nach dem Auftrag neu beginnen
+  tick(3);
+  state.busy = true;
+  u.busyChanged();
+  assert.strictEqual(u.snapshot().state, 'geladen');
+  tick(20);
+  assert.strictEqual(calls.installs.length, 0);
+  state.busy = false;
+  u.idle();
+  assert.strictEqual(u.snapshot().countdown, 10);
+  tick(10);
+  await settle();
   assert.strictEqual(calls.installs.length, 1);
 });
 
