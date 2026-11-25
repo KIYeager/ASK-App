@@ -46,6 +46,7 @@ const PATHS = {
   hand: <path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11m0-6.5V4a1.5 1.5 0 0 1 3 0v7m0-5.5a1.5 1.5 0 0 1 3 0V12m0-3.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1.5a6 6 0 0 1-4.6-2.2L4.4 15a1.6 1.6 0 0 1 2.4-2.1L8 14" />,
   map: <><path d="m9 4-6 2.5v13L9 17l6 2.5 6-2.5v-13L15 6.5z" /><path d="M9 4v13M15 6.5v13" /></>,
   bell: <><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z" /><path d="M10 20a2 2 0 0 0 4 0" /></>,
+  server: <><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>,
   chart: <path d="M4 20h16M7 16v-5M12 16V6M17 16v-8" />,
 };
@@ -66,5 +67,5 @@ export const TOOL_ICONS = {
   find_files: 'search', search_text: 'search', update_tasks: 'list', web_search: 'globe', web_fetch: 'globe', browser: 'browser',
   view_file: 'eye', bild_erstellen: 'image', chat_search: 'history', chat_read: 'history', goal_done: 'target',
   github_status: 'github', github_clone: 'github', github_pull: 'github', github_push: 'github', github_create: 'github',
-  frage_stellen: 'help', plan_vorlegen: 'map',
+  frage_stellen: 'help', plan_vorlegen: 'map', server_starten: 'server', server_stoppen: 'server', server_liste: 'server',
 };

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
+import ServerBar from './Servers.jsx';
 import { baseName, extOf, fileBadge, fileUrl, formatSize } from '../lib/format.js';
 
 const norm = (p) => String(p || '').replaceAll('\\', '/').replace(/^\.?\//, '').toLowerCase();
@@ -233,7 +234,7 @@ export function PreviewBody({ entry, big = false }) {
 
 // ---------- Browser ----------
 
-function BrowserTab({ browser, active, onClose, onBig, big }) {
+function BrowserTab({ browser, active, onClose, onBig, big, servers, root, notice }) {
   const host = useRef(null);
   const [url, setUrl] = useState('');
   const editing = useRef(false);
@@ -268,6 +269,7 @@ function BrowserTab({ browser, active, onClose, onBig, big }) {
         <button id="bp-big" type="button" className="icon-btn" title="Gross" aria-label="Gross" onClick={onBig}><Icon name="expand" size={15} /></button>
         <button id="bp-close" type="button" className="icon-btn" title="Browser schliessen" aria-label="Browser schliessen" onClick={onClose}><Icon name="close" size={15} /></button>
       </div>
+      {root ? <ServerBar servers={servers} notice={notice} onOpen={(u) => api().browserGo(u)} /> : null}
       {browser.status ? <div className="bp-status-row"><span className="live-dot" aria-hidden="true" /><span id="bp-status" className="bp-status">{browser.status}</span></div> : null}
       <div id="browser-host" ref={host} className="browser-host">
         {browser.mode === 'unsichtbar' && browser.frame ? <img id="bp-frame" className="bp-frame" alt="" src={browser.frame} /> : null}
@@ -282,7 +284,8 @@ function BrowserTab({ browser, active, onClose, onBig, big }) {
 
 // ---------- Panel ----------
 
-export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice }) {
+export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice, servers = [] }) {
+  const serversUp = servers.some((s) => s.state === 'läuft' || s.state === 'startet');
   const entry = selected ? (files.recent.find((f) => f.path === selected.path) || selected) : null;
   return (
     <aside id="sidebar" className="sidebar">
@@ -290,7 +293,8 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
         <button type="button" role="tab" aria-selected={tab === 'dateien'} className={tab === 'dateien' ? 'on' : ''} onClick={() => setTab('dateien')}><Icon name="folder" size={15} /> Dateien</button>
         <button type="button" role="tab" aria-selected={tab === 'vorschau'} className={tab === 'vorschau' ? 'on' : ''} onClick={() => setTab('vorschau')}><Icon name="eye" size={15} /> Vorschau</button>
         <button type="button" role="tab" aria-selected={tab === 'browser'} className={tab === 'browser' ? 'on' : ''} onClick={() => setTab('browser')}>
-          <Icon name="browser" size={15} /> Browser{browser.running ? <span className="live-dot" aria-hidden="true" /> : null}
+          <Icon name="browser" size={15} /> Browser{browser.running ? <span className="live-dot" aria-hidden="true" />
+            : serversUp ? <span className="srv-dot up" title="Ein Server läuft" aria-hidden="true" /> : null}
         </button>
       </div>
       <div className="rp-body">
@@ -315,7 +319,8 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
             <div id="preview-body" className="preview-body"><PreviewBody entry={entry} /></div>
           </div>
         ) : null}
-        {tab === 'browser' ? <BrowserTab browser={browser} active={browserActive} onClose={onBrowserClose} onBig={onBrowserBig} big={browserBig} /> : null}
+        {tab === 'browser' ? <BrowserTab browser={browser} active={browserActive} onClose={onBrowserClose} onBig={onBrowserBig} big={browserBig}
+          servers={servers} root={root} notice={notice} /> : null}
       </div>
     </aside>
   );

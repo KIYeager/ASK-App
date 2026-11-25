@@ -23,6 +23,8 @@ const { historyPrompt, search: searchChats } = require('./history');
 const { Images } = require('./bild');
 const { MODES: APPROVAL_MODES } = require('./approvals');
 const usage = require('./usage');
+const { Servers } = require('./servers');
+const { request: terminalRequest } = require('./tools');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -51,7 +53,7 @@ function makeTerminal() {
   }
   return t;
 }
-const runtimes = new Map(); // Ordner (klein geschrieben) → { folder, terminal, workspace, agents: Set }
+const runtimes = new Map(); // Ordner (klein geschrieben) → { folder, terminal, workspace, servers, agents: Set }
 let terminal = makeTerminal(); // ohne Projekt: ein Terminal, das nie startet
 const ask = new AskSession();
 let workspace = new Workspace();
@@ -113,7 +115,7 @@ const updater = new Updater({
     for (const a of allAgents()) a.stop();
     visual.closeRenderer();
     workspace.close();
-    await Promise.all([terminal.stop(), ...[...runtimes.values()].map((rt) => rt.terminal.stop())]);
+    await Promise.all([terminal.stop(), ...[...runtimes.values()].map((rt) => stopRuntime(rt))]);
   },
   log: (m) => console.log(`[update] ${m}`),
 });
@@ -160,6 +162,7 @@ function makeAgent(folder, rt) {
     getImageUrl: (attachment) => imageUrl(folder, attachment, nativeResize(nativeImage)),
     getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
     getSnapshots: () => snapshotsFor(folder),
+    servers: rt.servers || null,
     // Modus im Eingabefeld: Auto fragt nie nach, Nachfragen nach der Stufe in den Einstellungen
     getApprovalMode: () => (chatMode() === 'auto' ? 'aus' : approvalMode()),
     getMode: () => chatMode(),
@@ -182,12 +185,25 @@ function runtime(folder) {
   let rt = runtimes.get(key);
   if (rt) return rt;
   rt = { folder, terminal: makeTerminal(), workspace: new Workspace(), agents: new Set() };
+  // Entwicklungsserver (ENTSCHEIDE E48) über die Terminal-API dieses Projekts; die Ports der Terminals gibt der
+  // Browser nie frei
+  rt.servers = new Servers({ request: (method, p, body) => terminalRequest(rt.terminal, method, p, body, 10000),
+    available: () => rt.terminal.state === 'läuft', blockedPorts: terminalPorts });
   runtimes.set(key, rt);
   wireRuntime(rt);
   return rt;
 }
 
 const isActiveRt = (rt) => rt.terminal === terminal;
+const activeRt = () => [...runtimes.values()].find(isActiveRt) || null;
+const terminalPorts = () => [terminal.port, ...[...runtimes.values()].map((rt) => rt.terminal.port)].filter(Boolean);
+
+// Projekt schliessen: zuerst seine Server stoppen (höchstens 3 s), dann das Terminal. Dessen Job-Objekt beendet,
+// was danach noch läuft.
+async function stopRuntime(rt) {
+  await Promise.race([rt.servers.stopAll(), new Promise((r) => setTimeout(r, 3000))]);
+  await rt.terminal.stop();
+}
 const allAgents = () => [...runtimes.values()].flatMap((rt) => [...rt.agents]);
 const anyRunning = () => allAgents().some((a) => a.running);
 
@@ -207,7 +223,7 @@ function releaseIdle() {
     if ([...rt.agents].some((a) => a.running || a.undoing)) continue;
     rt.agents.clear();
     rt.workspace.close();
-    rt.terminal.stop();
+    stopRuntime(rt);
     runtimes.delete(key);
   }
 }
@@ -354,6 +370,7 @@ function state() {
     webSearchAvailable: !!ask.webSearch,
     chat: agent.state(),
     running: runningChats(),
+    servers: activeRt()?.servers.list() || [],
     update: updater.snapshot(),
     prefs: prefs(),
     version: app.getVersion(),
@@ -557,7 +574,7 @@ function forgetFolder(f) {
   settings.removeRecent(f);
   if (current) {
     workspace.close();
-    terminal.stop();
+    if (rt) stopRuntime(rt); else terminal.stop();
     terminal = makeTerminal();
     workspace = new Workspace();
     agent = makeAgent('', { terminal, workspace, agents: new Set() });
@@ -856,6 +873,26 @@ function setupIpc() {
   ipcMain.on('ui:ask-visible', (_e, visible) => appWindow.setAskVisible(visible));
   ipcMain.on('ui:browser-bounds', (_e, bounds) => appWindow.setBrowserBounds(bounds));
   ipcMain.on('ui:browser-visible', (_e, visible) => appWindow.setBrowserVisible(visible));
+  // Entwicklungsserver des sichtbaren Projekts (ENTSCHEIDE E48). Die Person startet ohne Rückfrage: Sie tippt den Befehl selbst.
+  ipcMain.handle('servers:list', () => activeRt()?.servers.list() || []);
+  ipcMain.handle('servers:start', async (_e, command, name) => {
+    const rt = activeRt();
+    if (!rt || rt.terminal.state !== 'läuft') return { ok: false, reason: 'Das Terminal läuft nicht.' };
+    try {
+      return { ok: true, server: await rt.servers.start(String(command || ''), { name: String(name || ''), by: 'person' }) };
+    } catch (err) {
+      return { ok: false, reason: err.message };
+    }
+  });
+  ipcMain.handle('servers:stop', async (_e, id) => {
+    try {
+      return { ok: !!(await activeRt()?.servers.stop(String(id || ''))) };
+    } catch (err) {
+      return { ok: false, reason: err.message };
+    }
+  });
+  ipcMain.handle('servers:remove', (_e, id) => !!activeRt()?.servers.remove(String(id || '')));
+  ipcMain.handle('servers:output', (_e, id) => activeRt()?.servers.output(String(id || '')) || []);
   ipcMain.handle('browser:show', () => { appWindow.ensureBrowser(); });
   ipcMain.handle('browser:go', (_e, text) => appWindow.ensureBrowser().webContents.loadURL(browserAddress(text)).catch(() => {}));
   ipcMain.handle('browser:back', () => { if (appWindow.browser) appWindow.browser.webContents.navigationHistory.goBack(); });
@@ -951,6 +988,11 @@ function wireRuntime(rt) {
     if (isActiveRt(rt) && (snap.state === 'läuft' || snap.state === 'fehler')) pendingChat = null;
     if (isActiveRt(rt)) pushState();
   });
+  // Server: nur die des sichtbaren Projekts an die Oberfläche. Ein beendetes Terminal nimmt seine Prozesse mit.
+  rt.terminal.on('state', (snap) => {
+    if (snap.state === 'gestoppt' || snap.state === 'startet' || (snap.state === 'fehler' && !rt.terminal.backend.running())) rt.servers.terminalGone();
+  });
+  rt.servers.on('changed', (list) => { if (isActiveRt(rt)) appWindow?.send('servers', list); });
   rt.workspace.on('auftrag', (file) => handleOrder(file, rt.workspace));
   rt.workspace.on('files', (files) => { if (rt.workspace === workspace) appWindow?.send('files', files); });
 }
@@ -1100,7 +1142,7 @@ app.on('before-quit', (event) => {
     visual.closeRenderer();
     workspace.close();
     for (const rt of runtimes.values()) rt.workspace.close();
-    Promise.allSettled([terminal.stop(), ...[...runtimes.values()].map((rt) => rt.terminal.stop())]).finally(() => app.quit());
+    Promise.allSettled([terminal.stop(), ...[...runtimes.values()].map((rt) => stopRuntime(rt))]).finally(() => app.quit());
   });
 });
 

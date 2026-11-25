@@ -81,7 +81,32 @@ function mockUsage() {
 }
 
 let transcriptItems = params.get('leer') || params.get('erst') ? [] : saved;
-const push = () => emit('state', { ...state });
+
+// Entwicklungsserver (servers.js): ein laufender Vite-Server und einer, der mit Fehler beendet ist
+const serverLines = {
+  s1: ['> budget-web@0.1.0 dev', '> vite', '', '  VITE v6.3.1  ready in 412 ms', '', '  ➜  Local:   http://localhost:5173/', '  ➜  Network: use --host to expose'],
+  s2: ['node:internal/modules/cjs/loader:1228', "Error: Cannot find module 'express'", 'Require stack:', '- C:\\Users\\lernende\\ASK-Projekte\\Haushaltsbudget\\api.js'],
+};
+let servers = params.get('server') === '0' ? [] : [
+  { id: 's1', name: 'Webseite', command: 'npm run dev', started: now - 120000, state: 'läuft', exitCode: null, url: 'http://localhost:5173/', port: 5173, ready: true, error: '', by: 'modell', last: serverLines.s1.at(-1) },
+  { id: 's2', name: 'node api.js', command: 'node api.js', started: now - 60000, state: 'fehler', exitCode: 1, url: '', port: 0, ready: false, error: 'Beendet mit Exitcode 1', by: 'person', last: serverLines.s2.at(-1) },
+];
+const pushServers = () => emit('servers', servers.map((x) => ({ ...x })));
+async function mockServerStart(command) {
+  const id = `s${Date.now()}`;
+  serverLines[id] = [`> ${command}`];
+  servers = [...servers, { id, name: command.slice(0, 40), command, started: Date.now(), state: 'startet', exitCode: null, url: '', port: 0, ready: false, error: '', by: 'person', last: '' }];
+  pushServers();
+  setTimeout(() => {
+    serverLines[id].push('Serving HTTP on :: port 8000 (http://[::]:8000/) ...');
+    servers = servers.map((x) => (x.id === id ? { ...x, state: 'läuft', url: 'http://localhost:8000/', port: 8000, ready: true, last: serverLines[id].at(-1) } : x));
+    pushServers();
+  }, 1200);
+  return { ok: true, server: servers.at(-1) };
+}
+state.servers = servers;
+
+const push = () => emit('state', { ...state, servers });
 
 async function demoRun(text) {
   const ev = (e) => emit('chat:event', e);
@@ -136,11 +161,14 @@ let pendingApproval = null;
 
 export function install() {
   window.ask = {
-    getState: async () => ({ ...state }),
+    getState: async () => ({ ...state, servers }),
     onState: on('state'), onFiles: on('files'), onTasks: on('tasks'), onAskLoaded: on('ask:loaded'), onAskLoadFailed: on('ask:load-failed'),
     onMenuChooseFolder: on('x1'), onMenuNewFolder: on('x2'), onMenuGithub: on('x3'), onFolderError: on('folder:error'),
     onProjectRename: on('project:rename'), onGroupsChanged: on('groups'), onChatEvent: on('chat:event'), onChatChanged: on('chat:changed'),
-    onBrowserState: on('browser:state'), onBrowserNotice: on('browser:notice'),
+    onBrowserState: on('browser:state'), onBrowserNotice: on('browser:notice'), onServers: on('servers'),
+    servers: async () => servers, serverStart: async (c) => mockServerStart(String(c || '').trim()), serverOutput: async (id) => serverLines[id] || [],
+    serverStop: async (id) => { servers = servers.map((x) => (x.id === id ? { ...x, state: 'gestoppt', exitCode: 1, ready: false } : x)); pushServers(); return { ok: true }; },
+    serverRemove: async (id) => { servers = servers.filter((x) => x.id !== id); pushServers(); return true; },
     chooseFolder: async () => ({ ok: false, canceled: true }), newFolder: async () => ({ ok: true }), openFolder: async () => ({ ok: true }),
     forgetFolder: async () => true, folderMenu: async () => {}, showFolder: async () => {}, projectMenu: async (f) => emit('project:rename', f),
     projectUpdate: async (folder, patch) => { const p = projects.find((x) => x.folder === folder); if (p && patch.name) p.name = patch.name; return true; },
