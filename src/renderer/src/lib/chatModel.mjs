@@ -63,6 +63,7 @@ function ensureAssistant(model) {
 }
 
 export const QUESTION = 'frage_stellen';
+export const PLAN = 'plan_vorlegen';
 
 function toolEntry(call) {
   const entry = { k: 'tool', id: call.id, name: call.name, label: call.label || call.name, detail: call.detail || '',
@@ -72,8 +73,8 @@ function toolEntry(call) {
   return entry;
 }
 
-function finishTool(entry, { ok, summary, output, tasks, images }) {
-  return { ok: ok !== false, summary: shortSummary(entry.name, ok, summary, output), rawSummary: summary || '',
+function finishTool(entry, { ok, summary, output, tasks, images, plan }) {
+  return { ...(plan ? { plan } : {}), ok: ok !== false, summary: shortSummary(entry.name, ok, summary, output), rawSummary: summary || '',
     output: output || '', progress: '', tasks: tasks && tasks.length ? tasks : null, images: images || [] };
 }
 
@@ -180,8 +181,18 @@ export function applyEvent(model, ev) {
     case 'changes':
       return add(model, { k: 'changes', snapshot: ev.snapshot, changes: ev.changes, undone: false });
     case 'undo': {
-      const entries = model.entries.map((e) => (e.k === 'changes' && e.snapshot === ev.snapshot ? { ...e, undone: true } : e));
+      // Rückgängig bis zu diesem Auftrag: auch die Änderungen danach sind weg
+      const from = model.entries.findIndex((e) => e.k === 'changes' && e.snapshot === ev.snapshot);
+      const entries = model.entries.map((e, i) => (e.k === 'changes' && from >= 0 && i >= from ? { ...e, undone: true } : e));
       return add({ ...model, entries }, { k: 'notice', icon: 'undo', text: ev.text });
+    }
+    case 'retry': {
+      // Verbindung weg: halbe Antwort verwerfen, ein Hinweis, der beim nächsten Versuch nachgeführt wird
+      let m = model;
+      const s = streamingIndex(m);
+      if (s >= 0) m = { ...m, entries: m.entries.filter((_x, j) => j !== s) };
+      const last = m.entries[m.entries.length - 1];
+      return last?.k === 'notice' && last.retry ? update(m, m.entries.length - 1, { text: ev.text }) : add(m, { k: 'notice', icon: 'reload', retry: true, text: ev.text });
     }
     case 'notice': return add(model, { k: 'notice', text: ev.text });
     case 'error': return add(model, { k: 'error', text: ev.text });
@@ -241,6 +252,7 @@ export function buildTurns(model, running = false) {
     let group = null;
     body.forEach((e, i) => {
       if (i === answerIndex) return;
+      if (e.k === 'tool' && e.name === PLAN && e.plan) { group = null; after.push(e); return; } // Plan als Karte unter der Arbeit
       if (e.k === 'tool' && e.name === QUESTION) {
         group = null;
         // Offene Fragen gut sichtbar unter der Karte, beantwortete als Schritt in der Karte
@@ -271,7 +283,7 @@ export function buildTurns(model, running = false) {
     });
     // Eine Gruppe mit nur einem Eintrag ist eine normale Zeile
     const flatSteps = steps.map((s) => (s.type === 'group' && s.entries.length === 1 ? { type: 'tool', entry: s.entries[0] } : s));
-    const tools = body.filter((e) => e.k === 'tool' && e.name !== QUESTION);
+    const tools = body.filter((e) => e.k === 'tool' && e.name !== QUESTION && e.name !== PLAN);
     return {
       key: t.key,
       user: t.user,

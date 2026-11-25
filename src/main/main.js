@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage, nativeImage, nativeTheme, BrowserWindow, session } = require('electron');
+const { app, ipcMain, dialog, shell, clipboard, protocol, net, Menu, safeStorage, nativeImage, nativeTheme, BrowserWindow, session, Notification } = require('electron');
 const settings = require('./settings');
 const paths = require('./paths');
 const { checkFolder } = require('./folders');
@@ -37,7 +37,7 @@ if (!singleInstance) {
   app.quit();
 }
 
-// Parallele Chats (ENTSCHEIDE E46): Jedes Projekt, in dem gearbeitet wird, hat sein eigenes Terminal und
+// Parallele Chats (ENTSCHEIDE E52): Jedes Projekt, in dem gearbeitet wird, hat sein eigenes Terminal und
 // seine eigene Beobachtung des Ordners, jeder laufende Chat seinen eigenen Agenten. terminal, workspace und
 // agent zeigen immer auf das sichtbare Projekt bzw. den sichtbaren Chat; was im Hintergrund läuft, bleibt in
 // runtimes stehen, bis es fertig ist.
@@ -159,7 +159,9 @@ function makeAgent(folder, rt) {
     getImageUrl: (attachment) => imageUrl(folder, attachment, nativeResize(nativeImage)),
     getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
     getSnapshots: () => snapshotsFor(folder),
-    getApprovalMode: () => approvalMode(),
+    // Modus im Eingabefeld: Auto fragt nie nach, Nachfragen nach der Stufe in den Einstellungen
+    getApprovalMode: () => (chatMode() === 'auto' ? 'aus' : approvalMode()),
+    getMode: () => chatMode(),
     fileExists: (rel) => !!rt.workspace.resolve(String(rel || '')),
     // In automatischen Tests: Rückfragen erlauben, Fragen mit der ersten Antwort beantworten
     autoApprove: testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? async () => 'yes' : null,
@@ -220,7 +222,14 @@ let agent = makeAgent('', { terminal, workspace, agents: new Set() });
 
 function approvalMode() {
   const mode = settings.get('approvals');
-  return APPROVAL_MODES.includes(mode) ? mode : 'heikel';
+  return APPROVAL_MODES.includes(mode) && mode !== 'aus' ? mode : 'heikel';
+}
+
+// Modus im Eingabefeld (ENTSCHEIDE E52): auto (ohne Rückfragen), nachfragen, plan
+const CHAT_MODES = ['auto', 'nachfragen', 'plan'];
+function chatMode() {
+  const mode = settings.get('mode');
+  return CHAT_MODES.includes(mode) ? mode : 'auto';
 }
 
 const THEMES = { system: 'system', hell: 'light', dunkel: 'dark' };
@@ -348,13 +357,14 @@ function state() {
     prefs: prefs(),
     version: app.getVersion(),
     approvals: approvalMode(),
+    mode: chatMode(),
     theme: THEMES[s.theme] ? s.theme : 'system',
     project: settings.findProject(s.folder),
   };
 }
 
 // Einstellungen der Oberfläche, die sich die App merkt (Dialog «Einstellungen»)
-const PREFS = { verbose: false, todoCollapsed: true }; // wie bisher: die Aufgabenliste schrumpft nach dem Auftrag auf eine Zeile
+const PREFS = { verbose: false, todoCollapsed: true, notify: true }; // wie bisher: die Aufgabenliste schrumpft nach dem Auftrag auf eine Zeile
 function prefs() {
   const stored = settings.get('prefs') || {};
   return Object.fromEntries(Object.entries(PREFS).map(([k, v]) => [k, typeof stored[k] === typeof v ? stored[k] : v]));
@@ -416,7 +426,7 @@ async function openChat(folder, id) {
 }
 
 // Projekt sichtbar machen. Laufende Aufträge in anderen Projekten arbeiten im Hintergrund weiter, jeder mit
-// seinem eigenen Terminal und Ordner (ENTSCHEIDE E46).
+// seinem eigenen Terminal und Ordner (ENTSCHEIDE E52).
 const BUSY = 'Das Modell arbeitet noch in diesem Projekt. Zuerst stoppen (Esc).';
 
 async function openFolder(folder, name = '') {
@@ -659,6 +669,7 @@ function setupIpc() {
     const v = values || {};
     const patch = {};
     if (APPROVAL_MODES.includes(v.approvals)) patch.approvals = v.approvals;
+    if (CHAT_MODES.includes(v.mode)) patch.mode = v.mode;
     if (THEMES[v.theme]) patch.theme = v.theme;
     settings.set(patch);
     if (patch.theme) applyTheme();
@@ -936,11 +947,39 @@ function wireRuntime(rt) {
   rt.workspace.on('files', (files) => { if (rt.workspace === workspace) appWindow?.send('files', files); });
 }
 
+// Windows-Benachrichtigung (ENTSCHEIDE E52): wenn ASK fertig ist, fragt oder um Erlaubnis bittet und
+// man gerade nicht hinschaut (Fenster im Hintergrund oder anderer Chat). Klick öffnet den Chat.
+const NOTIFY_MIN_MS = 8000; // kurze Aufträge ohne Meldung
+const shown = new Set(); // sonst räumt der Garbage Collector die Meldung weg, bevor jemand klickt
+function notify(a, folder, ev) {
+  if (!['done', 'question', 'approval'].includes(ev.type) || !prefs().notify || !appWindow || !Notification.isSupported()) return;
+  const watching = appWindow.win.isFocused() && a === agent;
+  if (watching) return;
+  if (ev.type === 'done' && (Date.now() - (a.turnStarted || 0) < NOTIFY_MIN_MS || a.questions.size || a.approvals.size)) return;
+  const title = a.chat.title || 'Neuer Chat';
+  const body = ev.type === 'question' ? `Frage: ${ev.frage}` : ev.type === 'approval' ? `Wartet auf dich: ${ev.title}` : 'Fertig.';
+  const n = new Notification({ title: `ASK · ${title}`.slice(0, 120), body: String(body).slice(0, 240), silent: ev.type === 'done' });
+  const id = a.chat.id;
+  shown.add(n);
+  n.on('close', () => shown.delete(n));
+  n.on('click', () => {
+    shown.delete(n);
+    if (!appWindow) return;
+    if (appWindow.win.isMinimized()) appWindow.win.restore();
+    appWindow.win.show();
+    appWindow.win.focus();
+    if (folder && a !== agent) openChat(folder, id);
+  });
+  n.show();
+}
+
 // Ereignisse eines Agenten: an die Oberfläche mit Chat und Ordner, damit sie nur den sichtbaren Chat zeigt
 function wireAgent(a, folder) {
   a.on('event', (ev) => {
     // Frage oder Rückfrage: Fenster in der Taskleiste aufblinken lassen, wenn es im Hintergrund ist
     if ((ev.type === 'approval' || ev.type === 'question') && appWindow && !appWindow.win.isFocused()) appWindow.win.flashFrame(true);
+    if (ev.type === 'user') a.turnStarted = Date.now();
+    notify(a, folder, ev);
     appWindow?.send('chat:event', { ...ev, chatId: a.chat.id, folder });
   });
   a.on('changed', () => {

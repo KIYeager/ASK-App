@@ -248,6 +248,8 @@ export default function App() {
   const tasks = tasksAll && (tasksLive || tasksAll.some((t) => t.status !== 'erledigt')) ? tasksAll : null;
   const pendingQuestion = useMemo(() => [...model.entries].reverse().find((e) => e.question?.open) || null, [model]);
   const pendingApproval = useMemo(() => model.entries.find((e) => e.k === 'approval' && !e.answer) || null, [model]);
+  // Knöpfe «Umsetzen» und «Ändern» nur beim letzten Plan, solange danach nichts eingegeben wurde
+  const lastPlanKey = useMemo(() => { const e = [...model.entries].reverse().find((x) => x.k === 'user' || x.plan); return e?.plan ? e.key : null; }, [model]);
   const lastChanges = useMemo(() => [...model.entries].reverse().find((e) => e.k === 'changes' && !e.undone) || null, [model]);
 
   // Markierungen im Dateibaum: was der letzte Auftrag geändert hat; während der Arbeit, was gerade geändert wurde
@@ -376,6 +378,9 @@ export default function App() {
     { cmd: '/explorer', text: 'Projektordner im Explorer öffnen', run: () => api().showFolder() },
     { cmd: '/dateien', text: 'Dateien des Projekts zeigen', run: () => { setTab('dateien'); if (!rightOpen) api().setSidebar(true); } },
     { cmd: '/github', text: 'Mit GitHub verbinden, Repository des Projekts', run: () => setDialog({ name: 'github' }) },
+    { cmd: '/plan', text: 'Planmodus: ASK legt zuerst einen Plan vor', run: () => api().setSettings({ mode: 'plan' }) },
+    { cmd: '/auto', text: 'Auto: ASK arbeitet ohne Rückfragen', run: () => api().setSettings({ mode: 'auto' }) },
+    { cmd: '/nachfragen', text: 'Nachfragen: ASK fragt vor heiklen Schritten', run: () => api().setSettings({ mode: 'nachfragen' }) },
     { cmd: '/modell', text: 'Modell wählen', run: () => document.getElementById('model-select')?.focus() },
     { cmd: '/denken', text: 'Denkaufwand einstellen (Standard, Tief bis Maximal)', run: () => document.getElementById('think-btn')?.click() },
     { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api().setWebSearch(!state.webSearch); } },
@@ -496,6 +501,10 @@ export default function App() {
     answer: (id, t) => api().chatAnswer(id, t),
     undo: async (snap) => { const res = await api().chatUndo(snap); if (res && !res.ok && !res.cancelled) dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] }); },
     undoSnapshot: lastChanges?.snapshot,
+    lastPlanKey,
+    // Plan umsetzen: auf Auto wechseln und loslegen; ändern: Wunsch ins Eingabefeld schreiben lassen
+    implementPlan: async () => { await api().setSettings({ mode: 'auto' }); send('Setze den Plan um.', []); },
+    revisePlan: () => composer.current?.setText('Ändere den Plan: '),
     onMediaLoad,
   };
 
@@ -592,7 +601,8 @@ export default function App() {
               runStarted={runStarted} commands={commands} pendingQuestion={pendingQuestion} pendingApproval={pendingApproval}
               onSend={send} onStop={() => api().chatStop()} onAnswer={(id, t) => api().chatAnswer(id, t)} onGoal={handleGoal}
               onGoalClear={() => api().chatGoal('')} setModel={(id) => api().setModel(id)} setThinking={(l) => api().setThinking(l)}
-              setWeb={(on) => api().setWebSearch(on)} notice={notice} />
+              setWeb={(on) => api().setWebSearch(on)} notice={notice}
+              mode={state.mode || 'auto'} setMode={(mode) => api().setSettings({ mode })} />
           )}
           {!turns.length && !needsLogin ? (
             // Leerer Chat: Eingabe in der Mitte, Vorschläge darunter (wie in Claude)

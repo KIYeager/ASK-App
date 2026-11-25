@@ -1,6 +1,7 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
 import { extOf, fileBadge, formatSize } from '../lib/format.js';
+import { api } from '../api.js';
 
 const THINK_LEVELS = ['standard', 'tief', 'mittel', 'hoch', 'maximal'];
 const THINK_NAMES = { standard: 'Standard', tief: 'Tief', mittel: 'Mittel', hoch: 'Hoch', maximal: 'Maximal' };
@@ -76,14 +77,63 @@ function ThinkPicker({ level, onChange }) {
   );
 }
 
+// Modus im Eingabefeld (ENTSCHEIDE E52); Shift+Tab wechselt der Reihe nach
+export const MODES = [
+  { id: 'auto', name: 'Auto', icon: 'bolt', text: 'Arbeitet ohne Rückfragen. Rückgängig bleibt möglich.' },
+  { id: 'nachfragen', name: 'Nachfragen', icon: 'hand', text: 'Fragt vor heiklen Schritten wie Löschen.' },
+  { id: 'plan', name: 'Plan', icon: 'map', text: 'Schaut sich nur um und legt einen Plan vor.' },
+];
+
+function ModePicker({ mode, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', esc, true);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc, true); };
+  }, [open]);
+  const cur = MODES.find((m) => m.id === mode) || MODES[0];
+  return (
+    <div className="mode-wrap" ref={ref}>
+      <button type="button" id="mode-btn" className={`chip mode-chip mode-${cur.id}`} onClick={() => setOpen(!open)}
+        title="Modus (Shift+Tab wechselt)" aria-expanded={open} aria-haspopup="listbox">
+        <Icon name={cur.icon} size={14} /> <span id="mode-label">{cur.name}</span>
+      </button>
+      {open ? (
+        <div id="mode-pop" className="popover mode-pop" role="listbox" aria-label="Modus">
+          {MODES.map((m) => (
+            <button key={m.id} type="button" role="option" aria-selected={m.id === cur.id} className={`mode-opt${m.id === cur.id ? ' on' : ''}`}
+              onClick={() => { onChange(m.id); setOpen(false); }}>
+              <Icon name={m.icon} size={15} />
+              <span className="mode-txt"><span className="mode-name">{m.name}</span><span className="muted">{m.text}</span></span>
+              {m.id === cur.id ? <Icon name="check" size={14} className="mode-check" /> : null}
+            </button>
+          ))}
+          <div className="mode-foot muted">Shift+Tab wechselt</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// @Datei: das Wort vor der Schreibstelle, wenn es mit @ beginnt
+function mentionAt(text, caret) {
+  const m = /(^|\s)@([^\s@"]*)$/.exec(text.slice(0, caret));
+  return m ? { start: caret - m[2].length - 1, query: m[2] } : null;
+}
+
 const Composer = forwardRef(function Composer(props, ref) {
   const { state, running, block, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
-    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed } = props;
+    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode } = props;
   const [text, setText] = useState('');
   const [pending, setPending] = useState([]); // neue Anhänge { name, type, size, data, url }
   const [kept, setKept] = useState([]); // schon gespeicherte Anhänge einer zurückgenommenen Eingabe { path, name, image }
   const [queued, setQueued] = useState(null); // Enter während eines Auftrags: eine wartende Nachricht (ENTSCHEIDE E34)
   const [slashIndex, setSlashIndex] = useState(0);
+  const [mention, setMention] = useState(null); // { start, query, items, index }
   const [dropping, setDropping] = useState(false);
   const [todoOpen, setTodoOpen] = useState(true);
   const [todoPeek, setTodoPeek] = useState(null); // null: wie in den Einstellungen
@@ -147,6 +197,45 @@ const Composer = forwardRef(function Composer(props, ref) {
   }, [running]);
   useEffect(() => { if (!running) setTodoPeek(null); }, [running]);
   useEffect(autosize, [text]);
+  const caret = useRef(null);
+  useLayoutEffect(() => {
+    if (caret.current === null || !input.current) return;
+    input.current.setSelectionRange(caret.current, caret.current);
+    caret.current = null;
+  }, [text]);
+
+  // Vorschläge zu @Datei: Dateien im Projekt, die zum getippten Wort passen
+  const mentionQuery = mention ? mention.query : null;
+  useEffect(() => {
+    if (mentionQuery === null) return undefined;
+    let alive = true;
+    const t = setTimeout(async () => {
+      const found = mentionQuery ? await api().findFiles(mentionQuery) : [];
+      if (alive) setMention((m) => (m && m.query === mentionQuery ? { ...m, items: (found || []).slice(0, 8), index: 0 } : m));
+    }, mentionQuery ? 120 : 0);
+    return () => { alive = false; clearTimeout(t); };
+  }, [mentionQuery]);
+
+  function updateMention(value, caret) {
+    const at = mentionAt(value, caret);
+    setMention((m) => (at ? { ...at, items: m && m.query === at.query ? m.items : (m?.items || []), index: 0 } : null));
+  }
+
+  function pickMention(item) {
+    if (!mention || !item) return;
+    const rel = item.path.replaceAll('\\', '/');
+    const token = /\s/.test(rel) ? `@"${rel}"` : `@${rel}`;
+    const end = mention.start + 1 + mention.query.length;
+    const next = `${text.slice(0, mention.start)}${token} ${text.slice(end)}`;
+    setText(next);
+    setMention(null);
+    caret.current = mention.start + token.length + 1; // nach dem Rendern setzen (useLayoutEffect), sonst gehen schnelle Tasten verloren
+  }
+
+  function cycleMode() {
+    const i = MODES.findIndex((m) => m.id === mode);
+    setMode(MODES[(i + 1) % MODES.length].id);
+  }
 
   function autosize() {
     const el = input.current;
@@ -227,6 +316,17 @@ const Composer = forwardRef(function Composer(props, ref) {
   }
 
   function onKey(e) {
+    if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); cycleMode(); return; }
+    if (mention?.items?.length) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        const n = mention.items.length;
+        setMention({ ...mention, index: (mention.index + (e.key === 'ArrowDown' ? 1 : -1) + n) % n });
+        e.preventDefault();
+        return;
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey) { e.preventDefault(); pickMention(mention.items[mention.index]); return; }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setMention(null); return; }
+    }
     if (slashMatches.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       setSlashIndex((i) => (i + (e.key === 'ArrowDown' ? 1 : -1) + slashMatches.length) % slashMatches.length);
       e.preventDefault();
@@ -280,7 +380,8 @@ const Composer = forwardRef(function Composer(props, ref) {
   const answering = !!pendingQuestion;
   const placeholder = answering ? 'Antworte auf die Frage von ASK …'
     : pendingApproval ? 'ASK wartet oben auf deine Entscheidung …'
-    : running ? 'Folgenachricht (wird nach dem Auftrag gesendet) · Esc stoppt' : (block || 'Auftrag beschreiben …');
+    : running ? 'Folgenachricht (wird nach dem Auftrag gesendet) · Esc stoppt'
+    : (block || (mode === 'plan' ? 'Was soll ASK planen? …' : 'Auftrag beschreiben · @ für Dateien'));
   const sendDisabled = answering ? !text.trim() : (!running && !!block);
   const ctxKnown = context?.limit > 0;
   const ctxPct = ctxKnown ? Math.min(100, Math.round((context.tokens / context.limit) * 100)) : 0;
@@ -312,6 +413,17 @@ const Composer = forwardRef(function Composer(props, ref) {
               <div key={c.cmd} role="option" aria-selected={i === slashIndex} className={i === Math.min(slashIndex, slashMatches.length - 1) ? 'active' : ''}
                 onMouseDown={(e) => { e.preventDefault(); runSlash(c); }}>
                 <span className="cmd">{c.cmd}</span><span className="muted">{c.text}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {mention?.items?.length ? (
+          <div id="mention" className="slash popover mention-pop" role="listbox" aria-label="Dateien">
+            {mention.items.map((f, i) => (
+              <div key={f.path} role="option" aria-selected={i === mention.index} className={i === mention.index ? 'active' : ''}
+                onMouseDown={(e) => { e.preventDefault(); pickMention(f); }}>
+                <Icon name={f.dir ? 'folder' : 'file'} size={14} />
+                <span className="cmd">{f.name}</span><span className="muted path">{f.path.replaceAll('\\', '/').split('/').slice(0, -1).join('/')}</span>
               </div>
             ))}
           </div>
@@ -349,8 +461,9 @@ const Composer = forwardRef(function Composer(props, ref) {
               ))}
             </div>
           ) : null}
-          <textarea id="input" ref={input} rows={1} spellCheck value={text} placeholder={placeholder} title="Enter senden · Shift+Enter neue Zeile · / Befehle · Ctrl+O Details"
-            onChange={(e) => { setText(e.target.value); setSlashIndex(0); }} onKeyDown={onKey} onPaste={onPaste} aria-label="Auftrag an ASK" />
+          <textarea id="input" ref={input} rows={1} spellCheck value={text} placeholder={placeholder} title="Enter senden · Shift+Enter neue Zeile · / Befehle · @ Datei · Shift+Tab Modus"
+            onChange={(e) => { setText(e.target.value); setSlashIndex(0); updateMention(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
+            onBlur={() => setMention(null)} onKeyDown={onKey} onPaste={onPaste} aria-label="Auftrag an ASK" />
           <div className="input-tools">
             <button type="button" id="attach-btn" className="chip icon-only" title="Dateien oder Bilder anhängen (auch mit Ctrl+V oder Hineinziehen)"
               aria-label="Anhängen" onClick={() => fileInput.current?.click()}><Icon name="clip" size={15} /></button>
@@ -361,6 +474,7 @@ const Composer = forwardRef(function Composer(props, ref) {
               <Icon name="globe" size={14} /> Web
             </button>
             <ThinkPicker level={state.thinking || 'standard'} onChange={setThinking} />
+            <ModePicker mode={mode} onChange={setMode} />
             <span className="spacer" />
             {context?.tokens > 0 ? (
               <span id="ctx" className={`ctx${ctxKnown && ctxPct >= 80 ? ' warn' : ''}`}

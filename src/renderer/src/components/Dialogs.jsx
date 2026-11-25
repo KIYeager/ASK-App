@@ -209,10 +209,10 @@ function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal }) {
           options={[['system', 'System'], ['hell', 'Hell'], ['dunkel', 'Dunkel']]} />
       </div>
       <div className="setting">
-        <div><div className="s-title">Rückfrage vor heiklen Schritten</div>
-          <div className="s-text">{{ aus: 'ASK fragt nie. Rückgängig bleibt möglich.', heikel: 'Vor dem Löschen, vor dem Überschreiben vorhandener Dateien und vor Befehlen mit Pfaden ausserhalb des Projekts.', alle: 'Zusätzlich vor jedem Befehl und jeder Änderung an vorhandenen Dateien.' }[state.approvals || 'heikel']}</div></div>
-        <Segmented name="Rückfrage" value={state.approvals || 'heikel'} onChange={(approvals) => api().setSettings({ approvals })}
-          options={[['aus', 'Nie'], ['heikel', 'Heikle Schritte'], ['alle', 'Immer']]} />
+        <div><div className="s-title">Modus «Nachfragen»</div>
+          <div className="s-text">{{ heikel: 'Fragt vor dem Löschen, vor dem Überschreiben und vor Pfaden ausserhalb des Projekts.', alle: 'Fragt zusätzlich vor jedem Befehl und jeder Änderung.' }[state.approvals === 'alle' ? 'alle' : 'heikel']}</div></div>
+        <Segmented name="Nachfragen" value={state.approvals === 'alle' ? 'alle' : 'heikel'} onChange={(approvals) => api().setSettings({ approvals })}
+          options={[['heikel', 'Heikle Schritte'], ['alle', 'Immer']]} />
       </div>
       <div className="setting">
         <div><div className="s-title">Frühere Chats</div><div className="s-text">ASK darf frühere Chats im selben Projekt durchsuchen und lesen (/chats).</div></div>
@@ -226,6 +226,11 @@ function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal }) {
       <div className="setting">
         <div><div className="s-title">GitHub</div><div className="s-text">Projekte von GitHub holen und hochladen.</div></div>
         <button type="button" className="btn" onClick={onGithub}><Icon name="github" size={15} /> GitHub …</button>
+      </div>
+      <div className="setting">
+        <div><div className="s-title">Benachrichtigungen</div><div className="s-text">Meldung von Windows, wenn ASK fertig ist oder etwas fragt und du woanders bist.</div></div>
+        <Segmented name="Benachrichtigungen" value={state.prefs?.notify === false ? 'aus' : 'an'} onChange={(v) => api().setPrefs({ notify: v === 'an' })}
+          options={[['aus', 'Aus'], ['an', 'An']]} />
       </div>
       <div className="setting">
         <div><div className="s-title">Ansicht</div><div className="s-text">Gedanken und alle Details zeigen (Ctrl+O), Aufgabenliste nach dem Auftrag einklappen.</div></div>

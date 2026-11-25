@@ -47,6 +47,46 @@ const QUESTION_TOOL = {
   },
 };
 
+// Planmodus (ENTSCHEIDE E52): Das Modell schaut sich nur um (lesen, suchen, Web) und legt dann mit
+// plan_vorlegen einen Plan vor. Der Auftrag endet dort; die Person setzt ihn um oder ändert ihn.
+const PLAN_TOOL = {
+  type: 'function',
+  function: {
+    name: 'plan_vorlegen',
+    description: 'Legt der Person den fertigen Plan vor und beendet den Auftrag. Nur im Planmodus.',
+    parameters: {
+      type: 'object',
+      properties: { plan: { type: 'string', description: 'Der Plan in Markdown: kurzer Titel, nummerierte Schritte, betroffene Dateien' } },
+      required: ['plan'],
+    },
+  },
+};
+// Werkzeuge, die im Planmodus erlaubt sind: nichts, was den Ordner oder etwas ausserhalb verändert
+const PLAN_ALLOWED = new Set(['read_file', 'list_files', 'find_files', 'search_text', 'view_file', 'web_search', 'web_fetch',
+  'chat_search', 'chat_read', 'github_status', 'update_tasks', 'frage_stellen', 'plan_vorlegen']);
+const PLAN_PROMPT = '\n\n# Planmodus\nDie Person will zuerst einen Plan sehen. Ändere nichts: keine Befehle, keine Dateien schreiben. '
+  + 'Sieh dir mit den Lese- und Suchwerkzeugen an, was du brauchst, frag bei Unklarem mit frage_stellen, '
+  + 'und lege dann mit plan_vorlegen einen kurzen, konkreten Plan vor (Schritte, betroffene Dateien). Danach hörst du auf.';
+
+// Verbindung zu ASK weg oder ASK kurz überlastet: so lange warten und nochmals versuchen (Sekunden)
+const RETRY_WAITS = [2, 5, 10, 20, 30];
+function retryable(err) {
+  if (!err || err.name === 'AbortError' || err.name === 'AuthError' || err.constructor?.name === 'AuthError') return false;
+  if (/fünf Minuten lang nichts/.test(err.message || '')) return false; // hing schon lange, die Person entscheidet
+  if (err.status) return [429, 502, 503, 504].includes(err.status);
+  return /net::|fetch failed|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket|network|terminated|other side closed/i.test(err.message || '');
+}
+
+// Wartet ms, bricht beim Stoppen ab
+function pause(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(Object.assign(new Error('abgebrochen'), { name: 'AbortError' })); return; }
+    const t = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(t); reject(Object.assign(new Error('abgebrochen'), { name: 'AbortError' })); };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 function goalPrompt(goal) {
   return `\n\nZiel dieses Chats (von der Person mit /goal gesetzt): ${goal.text}\n`
     + 'Arbeite selbständig und ohne Rückfragen weiter, bis das Ziel vollständig erreicht und geprüft ist. '
@@ -99,8 +139,20 @@ function textModePrompt(specs) {
 // Text einer Eingabe mit Anhängen: das Modell erfährt, wo die Dateien liegen.
 function userText(m) {
   const files = (m.attachments || []).map((a) => a.path);
-  if (!files.length) return m.content;
-  return `${m.content || 'Siehe Anhang.'}\n\n[Angehängt, liegt im Arbeitsordner: ${files.join(', ')}]`;
+  let text = m.content;
+  if (files.length) text = `${m.content || 'Siehe Anhang.'}\n\n[Angehängt, liegt im Arbeitsordner: ${files.join(', ')}]`;
+  if (m.mentions?.length) text += `\n\n[Mit @ erwähnt, liegt im Arbeitsordner: ${m.mentions.join(', ')}. Lies es, wenn du es brauchst.]`;
+  return text;
+}
+
+// @Datei im Eingabefeld (@pfad oder @"pfad mit Leerzeichen"): nur Pfade, die es im Ordner gibt
+function mentionsIn(text, exists) {
+  const out = [];
+  for (const m of String(text || '').matchAll(/(?:^|\s)@(?:"([^"\n]+)"|([^\s"]+))/g)) {
+    const rel = (m[1] || m[2]).replace(/[.,;:!?)]+$/, '');
+    if (rel && !out.includes(rel) && exists(rel)) out.push(rel);
+  }
+  return out.slice(0, 20);
 }
 
 // Verlauf für die Anfrage: ohne Denktexte, alte Ergebnisse gekürzt, im Textmodus ohne tool-Rollen
@@ -159,8 +211,10 @@ function apiMessages(system, messages, textMode = false, imageUrl = null, budget
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer, getMode, retryWaits }) {
     super();
+    this.getMode = getMode || (() => 'nachfragen'); // auto | nachfragen | plan (Eingabefeld)
+    this.retryWaits = retryWaits || RETRY_WAITS;
     this.getContextLimit = getContextLimit || (() => 0); // Kontextfenster des Modells in Token, 0: unbekannt
     this.onContextLimit = onContextLimit || (() => {}); // ASK hat die Grenze in einer Fehlermeldung genannt
     // Rückfrage vor heiklen Schritten (approvals.js): Stufe aus den Einstellungen, offene Fragen nach id
@@ -434,6 +488,8 @@ class Agent extends EventEmitter {
     if (!this.chat.title) this.chat.title = (text || attachments.map((a) => a.name).join(', ')).replace(/\s+/g, ' ').slice(0, 80);
     const message = { role: 'user', content: text, time: Date.now() };
     if (attachments.length) message.attachments = attachments;
+    const mentions = mentionsIn(text, (rel) => this.fileExists(rel));
+    if (mentions.length) message.mentions = mentions;
     this.push(message);
     this.event({ type: 'user', text, attachments });
     this.turnSources = { read: [], found: [] }; // web_fetch und web_search in diesem Auftrag
@@ -495,10 +551,12 @@ class Agent extends EventEmitter {
     const memory = !!this.getChatMemory();
     const flux = !!this.images?.available();
     const offered = (name) => (memory || !name.startsWith('chat_')) && (flux || name !== 'bild_erstellen');
-    const specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => offered(s.function.name)), QUESTION_TOOL, ...(goal ? [GOAL_TOOL] : [])];
+    const plan = this.getMode() === 'plan';
+    let specs = [...toolSpecs(this.getCommandHint(this.chat.id)).filter((s) => offered(s.function.name)), QUESTION_TOOL, ...(goal ? [GOAL_TOOL] : [])];
+    if (plan) specs = [...specs, PLAN_TOOL].filter((s) => PLAN_ALLOWED.has(s.function.name));
     let sentImages = false;
-    const request = () => {
-      const system = this.getSystemPrompt(this.chat.id) + (goal ? goalPrompt(goal) : '') + (this.textMode ? textModePrompt(specs) : '');
+    const attempt = () => {
+      const system = this.getSystemPrompt(this.chat.id) + (goal ? goalPrompt(goal) : '') + (plan ? PLAN_PROMPT : '') + (this.textMode ? textModePrompt(specs) : '');
       const imageUrl = this.canSee() ? this.getImageUrl : null;
       const messages = apiMessages(system, this.chat.messages, this.textMode, imageUrl, this.tightFor.has(this.chat.id) ? TIGHT : NORMAL);
       sentImages = messages.some((m) => Array.isArray(m.content));
@@ -512,6 +570,20 @@ class Agent extends EventEmitter {
         signal,
         onDelta: (kind, text) => this.event({ type: kind, text }),
       });
+    };
+    // Bricht die Verbindung ab, wartet die App und versucht es nochmals (die halbe Antwort verfällt)
+    const request = async () => {
+      for (let n = 0; ; n++) {
+        try {
+          return await attempt();
+        } catch (err) {
+          if (signal.aborted || n >= this.retryWaits.length || !retryable(err)) throw err;
+          const wait = this.retryWaits[n];
+          this.event({ type: 'retry', attempt: n + 1, of: this.retryWaits.length, wait,
+            text: `Verbindung zu ASK unterbrochen. Neuer Versuch in ${wait} s (${n + 1}/${this.retryWaits.length}).` });
+          await pause(wait * 1000, signal);
+        }
+      }
     };
     let completion;
     try {
@@ -580,6 +652,7 @@ class Agent extends EventEmitter {
 
     const seen = []; // Bilder aus view_file und browser, gehen danach als Nachricht an das Modell
     const canSee = this.canSee();
+    let planned = false;
     for (const call of toolCalls) {
       if (signal.aborted) {
         this.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: 'Von der Person abgebrochen.', ok: false, summary: 'abgebrochen', textMode });
@@ -587,8 +660,13 @@ class Agent extends EventEmitter {
       }
       const started = Date.now();
       this.event({ type: 'tool-start', id: call.id, name: call.function.name, ...this.describeCall(call) });
-      const verdict = await this.approve(call, signal);
-      const result = verdict !== 'yes'
+      const name = call.function.name;
+      const verdict = plan && !PLAN_ALLOWED.has(name) ? 'plan' : await this.approve(call, signal);
+      const result = verdict === 'plan'
+        ? { ok: false, summary: 'im Planmodus nicht erlaubt', output: 'Im Planmodus änderst du nichts. Lege mit plan_vorlegen einen Plan vor.' }
+        : name === 'plan_vorlegen'
+        ? this.proposePlan(call.function.arguments)
+        : verdict !== 'yes'
         ? { ok: false, summary: 'abgelehnt', output: signal.aborted ? 'Von der Person abgebrochen.'
           : 'Die Person hat diesen Schritt abgelehnt. Mach ohne ihn weiter oder frag kurz nach, was sie stattdessen möchte.' }
         : call.function.name === 'goal_done'
@@ -615,10 +693,12 @@ class Agent extends EventEmitter {
         try { this.madeThisTurn.add(normRel(JSON.parse(call.function.arguments || '{}').path)); } catch { /* ohne Pfad */ }
       }
       if (result.sources && this.turnSources) this.turnSources[call.function.name === 'web_fetch' ? 'read' : 'found'].push(...result.sources);
+      if (result.plan) planned = true;
       this.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: result.output, ok: result.ok,
-        summary: result.summary, display: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, textMode, ms: Date.now() - started });
+        summary: result.summary, display: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, textMode, ms: Date.now() - started,
+        ...(result.plan ? { plan: result.plan } : {}) });
       this.event({ type: 'tool-end', id: call.id, ok: result.ok, summary: result.summary,
-        output: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, ms: Date.now() - started });
+        output: clip(result.display ?? result.output, 6000), tasks: result.tasks, images, ms: Date.now() - started, plan: result.plan || null });
       if (canSee && images.length && result.view !== false) seen.push({ call: `${call.function.name}(${this.describeCall(call).detail})`, images });
     }
     if (seen.length && !signal.aborted) {
@@ -626,7 +706,16 @@ class Agent extends EventEmitter {
         content: `[Ansicht] Bilder zu ${seen.map((s) => s.call).join(', ')}`,
         attachments: seen.flatMap((s) => s.images).map((p) => ({ path: p, name: path.basename(p), image: true })) });
     }
-    return false;
+    return planned; // nach plan_vorlegen ist der Auftrag zu Ende, die Person entscheidet
+  }
+
+  // Werkzeug plan_vorlegen: Plan im Chat zeigen (Knöpfe «Umsetzen» und «Ändern» in der Oberfläche)
+  proposePlan(rawArgs) {
+    let text = '';
+    try { text = String(JSON.parse(rawArgs || '{}').plan || '').trim(); } catch { /* unten */ }
+    if (!text) return { ok: false, output: 'plan fehlt.', summary: 'ohne Plan' };
+    return { ok: true, plan: clip(text, 20000), summary: 'Plan vorgelegt',
+      output: 'Der Plan ist der Person vorgelegt. Hör jetzt auf und warte auf ihre Antwort.' };
   }
 
   // Rückfrage vor heiklen Schritten: 'yes' oder 'no'. Wartet auf die Antwort der Person im Chat
@@ -782,11 +871,16 @@ class Agent extends EventEmitter {
     const list = (title, files) => (files.length ? `${title}:\n${files.slice(0, 12).map((f) => `  ${f}`).join('\n')}${files.length > 12 ? `\n  … und ${files.length - 12} weitere` : ''}` : '');
     const detail = [list('Wird auf den alten Stand gesetzt', d.changed), list('Wird gelöscht (neu seit dem Auftrag)', d.added),
       list('Wird wiederhergestellt', d.removed)].filter(Boolean).join('\n\n');
-    if (!(await this.confirm('Ordner auf den Stand vor diesem Auftrag zurücksetzen?', `${detail}\n\nAuch spätere Änderungen an diesen Dateien gehen dabei verloren.`))) {
+    // Rückgängig bis zu einem früheren Schritt: Was spätere Aufträge geändert haben, geht mit
+    const later = this.chat.messages.slice(this.chat.messages.indexOf(message) + 1).filter((m) => m.role === 'user' && m.snapshot && !m.undone);
+    const warn = later.length ? `Auch die Änderungen ${later.length === 1 ? 'des Auftrags' : `der ${later.length} Aufträge`} danach gehen dabei verloren.`
+      : 'Auch spätere Änderungen an diesen Dateien gehen dabei verloren.';
+    if (!(await this.confirm('Ordner auf den Stand vor diesem Auftrag zurücksetzen?', `${detail}\n\n${warn}`))) {
       return { ok: false, cancelled: true };
     }
     const r = await snapshots.restore(id);
     message.undone = true;
+    for (const m of later) m.undone = true;
     const done = total - r.failed.length;
     const text = `Rückgängig gemacht: ${done} ${done === 1 ? 'Datei' : 'Dateien'} auf den Stand vor dem Auftrag gesetzt.`
       + (r.failed.length ? ` Nicht möglich (wohl geöffnet): ${r.failed.slice(0, 5).join(', ')}.` : '');
@@ -814,6 +908,10 @@ class Agent extends EventEmitter {
       const optionen = Array.isArray(args.optionen) ? args.optionen.map((o) => String(o).trim()).filter(Boolean).slice(0, 6) : [];
       return { label: 'Frage', detail: String(args.frage || ''), optionen };
     }
+    if (call.function.name === 'plan_vorlegen') {
+      const first = String(args.plan || '').split('\n').map((l) => l.replace(/^#+\s*/, '').trim()).find(Boolean) || '';
+      return { label: 'Plan', detail: clip(first, 120) };
+    }
     return describe(call.function.name, args);
   }
 
@@ -825,7 +923,7 @@ class Agent extends EventEmitter {
         return { role: 'assistant', content: m.content, reasoning: m.reasoning || '', stats: m.stats || null, sources: m.sources || [], time: m.time, stopped: !!m.stopped,
           calls: (m.tool_calls || []).map((c) => ({ id: c.id, name: c.function.name, ...this.describeCall(c) })) };
       }
-      if (m.role === 'tool') return { role: 'tool', id: m.tool_call_id, ok: m.ok !== false, summary: m.summary || '', output: m.display ?? m.content, tasks: m.tasks, images: m.images || [] };
+      if (m.role === 'tool') return { role: 'tool', id: m.tool_call_id, ok: m.ok !== false, summary: m.summary || '', output: m.display ?? m.content, tasks: m.tasks, images: m.images || [], plan: m.plan || null };
       if (m.note === 'undo') return { role: 'undo', text: m.summary };
       return { role: m.auto ? 'auto' : m.role, content: m.content, time: m.time, attachments: m.attachments || [],
         snapshot: m.snapshot || null, changes: m.changes || null, undone: !!m.undone };
@@ -833,4 +931,4 @@ class Agent extends EventEmitter {
   }
 }
 
-module.exports = { Agent, apiMessages, shortArgs, textModePrompt, loopReason, NEW, NORMAL, TIGHT, TOO_LONG };
+module.exports = { Agent, mentionsIn, apiMessages, shortArgs, textModePrompt, loopReason, NEW, NORMAL, TIGHT, TOO_LONG };

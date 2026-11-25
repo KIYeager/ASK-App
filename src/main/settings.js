@@ -17,7 +17,8 @@ const defaults = {
   model: '',
   webSearch: false,
   thinking: 'standard',
-  approvals: 'heikel', // Rückfrage vor heiklen Schritten: aus | heikel | alle (approvals.js)
+  approvals: 'heikel', // was «Nachfragen» abfragt: heikel | alle (approvals.js)
+  mode: 'auto', // Modus im Eingabefeld: auto | nachfragen | plan
   theme: 'system', // system | hell | dunkel
   betaUpdates: false,
 };

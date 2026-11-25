@@ -569,7 +569,8 @@ button.work-head:hover { background: var(--hover); }
 .app.verbose .msg.thought { display: block; }
 
 /* Aus dem zusammengeführten Stand: Update-Balken, Chat-Menü, Treffer im Inhalt, Kontext, Bearbeiten */
-.app { grid-template-rows: 46px auto 1fr; }
+.app { grid-template-rows: 46px minmax(0, 1fr); }
+.app:has(> .update-bar) { grid-template-rows: 46px auto minmax(0, 1fr); }
 .update-bar { display: flex; align-items: center; gap: 10px; padding: 7px 14px; background: var(--acc-soft); color: var(--acc-text); font-size: 13px; border-bottom: 1px solid var(--acc-line); min-width: 0; }
 .update-track { width: 140px; height: 5px; border-radius: 3px; background: var(--acc-line); overflow: hidden; flex: none; }
 .update-track span { display: block; height: 100%; background: var(--acc); }
@@ -638,3 +639,34 @@ button.work-head:hover { background: var(--hover); }
 .peek-head b { flex: 1; font-weight: 600; }
 .peek-img { max-height: 120px; max-width: 100%; object-fit: contain; border-radius: 6px; background: #fff; align-self: center; }
 .peek-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---------- Modus im Eingabefeld (Auto, Nachfragen, Plan) ---------- */
+.mode-wrap { position: relative; }
+.mode-chip.mode-plan { color: var(--acc-text); border-color: var(--acc-line); background: var(--acc-soft); }
+.mode-chip.mode-nachfragen { color: var(--text); }
+.mode-pop { position: absolute; bottom: calc(100% + 8px); left: 0; width: 272px; padding: 5px; display: flex; flex-direction: column; }
+.mode-opt { width: 100%; border: 0; background: none; display: grid; grid-template-columns: 18px minmax(0, 1fr) 16px; gap: 10px; align-items: start; text-align: left; padding: 8px 9px; border-radius: 8px; color: var(--muted); }
+.mode-opt:hover { background: var(--hover); color: var(--text); }
+.mode-opt.on { color: var(--text); }
+.mode-opt .icon { margin-top: 1px; }
+.mode-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.mode-txt .muted { font-size: 12px; line-height: 1.35; }
+.mode-name { font-weight: 600; font-size: 13px; }
+.mode-check { color: var(--acc-text); }
+.mode-foot { font-size: 11.5px; padding: 5px 9px 3px; border-top: 1px solid var(--line); margin-top: 3px; }
+
+/* @Datei-Vorschläge */
+.mention-pop > div { display: flex; align-items: center; gap: 8px; }
+.mention-pop .icon { color: var(--muted); flex: none; }
+.mention-pop .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-size: 12px; }
+
+/* Plan aus dem Planmodus */
+.msg.plan { border: 1px solid var(--acc-line); border-radius: 12px; padding: 12px 15px 13px; background: var(--pane); }
+.msg.plan .plan-head { display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--acc-text); }
+.msg.plan .plan-body { margin-top: 6px; }
+.msg.plan .plan-body > :first-child { margin-top: 0; }
+.msg.plan .btns { display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+/* Rückgängig bei früheren Aufträgen: erst beim Darüberfahren */
+.msg.changes:not(.latest) .undo-btn { opacity: 0; transition: opacity .12s; }
+.msg.changes:not(.latest):hover .undo-btn, .msg.changes:not(.latest) .undo-btn:focus-visible { opacity: 1; }

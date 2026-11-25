@@ -232,9 +232,11 @@ function Changes({ entry, ctx }) {
   if (removed) parts.push(`${removed} gelöscht`);
   const names = [...c.added, ...c.changed, ...c.removed];
   const title = [...c.changed.map((f) => `geändert: ${f}`), ...c.added.map((f) => `neu: ${f}`), ...c.removed.map((f) => `gelöscht: ${f}`)].join('\n');
-  const canUndo = ctx.undoSnapshot === entry.snapshot && !ctx.running;
+  // Rückgängig geht bei jedem Auftrag mit Sicherung; bei früheren setzt es auch alles danach zurück
+  const latest = ctx.undoSnapshot === entry.snapshot;
+  const canUndo = !entry.undone && !!entry.snapshot && !ctx.running;
   return (
-    <div className={`msg changes${entry.undone ? ' undone' : ''}`} title={title}>
+    <div className={`msg changes${entry.undone ? ' undone' : ''}${latest ? ' latest' : ''}`} title={title}>
       <Icon name="file" size={14} />
       <span className="sum">Dateien: {parts.join(', ')}</span>
       <span className="names">
@@ -242,7 +244,7 @@ function Changes({ entry, ctx }) {
         {names.length > 3 ? ` und ${names.length - 3} weitere` : ''}
       </span>
       {entry.undone ? <span className="muted undone-label">rückgängig gemacht</span> : null}
-      <button type="button" className="undo-btn ghost-btn" hidden={!canUndo} title="Ordner auf den Stand vor diesem Auftrag zurücksetzen"
+      <button type="button" className="undo-btn ghost-btn" hidden={!canUndo} title={latest ? 'Ordner auf den Stand vor diesem Auftrag zurücksetzen' : 'Ordner auf den Stand vor diesem Auftrag zurücksetzen, mit allem danach'}
         onClick={() => ctx.undo(entry.snapshot)}>
         <Icon name="undo" size={14} /> Rückgängig
       </button>
@@ -328,6 +330,23 @@ function Question({ entry, ctx }) {
   );
 }
 
+// Plan aus dem Planmodus: lesen, dann umsetzen (wechselt auf Auto) oder im Eingabefeld ändern lassen
+function Plan({ entry, ctx }) {
+  const isLast = ctx.lastPlanKey === entry.key;
+  return (
+    <div className="msg plan" role="group" aria-label="Plan">
+      <div className="plan-head"><Icon name="map" size={15} /> <span>Plan</span></div>
+      <div className="plan-body"><Markdown text={entry.plan} isFile={ctx.isFile} onFile={ctx.openFileByName} onLink={ctx.openLink} onCopy={ctx.copy} /></div>
+      {isLast && !ctx.running ? (
+        <div className="btns">
+          <button type="button" className="btn primary" onClick={() => ctx.implementPlan()}>Umsetzen</button>
+          <button type="button" className="btn" onClick={() => ctx.revisePlan()}>Ändern</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function After({ entry, ctx }) {
   switch (entry.k) {
     case 'sources': return <Sources entry={entry} ctx={ctx} />;
@@ -335,8 +354,8 @@ function After({ entry, ctx }) {
     case 'stats': return <Stats entry={entry} />;
     case 'approval': return <Approval entry={entry} ctx={ctx} />;
     case 'error': return <div className="msg error"><Icon name="alert" size={14} /> <span>{entry.text}</span></div>;
-    case 'notice': return <div className="msg notice"><Icon name={entry.icon === 'undo' ? 'undo' : 'chevRight'} size={13} /> <span>{entry.text}</span></div>;
-    case 'tool': return entry.question ? <Question entry={entry} ctx={ctx} /> : <ToolRow entry={entry} ctx={ctx} />;
+    case 'notice': return <div className={`msg notice${entry.retry ? ' retry' : ''}`}><Icon name={entry.icon || 'chevRight'} size={13} /> <span>{entry.text}</span></div>;
+    case 'tool': return entry.plan ? <Plan entry={entry} ctx={ctx} /> : entry.question ? <Question entry={entry} ctx={ctx} /> : <ToolRow entry={entry} ctx={ctx} />;
     default: return null;
   }
 }

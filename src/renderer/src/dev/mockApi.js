@@ -16,7 +16,7 @@ let state = {
   askUrl: 'https://ask.ict-tfbern.ch', folder: FOLDER, recent: [FOLDER], warningAccepted: true, sidebarOpen: true, chatbarOpen: true,
   terminal: { state: 'läuft', folder: FOLDER, lowIntegrity: true }, ask: { state: 'angemeldet', user: 'Lea Muster' },
   models: [{ id: 'qwen3-coder', name: 'Qwen3 Coder' }, { id: 'gpt-oss', name: 'GPT-OSS 120B' }], model: 'qwen3-coder',
-  webSearch: false, chatMemory: false, thinking: 'mittel', webSearchAvailable: true, approvals: 'heikel', theme: 'system',
+  webSearch: false, chatMemory: false, thinking: 'mittel', webSearchAvailable: true, approvals: 'heikel', mode: 'auto', theme: 'system',
   version: '0.2.3', update: { state: params.get('update') || 'verfügbar', current: '0.2.3', version: '0.2.4', percent: 42, countdown: 7, beta: false, enabled: true, portable: false, postponed: false },
   prefs: { verbose: false, todoCollapsed: true },
   chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null, pinned: false, context: { tokens: 18400, estimated: false, limit: 131072 } },
@@ -72,6 +72,7 @@ async function demoRun(text) {
   push();
   ev({ type: 'user', text, attachments: [] });
   await wait(400);
+  if (state.mode === 'plan') { await demoPlan(ev); return; }
   ev({ type: 'assistant-start' });
   for (const w of 'Ich räume den Ordner auf. '.split(' ')) { ev({ type: 'reasoning', text: `${w} ` }); await wait(40); }
   ev({ type: 'assistant-end', content: '', stats: stats(90), calls: [] });
@@ -96,6 +97,22 @@ async function demoRun(text) {
   state = { ...state, chat: { ...state.chat, running: false } };
   push();
   emit('chat:changed', state.chat);
+}
+// Planmodus: umsehen, dann Plan vorlegen
+async function demoPlan(ev) {
+  ev({ type: 'assistant-start' });
+  ev({ type: 'assistant-end', content: '', stats: stats(40), calls: [] });
+  ev({ type: 'tool-start', id: 'r1', name: 'list_files', label: 'Ordner', detail: '.' });
+  await wait(200);
+  ev({ type: 'tool-end', id: 'r1', ok: true, summary: '6 Einträge', output: '' });
+  ev({ type: 'retry', text: 'Verbindung zu ASK unterbrochen. Neuer Versuch in 2 s (1/5).' });
+  await wait(300);
+  ev({ type: 'tool-start', id: 'p1', name: 'plan_vorlegen', label: 'Plan', detail: 'Auswertung als Excel' });
+  ev({ type: 'tool-end', id: 'p1', ok: true, summary: 'Plan vorgelegt', output: '',
+    plan: '**Auswertung als Excel**\n\n1. `umfrage.csv` einlesen und prüfen\n2. Summen pro Kategorie berechnen\n3. `auswertung.xlsx` mit Tabelle und Diagramm anlegen\n4. Kurz zusammenfassen, was auffällt' });
+  ev({ type: 'done' });
+  state = { ...state, chat: { ...state.chat, running: false } };
+  push();
 }
 let pendingAnswer = null;
 let pendingApproval = null;
