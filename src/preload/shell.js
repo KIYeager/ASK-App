@@ -102,7 +102,7 @@ contextBridge.exposeInMainWorld('ask', {
   files: () => ipcRenderer.invoke('workspace:files'),
   preview: (rel) => ipcRenderer.invoke('file:preview', rel),
   openFile: (rel) => ipcRenderer.invoke('file:open', rel),
-  toPdf: (rel) => ipcRenderer.invoke('file:pdf', rel),
+  toPdf: (rel, preview) => ipcRenderer.invoke('file:pdf', rel, !!preview),
   showFile: (rel) => ipcRenderer.invoke('file:show', rel),
   updateAction: () => ipcRenderer.invoke('update:action'),
   updateLater: () => ipcRenderer.invoke('update:later'),

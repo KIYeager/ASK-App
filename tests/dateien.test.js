@@ -40,3 +40,26 @@ test('Hineinziehen kopiert in den gewählten Ordner und überschreibt nie', () =
   assert.deepStrictEqual(w.import('', [{ name: '..\\..\\boese.bat', data: [] }]), ['boese.bat']);
   assert.throws(() => w.import('..', [{ name: 'x.txt', data: [] }]));
 });
+
+test('Office: Vorschau nimmt ein aktuelles PDF ohne neue Umwandlung; ohne Windows kein Office', async () => {
+  const fsx = require('node:fs');
+  const osx = require('node:os');
+  const px = require('node:path');
+  const { convertToPdf, officeInstalled, pdfTarget } = require('../src/main/office');
+  const root = fsx.mkdtempSync(px.join(osx.tmpdir(), 'ask-office-'));
+  try {
+    const source = px.join(root, 'Bericht.docx');
+    fsx.writeFileSync(source, 'x');
+    const target = pdfTarget(root, source);
+    assert.strictEqual(target, px.join(root, '.ask', 'pdf', 'Bericht.pdf'));
+    fsx.mkdirSync(px.dirname(target), { recursive: true });
+    fsx.writeFileSync(target, '%PDF');
+    const res = await convertToPdf(root, source, { fresh: true });
+    assert.deepStrictEqual(res, { ok: true, target, cached: true });
+    assert.strictEqual(await officeInstalled('.docx', { platform: 'linux' }), false);
+    assert.strictEqual(await officeInstalled('.txt', { platform: 'win32' }), false);
+    assert.strictEqual(await officeInstalled('.xlsx', { platform: 'win32', run: async () => true }), true);
+  } finally {
+    fsx.rmSync(root, { recursive: true, force: true });
+  }
+});

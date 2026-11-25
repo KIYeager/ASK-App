@@ -11,7 +11,7 @@ const { AskSession, THINKING_LEVELS, sameOrigin } = require('./askapi');
 const { Agent, NEW } = require('./agent');
 const { Workspace } = require('./workspace');
 const { AppWindow, BROWSER_PARTITION } = require('./window');
-const { convertToPdf } = require('./office');
+const { convertToPdf, officeInstalled } = require('./office');
 const { cleanupOldVersions, isPortable } = require('./portable');
 const { Updater } = require('./updater');
 const { GitHub } = require('./github');
@@ -719,10 +719,10 @@ function setupIpc() {
   ipcMain.handle('update:action', () => updater.action());
   ipcMain.handle('update:later', () => updater.postpone());
   ipcMain.handle('update:beta', (_e, on, tell) => setBeta(on, !!tell));
-  ipcMain.handle('file:pdf', async (_e, rel) => {
+  ipcMain.handle('file:pdf', async (_e, rel, preview) => {
     const source = workspace.resolve(rel);
     if (!source) return { fehler: 'Datei nicht gefunden.' };
-    const res = await convertToPdf(workspace.root, source);
+    const res = await convertToPdf(workspace.root, source, { fresh: !!preview });
     return res.ok ? { ok: true, path: path.relative(workspace.root, res.target) } : res;
   });
   ipcMain.handle('state:get', () => state());
@@ -1000,7 +1000,7 @@ function setupIpc() {
     if (/^https?:\/\//i.test(String(url))) shell.openExternal(String(url));
   });
   ipcMain.handle('workspace:files', () => workspace.files());
-  ipcMain.handle('file:preview', (_e, rel) => {
+  ipcMain.handle('file:preview', async (_e, rel) => {
     const full = workspace.resolve(rel);
     if (!full) return { kind: 'missing' };
     const ext = path.extname(full).toLowerCase();
@@ -1008,7 +1008,8 @@ function setupIpc() {
     const { size, mtimeMs } = fs.statSync(full);
     if (IMAGE_EXT.has(ext)) return { kind: 'image', url: `${url}?v=${Math.round(mtimeMs)}` }; // neue Fassung, nicht die zwischengespeicherte
     if (ext === '.pdf') return { kind: 'pdf', url };
-    if (OFFICE_EXT.has(ext)) return { kind: 'office', name: path.basename(full) };
+    // Mit installiertem Office zeigt die Vorschau ein PDF der Datei, ohne Klick auf «Als PDF anzeigen»
+    if (OFFICE_EXT.has(ext)) return { kind: 'office', name: path.basename(full), auto: await officeInstalled(ext) };
     if (TEXT_EXT.has(ext) || size < 200000) {
       const buf = readStart(full, 200000); // nur den Anfang lesen, auch bei sehr grossen Dateien
       if (!buf.includes(0)) return { kind: 'text', text: buf.toString('utf8'), truncated: size > 200000 };
