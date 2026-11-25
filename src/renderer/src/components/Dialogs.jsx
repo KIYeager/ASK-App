@@ -3,6 +3,7 @@ import Icon from './Icon.jsx';
 import { api } from '../api.js';
 import { baseName } from '../lib/format.js';
 import { PreviewBody } from './RightPanel.jsx';
+import { MemoryDialog, SkillsDialog } from './Knowledge.jsx';
 
 function Dialog({ id, title, wide, full, children, actions, onClose }) {
   return (
@@ -199,7 +200,7 @@ function Segmented({ value, options, onChange, name }) {
   );
 }
 
-function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal }) {
+function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal, onMemory, onSkills }) {
   const u = state.update || {};
   return (
     <Dialog id="dlg-settings" title="Einstellungen" onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Fertig</button>}>
@@ -218,6 +219,17 @@ function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal }) {
         <div><div className="s-title">Frühere Chats</div><div className="s-text">ASK darf frühere Chats im selben Projekt durchsuchen und lesen (/chats).</div></div>
         <Segmented name="Frühere Chats" value={state.chatMemory ? 'an' : 'aus'} onChange={(v) => api().setChatMemory(v === 'an')}
           options={[['aus', 'Aus'], ['an', 'An']]} />
+      </div>
+      <div className="setting">
+        <div><div className="s-title">Gedächtnis</div><div className="s-text">ASK merkt sich Vorlieben, Kenntnisse und Projektwissen für alle Chats, nur auf diesem Laptop (/gedaechtnis).</div></div>
+        <div className="setting-ctl">
+          <Segmented name="Gedächtnis" value={state.memory !== false ? 'an' : 'aus'} onChange={(v) => api().setMemoryEnabled(v === 'an')} options={[['aus', 'Aus'], ['an', 'An']]} />
+          <button type="button" id="settings-memory" className="btn small" onClick={onMemory}>Ansehen …</button>
+        </div>
+      </div>
+      <div className="setting">
+        <div><div className="s-title">Skills</div><div className="s-text">Eigene Anleitungen für wiederkehrende Aufträge, aufrufen mit /name (/skills).</div></div>
+        <button type="button" id="settings-skills" className="btn" onClick={onSkills}>Skills …</button>
       </div>
       <div className="setting">
         <div><div className="s-title">ASK-Konto</div><div className="s-text">{state.ask?.state === 'angemeldet' ? `Angemeldet als ${state.ask.user || '(unbekannt)'} · ${state.askUrl}` : 'Nicht angemeldet'}</div></div>
@@ -282,7 +294,9 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
       {name === 'terminal' ? <TerminalDialog state={state} text={dialog.text} onClose={close} /> : null}
       {name === 'github' ? <GithubDialog onClose={close} /> : null}
       {name === 'settings' ? <SettingsDialog state={state} onClose={close} onGithub={() => setDialog({ name: 'github' })} onVerbose={onVerbose}
-        onTerminal={() => setDialog({ name: 'terminal' })} /> : null}
+        onTerminal={() => setDialog({ name: 'terminal' })} onMemory={() => setDialog({ name: 'memory' })} onSkills={() => setDialog({ name: 'skills' })} /> : null}
+      {name === 'memory' ? <MemoryDialog state={state} onClose={close} /> : null}
+      {name === 'skills' ? <SkillsDialog onClose={close} /> : null}
       {name === 'preview' ? <BigPreview entry={selected} onClose={close} /> : null}
     </div>
   );

@@ -16,7 +16,7 @@ let state = {
   askUrl: 'https://ask.ict-tfbern.ch', folder: FOLDER, recent: [FOLDER], warningAccepted: true, sidebarOpen: true, chatbarOpen: true,
   terminal: { state: 'läuft', folder: FOLDER, lowIntegrity: true }, ask: { state: 'angemeldet', user: 'Lea Muster' },
   models: [{ id: 'qwen3-coder', name: 'Qwen3 Coder' }, { id: 'gpt-oss', name: 'GPT-OSS 120B' }], model: 'qwen3-coder',
-  webSearch: false, chatMemory: false, thinking: 'mittel', webSearchAvailable: true, approvals: 'heikel', theme: 'system',
+  webSearch: false, chatMemory: false, memory: true, thinking: 'mittel', webSearchAvailable: true, approvals: 'heikel', theme: 'system',
   version: '0.2.3', update: { state: params.get('update') || 'verfügbar', current: '0.2.3', version: '0.2.4', percent: 42, countdown: 7, beta: false, enabled: true, portable: false, postponed: false },
   prefs: { verbose: false, todoCollapsed: true },
   chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null, pinned: false, context: { tokens: 18400, estimated: false, limit: 131072 } },
@@ -97,6 +97,55 @@ async function demoRun(text) {
   push();
   emit('chat:changed', state.chat);
 }
+// Gedächtnis und Skills (src/main/knowledge.js): Beispieldaten, ?gedaechtnis=leer zeigt den leeren Zustand
+const M293 = 'C:\\Users\\lernende\\ASK-Projekte\\Modul 293';
+const JOURNAL = 'C:\\Users\\lernende\\ASK-Projekte\\Lernjournal';
+const day = 86400000;
+const mem = (id, text, tags, project = null, ago = 1, extra = {}) => ({ id, text, tags, scope: project ? 'projekt' : 'konto', project, chat: 'c1', chatTitle: 'Ausgaben auswerten',
+  chatFolder: project || FOLDER, source: 'auto', created: now - ago * day, updated: now - ago * day, ...extra });
+let memoryItems = params.get('gedaechtnis') === 'leer' ? [] : [
+  mem('m1', 'Lernt Informatik im zweiten Lehrjahr an der TF Bern.', ['ausbildung', 'tf bern'], null, 20, { source: 'hand' }),
+  mem('m2', 'Mag kurze Antworten in Stichworten.', ['stil', 'antworten'], null, 2, { source: 'merken' }),
+  mem('m3', 'Kennt Python gut, JavaScript erst wenig.', ['python', 'javascript', 'kenntnisse'], null, 6),
+  mem('m4', 'Möchte Erklärungen mit einem kurzen Beispiel.', ['stil', 'lernen'], null, 4),
+  mem('m5', 'Arbeitet mit Windows 11 und VS Code.', ['werkzeuge'], null, 9),
+  mem('m6', 'Bereitet sich auf die Modulprüfung 293 im Januar vor.', ['ziele', 'prüfung'], null, 3),
+  mem('m7', 'Beträge immer in CHF mit zwei Nachkommastellen.', ['budget', 'format'], FOLDER, 1),
+  mem('m8', 'Kategorien stehen in daten/kategorien.txt.', ['budget', 'dateien'], FOLDER, 1),
+  mem('m9', 'Diagramme als Balken, nicht als Kuchen.', ['diagramme', 'stil'], FOLDER, 0.2),
+  mem('m10', 'Webauftritt ohne Framework, nur HTML, CSS und JavaScript.', ['javascript', 'web'], M293, 5),
+  mem('m11', 'Farben aus dem CD der TF Bern verwenden.', ['web', 'design'], M293, 5),
+  mem('m12', 'Startseite heisst index.html, Bilder liegen in img/.', ['web', 'dateien'], M293, 7),
+  mem('m13', 'Wochenberichte nach der Vorlage der Schule, eine Seite.', ['berichte', 'format'], JOURNAL, 8),
+];
+let skillItems = [
+  { slug: 'wochenbericht', description: 'Wochenbericht für das Lernjournal nach der Vorlage der Schule schreiben', body: '1. Lies die Notizen der Woche in notizen/.\n2. Schreib den Bericht nach vorlage.docx, höchstens eine Seite.\n3. Speichere ihn als berichte/KW<Nummer>.docx.', updated: now - 3 * day, size: 420 },
+  { slug: 'code-erklaeren', description: 'Code Zeile für Zeile erklären, mit einem kleinen Beispiel am Schluss', body: 'Erkläre den Code in kurzen Abschnitten. Keine Fachbegriffe ohne Erklärung.', updated: now - 10 * day, size: 210 },
+  { slug: 'quellen-pruefen', description: 'Angaben aus dem Internet mit zwei unabhängigen Quellen prüfen', body: 'Suche mit web_search, lies zwei Quellen, nenne beide.', updated: now - 12 * day, size: 160 },
+];
+const memoryApi = {
+  memoryList: async () => ({ enabled: state.memory !== false, items: [...memoryItems].sort((a, b) => b.updated - a.updated), projects: projects.map(({ folder, name, color }) => ({ folder, name, color })) }),
+  memoryAdd: async (v) => { const item = { id: `m${Date.now()}`, text: v.text, tags: (v.tags || []).map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 3), scope: v.scope, project: v.project, chat: null, source: 'hand', created: Date.now(), updated: Date.now() }; memoryItems = [item, ...memoryItems]; return { ok: true, item }; },
+  memoryUpdate: async (id, v) => { const i = memoryItems.find((x) => x.id === id); Object.assign(i, { text: v.text, tags: (v.tags || []).map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 3), scope: v.scope, project: v.project, updated: Date.now() }); return { ok: true, item: i }; },
+  memoryRemove: async (id) => { memoryItems = memoryItems.filter((x) => x.id !== id); return true; },
+  memoryClear: async () => { if (!window.confirm('Alles vergessen?')) return false; memoryItems = []; return true; },
+  setMemoryEnabled: async (on) => { state = { ...state, memory: !!on }; push(); },
+  onMemoryChanged: on('memory:changed'),
+  skillsList: async () => skillItems.map(({ slug, description, updated, size }) => ({ slug, name: slug, description, updated, size })),
+  skillsGet: async (slug) => { const s = skillItems.find((x) => x.slug === slug); return s ? { ...s, name: s.slug } : null; },
+  skillsSave: async (v, previous) => {
+    const slug = String(v.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!slug) return { ok: false, reason: 'Der Name fehlt.' };
+    const skill = { slug, name: slug, description: v.description, body: v.body, updated: Date.now(), size: v.body.length };
+    skillItems = [...skillItems.filter((s) => s.slug !== slug && s.slug !== previous), skill].sort((a, b) => a.slug.localeCompare(b.slug));
+    emit('memory:changed', {});
+    return { ok: true, skill };
+  },
+  skillsRemove: async (slug) => { if (!window.confirm(`Skill «${slug}» löschen?`)) return false; skillItems = skillItems.filter((s) => s.slug !== slug); emit('memory:changed', {}); return true; },
+  skillsExport: async () => ({ ok: false, reason: 'Exportieren geht nur in der App.' }),
+  skillsImport: async () => ({ ok: false, reason: 'Importieren geht nur in der App.' }),
+};
+
 let pendingAnswer = null;
 let pendingApproval = null;
 
@@ -138,5 +187,6 @@ export function install() {
     files: async () => files, tasks: async () => null,
     preview: async (rel) => (/\.(csv|py|txt)$/.test(rel) ? { kind: 'text', text: rel.endsWith('.csv') ? 'Datum;Kategorie;Beschreibung;Betrag CHF\n02.08.2026;Bücher;Fachbuch Netzwerktechnik;32.75\n02.08.2026;Verpflegung;Mittagessen Mensa;15.85' : 'import pandas as pd\n\ndf = pd.read_csv("ausgaben.csv", sep=";", encoding="cp1252")\nsummen = df.groupby("Kategorie")["Betrag CHF"].sum()' } : { kind: 'office', name: rel }),
     openFile: async () => '', toPdf: async () => ({ fehler: 'Nur in der App.' }), showFile: async () => {},
+    ...memoryApi,
   };
 }
