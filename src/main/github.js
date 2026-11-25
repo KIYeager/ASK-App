@@ -9,6 +9,8 @@
 // was hier, was auf GitHub und was an beiden Orten geändert wurde; Dateien mit Änderungen an
 // beiden Orten werden nie stillschweigend überschrieben, weder hier noch auf GitHub.
 // Was in .gitignore steht, wird nicht hochgeladen (ausser es liegt schon auf GitHub, wie bei git).
+// Branches und Pull Requests ebenfalls über die API: Branch anlegen ist ein neuer Ref, wechseln ein
+// Holen vom anderen Branch (nur ohne Änderungen hier, ENTSCHEIDE E47).
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -114,10 +116,19 @@ function parseRepo(text) {
 
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 
+// Branch-Namen, die in Adressen der API und in der gespeicherten Verbindung gehen dürfen (Regeln von git, enger)
+function validBranch(name) {
+  return typeof name === 'string' && /^[\w./-]{1,200}$/.test(name) && !name.includes('..') && !name.includes('//')
+    && !/^[-./]/.test(name) && !/[./]$/.test(name) && !/\.lock(\/|$)/i.test(name) && !name.includes('/.') && name !== 'HEAD';
+}
+
+// Branch in einer Adresse der API: Schrägstriche bleiben (heads/feature/x), der Rest wird kodiert
+const refPath = (branch) => branch.split('/').map(encodeURIComponent).join('/');
+
 // Gespeicherte Verbindung prüfen: Repository und Branch gehen in Adressen der GitHub-API, die Pfade in Dateinamen.
 function validLink(link) {
   if (!link || typeof link !== 'object' || typeof link.repo !== 'string' || !REPO.test(link.repo) || link.repo.split('/').some((part) => /^\.+$/.test(part))) return false;
-  if (typeof link.branch !== 'string' || !/^[\w./-]{1,200}$/.test(link.branch) || link.branch.includes('..')) return false;
+  if (!validBranch(link.branch)) return false;
   if (link.commit !== null && !SHA1.test(String(link.commit))) return false;
   const files = link.files;
   if (!files || typeof files !== 'object' || Array.isArray(files)) return false;
@@ -134,6 +145,27 @@ class GitHub {
     this.store = store;
     this.fetch = fetchImpl;
     this.login = '';
+    this.busy = new Set(); // Ordner, in denen der Bereich «GitHub» gerade abgleicht (main.js)
+  }
+
+  // Ein Abgleich aus dem Bereich «GitHub» zur Zeit pro Ordner; das Modell wartet so lange (tools.js)
+  static key(root) {
+    return path.resolve(root).toLowerCase();
+  }
+
+  locked(root) {
+    return this.busy.has(GitHub.key(root));
+  }
+
+  async exclusive(root, fn) {
+    const key = GitHub.key(root);
+    if (this.busy.has(key)) throw new Error('Ein Abgleich mit GitHub läuft schon.');
+    this.busy.add(key);
+    try {
+      return await fn();
+    } finally {
+      this.busy.delete(key);
+    }
   }
 
   connected() {
@@ -153,7 +185,9 @@ class GitHub {
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch { /* kein JSON */ }
     if (!res.ok) {
-      const message = data?.message || text.slice(0, 200) || `HTTP ${res.status}`;
+      // Bei 422 steht der Grund oft erst in errors (z. B. «A pull request already exists»)
+      const detail = Array.isArray(data?.errors) ? data.errors.map((e) => e?.message).filter(Boolean).join('; ') : '';
+      const message = [data?.message, detail].filter(Boolean).join(': ') || text.slice(0, 200) || `HTTP ${res.status}`;
       if (res.status === 401) throw new Error('GitHub lehnt das Token ab (abgelaufen oder ungültig). Mit /github neu verbinden.');
       throw Object.assign(new Error(`GitHub: ${message}`), { status: res.status });
     }
@@ -207,7 +241,7 @@ class GitHub {
   async remote(link) {
     let head;
     try {
-      head = (await this.request('GET', `/repos/${link.repo}/git/ref/heads/${encodeURIComponent(link.branch)}`)).object.sha;
+      head = (await this.request('GET', `/repos/${link.repo}/git/ref/heads/${refPath(link.branch)}`)).object.sha;
     } catch (err) {
       if (err.status === 404 || err.status === 409) return { commit: null, files: {}, modes: {}, others: [] };
       throw err;
@@ -364,9 +398,96 @@ class GitHub {
     }
     const newTree = await this.request('POST', `/repos/${link.repo}/git/trees`, { tree });
     const commit = await this.request('POST', `/repos/${link.repo}/git/commits`, { message: message || 'Änderungen aus ASK', tree: newTree.sha, parents: [base.commit] });
-    await this.request('PATCH', `/repos/${link.repo}/git/refs/heads/${encodeURIComponent(link.branch)}`, { sha: commit.sha });
+    await this.request('PATCH', `/repos/${link.repo}/git/refs/heads/${refPath(link.branch)}`, { sha: commit.sha });
     this.writeLink(root, { ...link, commit: commit.sha, files: Object.fromEntries(local) });
     return { commit: commit.sha, uploaded, deleted, url: `${this.url(link)}/commit/${commit.sha}` };
+  }
+
+  // ---------- Branches ----------
+
+  linked(root) {
+    const link = this.readLink(root);
+    if (!link) throw new Error('Der Ordner ist mit keinem GitHub-Repository verbunden (github_clone oder github_create).');
+    return link;
+  }
+
+  // Branches des Repositorys (bis 100), dazu der Standard-Branch und der des Ordners
+  async branches(root) {
+    const link = this.linked(root);
+    const [info, list] = await Promise.all([
+      this.request('GET', `/repos/${link.repo}`),
+      this.request('GET', `/repos/${link.repo}/branches?per_page=100`),
+    ]);
+    const names = (Array.isArray(list) ? list : []).map((b) => String(b?.name || '')).filter(Boolean);
+    if (!names.includes(link.branch)) names.push(link.branch); // noch nie hochgeladen (leeres Repository)
+    const def = info?.default_branch || 'main';
+    names.sort((a, b) => (a === def ? -1 : b === def ? 1 : a.localeCompare(b, 'de', { numeric: true })));
+    return { current: link.branch, default: def, branches: names, url: this.url(link) };
+  }
+
+  // Neuer Branch auf dem Stand des letzten Abgleichs, danach ist der Ordner mit ihm verbunden. Änderungen
+  // hier bleiben liegen und gehen beim nächsten Hochladen auf den neuen Branch.
+  async createBranch(root, name) {
+    const link = this.linked(root);
+    const branch = String(name || '').trim();
+    if (!validBranch(branch)) throw new Error(`«${branch}» geht nicht als Branch-Name. Erlaubt sind Buchstaben, Ziffern, - _ . und /, z. B. «neue-startseite».`);
+    if (branch === link.branch) throw new Error(`Der Ordner ist schon mit dem Branch ${branch} verbunden.`);
+    if (!link.commit) throw new Error('Auf GitHub gibt es noch keinen Stand, von dem ein Branch abzweigen kann. Zuerst hochladen.');
+    try {
+      await this.request('POST', `/repos/${link.repo}/git/refs`, { ref: `refs/heads/${branch}`, sha: link.commit });
+    } catch (err) {
+      if (err.status === 422) throw new Error(`Den Branch ${branch} gibt es auf GitHub schon. Mit «wechseln» zu ihm wechseln.`);
+      throw err;
+    }
+    this.writeLink(root, { ...link, branch });
+    return { branch, from: link.branch, commit: link.commit, url: `${this.url(link)}/tree/${refPath(branch)}` };
+  }
+
+  // Zu einem anderen Branch wechseln: Die Dateien im Ordner bekommen dessen Stand. Nur ohne Änderungen
+  // hier, sonst gingen sie im Stand des anderen Branches unter (oder würden später dorthin hochgeladen).
+  async switchBranch(root, name) {
+    const link = this.linked(root);
+    const branch = String(name || '').trim();
+    if (!validBranch(branch)) throw new Error(`«${branch}» geht nicht als Branch-Name.`);
+    if (branch === link.branch) return { branch, written: [], removed: [], conflicts: [], same: true };
+    const { changed, added, deleted } = this.localChanges(root, link);
+    const pending = [...changed, ...added, ...deleted];
+    if (pending.length) {
+      throw Object.assign(new Error(`Nicht gewechselt: Hier gibt es ${pending.length} ${pending.length === 1 ? 'Änderung' : 'Änderungen'}, die noch nicht hochgeladen ${pending.length === 1 ? 'ist' : 'sind'} (${pending.slice(0, 8).join(', ')}${pending.length > 8 ? ' …' : ''}). `
+        + `Beim Wechseln bekäme der Ordner den Stand von ${branch}, und die Änderungen würden vermischt oder gingen später auf den falschen Branch. `
+        + `Zuerst auf ${link.branch} hochladen oder dafür einen neuen Branch anlegen.`), { pending });
+    }
+    // Den Branch muss es geben, sonst sähe der Abgleich ein leeres Repository und würde alles löschen
+    try {
+      await this.request('GET', `/repos/${link.repo}/git/ref/heads/${refPath(branch)}`);
+    } catch (err) {
+      if (err.status === 404 || err.status === 409) throw new Error(`Den Branch ${branch} gibt es auf GitHub nicht.`);
+      throw err;
+    }
+    this.writeLink(root, { ...link, branch });
+    const r = await this.pull(root);
+    return { branch, from: link.branch, ...r };
+  }
+
+  // ---------- Pull Requests ----------
+
+  async pullRequests(root) {
+    const link = this.linked(root);
+    const list = await this.request('GET', `/repos/${link.repo}/pulls?state=open&per_page=30`);
+    return (Array.isArray(list) ? list : []).map((p) => ({ number: p.number, title: String(p.title || ''), url: String(p.html_url || ''),
+      head: String(p.head?.ref || ''), base: String(p.base?.ref || ''), user: String(p.user?.login || ''), draft: !!p.draft }));
+  }
+
+  // Pull Request vom Branch des Ordners in den Standard-Branch (oder base). Enthält nur, was auf GitHub liegt.
+  async createPullRequest(root, { title, body = '', base = '' } = {}) {
+    const link = this.linked(root);
+    const t = String(title || '').trim();
+    if (!t) throw new Error('Der Pull Request braucht einen Titel.');
+    const target = String(base || '').trim() || (await this.request('GET', `/repos/${link.repo}`)).default_branch || 'main';
+    if (!validBranch(target)) throw new Error(`«${target}» geht nicht als Branch-Name.`);
+    if (target === link.branch) throw new Error(`Der Ordner ist mit ${target} verbunden, dem Ziel des Pull Requests. Zuerst einen eigenen Branch anlegen, dort hochladen und dann den Pull Request erstellen.`);
+    const pr = await this.request('POST', `/repos/${link.repo}/pulls`, { title: t.slice(0, 250), body: String(body || '').slice(0, 20000), head: link.branch, base: target });
+    return { number: pr.number, url: pr.html_url, head: link.branch, base: target };
   }
 
   // In ein leeres Repository lässt sich über die Git-API nicht schreiben: erste Datei über die Contents-API
@@ -377,4 +498,4 @@ class GitHub {
   }
 }
 
-module.exports = { GitHub, blobSha, listLocal, parseRepo, validLink, ignoreRule, ignored, SKIP };
+module.exports = { GitHub, blobSha, listLocal, parseRepo, validLink, validBranch, ignoreRule, ignored, SKIP };

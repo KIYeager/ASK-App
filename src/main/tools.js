@@ -333,6 +333,8 @@ function githubTool(fn) {
   return async (terminal, args, ctx) => {
     if (!ctx.github || !ctx.folder) throw new Error('GitHub ist hier nicht verfügbar.');
     if (!ctx.github.connected()) return { ok: false, output: NOT_CONNECTED, summary: 'nicht verbunden' };
+    // Die Person gleicht gerade selbst im Bereich «GitHub» ab (main.js): nicht gleichzeitig
+    if (!ctx.panel && ctx.github.locked?.(ctx.folder)) return { ok: false, output: 'Die Person gleicht gerade selbst mit GitHub ab. Kurz warten und nochmals versuchen.', summary: 'Abgleich läuft' };
     return fn(ctx.github, ctx.folder, args, ctx);
   };
 }
@@ -447,6 +449,92 @@ TOOLS.push(
       }
       const r = await gh.create(folder, String(a.name).trim(), { privat, beschreibung: a.beschreibung || '' });
       return { ok: true, output: `Angelegt: ${r.repo} (${r.private ? 'privat' : 'öffentlich'}), ${r.uploaded} Dateien hochgeladen. ${r.url}`, summary: `${r.repo} · ${r.uploaded} Dateien` };
+    }),
+  },
+  {
+    name: 'github_branch',
+    label: 'GitHub',
+    describe: (a) => ({ liste: 'Branches', wechseln: `Branch wechseln zu ${a.name || ''}`, neu: `neuer Branch ${a.name || ''}` }[a.aktion] || 'Branches'),
+    description: 'Branches des verbundenen Repositorys: «liste» zeigt sie, «neu» legt einen Branch auf dem Stand des letzten Abgleichs an und verbindet den Ordner damit '
+      + '(Änderungen hier bleiben und gehen beim nächsten github_push auf den neuen Branch), «wechseln» verbindet den Ordner mit einem anderen Branch und holt dessen Stand. '
+      + 'Wechseln geht nur ohne Änderungen, die noch nicht hochgeladen sind.',
+    parameters: {
+      type: 'object',
+      properties: {
+        aktion: { type: 'string', enum: ['liste', 'wechseln', 'neu'] },
+        name: { type: 'string', description: 'Name des Branches (bei wechseln und neu), z. B. neue-startseite' },
+      },
+      required: ['aktion'],
+    },
+    run: githubTool(async (gh, folder, a) => {
+      const aktion = a.aktion || 'liste';
+      if (aktion === 'liste') {
+        const b = await gh.branches(folder);
+        const names = b.branches.map((n) => `${n}${n === b.default ? ' (Standard)' : ''}${n === b.current ? ' (verbunden)' : ''}`);
+        return { ok: true, output: `Branches: ${names.join(', ')}`, summary: `${b.branches.length} Branches · ${b.current}` };
+      }
+      if (!String(a.name || '').trim()) return { ok: false, output: 'Für wechseln und neu braucht es den Namen des Branches (name).', summary: 'Name fehlt' };
+      if (aktion === 'neu') {
+        const r = await gh.createBranch(folder, a.name);
+        return { ok: true, output: `Branch ${r.branch} angelegt (von ${r.from}), der Ordner ist jetzt mit ihm verbunden. Änderungen hier gehen beim nächsten github_push auf ${r.branch}. ${r.url}`,
+          summary: `${r.branch} angelegt` };
+      }
+      if (aktion === 'wechseln') {
+        try {
+          const r = await gh.switchBranch(folder, a.name);
+          if (r.same) return { ok: true, output: `Der Ordner ist schon mit ${r.branch} verbunden.`, summary: r.branch };
+          const output = [`Gewechselt von ${r.from} zu ${r.branch}.`, `Geholt: ${list(r.written)}`, `Gelöscht (gibt es auf ${r.branch} nicht): ${list(r.removed)}`,
+            r.conflicts.length ? `Nicht überschrieben (hier anders vorhanden): ${list(r.conflicts)}.` : ''].filter(Boolean).join('\n');
+          return { ok: true, output, summary: `${r.branch} · ${r.written.length} geholt` };
+        } catch (err) {
+          if (err.pending) return { ok: false, output: `${err.message} Frag die Person, ob du zuerst hochladen (github_push) oder einen neuen Branch anlegen sollst.`, summary: 'Änderungen noch nicht hochgeladen' };
+          throw err;
+        }
+      }
+      return { ok: false, output: `Unbekannte Aktion «${aktion}». Möglich: liste, wechseln, neu.`, summary: 'unbekannte Aktion' };
+    }),
+  },
+  {
+    name: 'github_pr',
+    label: 'GitHub',
+    describe: (a) => (a.aktion === 'neu' ? `Pull Request «${a.titel || ''}»` : 'Pull Requests'),
+    description: 'Pull Requests des verbundenen Repositorys: «liste» zeigt die offenen mit Adresse, «neu» erstellt einen vom Branch des Ordners in den Standard-Branch '
+      + '(oder ziel). Er enthält nur, was schon hochgeladen ist; vorher github_push. Die Person bestätigt vorher.',
+    parameters: {
+      type: 'object',
+      properties: {
+        aktion: { type: 'string', enum: ['liste', 'neu'] },
+        titel: { type: 'string', description: 'Titel des Pull Requests (bei neu)' },
+        beschreibung: { type: 'string', description: 'Was sich ändert und warum (bei neu)' },
+        ziel: { type: 'string', description: 'Ziel-Branch, sonst der Standard-Branch' },
+      },
+      required: ['aktion'],
+    },
+    run: githubTool(async (gh, folder, a, ctx) => {
+      if ((a.aktion || 'liste') === 'liste') {
+        const prs = await gh.pullRequests(folder);
+        if (!prs.length) return { ok: true, output: 'Keine offenen Pull Requests.', summary: 'keine offenen' };
+        return { ok: true, output: prs.map((p) => `#${p.number} ${p.title} (${p.head} → ${p.base}, ${p.user}) ${p.url}`).join('\n'), summary: `${prs.length} offen` };
+      }
+      if (a.aktion !== 'neu') return { ok: false, output: `Unbekannte Aktion «${a.aktion}». Möglich: liste, neu.`, summary: 'unbekannte Aktion' };
+      if (!String(a.titel || '').trim()) return { ok: false, output: 'Für einen neuen Pull Request braucht es einen Titel (titel).', summary: 'Titel fehlt' };
+      const s = await gh.status(folder);
+      if (!s.linked) return { ok: false, output: 'Der Ordner ist mit keinem Repository verbunden (github_create oder github_clone).', summary: 'kein Repository' };
+      const pending = [...s.changed, ...s.added, ...s.deleted];
+      if (pending.length) {
+        return { ok: false, summary: 'zuerst hochladen',
+          output: `Hier gibt es ${pending.length} Änderungen, die noch nicht hochgeladen sind (${list(pending, 8)}). Ein Pull Request enthält nur, was auf GitHub liegt: zuerst github_push.` };
+      }
+      const ziel = String(a.ziel || '').trim() || (await gh.branches(folder)).default;
+      if (ziel === s.branch) {
+        return { ok: false, summary: 'eigener Branch nötig',
+          output: `Der Ordner ist mit ${ziel} verbunden, dem Ziel des Pull Requests. Zuerst mit github_branch (aktion neu) einen eigenen Branch anlegen, dort hochladen, dann den Pull Request erstellen.` };
+      }
+      if (!(await ctx.confirm(`Pull Request in ${s.repo} erstellen?`, `Von ${s.branch} nach ${ziel}\nTitel: ${a.titel}${a.beschreibung ? `\n\n${String(a.beschreibung).slice(0, 1500)}` : ''}`))) {
+        return { ok: false, output: 'Die Person hat den Pull Request abgelehnt.', summary: 'abgelehnt' };
+      }
+      const r = await gh.createPullRequest(folder, { title: a.titel, body: a.beschreibung || '', base: ziel });
+      return { ok: true, output: `Pull Request #${r.number} erstellt (${r.head} → ${r.base}): ${r.url}`, summary: `#${r.number} · ${r.head} → ${r.base}` };
     }),
   },
 );

@@ -27,7 +27,7 @@ Projektnotizen: .ask/projekt.md gilt für alle Chats in diesem Ordner und steht,
 
 Anhänge: Dateien und Bilder, die die Person in den Chat einfügt, legt die App unter .ask/anhaenge/{chat}/ ab; die Nachricht nennt den Pfad. Bilder siehst du zusätzlich direkt in der Nachricht. Soll ein angehängtes Dokument bearbeitet werden oder ein Bild in ein Dokument, speichere das Ergebnis im Arbeitsordner, nicht in .ask (dort wird es nach 14 Tagen gelöscht).
 
-GitHub: Mit github_clone und github_pull holst du ein Projekt von GitHub, mit github_push lädst du Änderungen hoch, mit github_create legst du ein neues Repository an (privat, ausser die Person will es öffentlich). .ask wird nie hochgeladen. Nutze diese Werkzeuge, wenn die Person GitHub erwähnt; hole vor dem Arbeiten an einem verbundenen Projekt zuerst mit github_pull. Meldet ein Abgleich Konflikte, frag die Person mit frage_stellen, welche Fassung gilt.
+GitHub: Mit github_clone und github_pull holst du ein Projekt von GitHub, mit github_push lädst du Änderungen hoch, mit github_create legst du ein neues Repository an (privat, ausser die Person will es öffentlich). Mit github_branch zeigst, wechselst und legst du Branches an, mit github_pr zeigst und erstellst du Pull Requests (zuerst hochladen). .ask wird nie hochgeladen. Nutze diese Werkzeuge, wenn die Person GitHub erwähnt; hole vor dem Arbeiten an einem verbundenen Projekt zuerst mit github_pull. Meldet ein Abgleich Konflikte, frag die Person mit frage_stellen, welche Fassung gilt.
 
 Deine Arbeitsordner in diesem Chat:
 - Hilfsskripte: .ask/skripte/{chat}/ (wo die Anleitungen .ask/skripte/ schreiben, ist dieser Ordner gemeint)
