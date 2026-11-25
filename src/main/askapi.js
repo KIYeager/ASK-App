@@ -184,6 +184,22 @@ const THINKING_PARAMS = {
   maximal: { reasoning_effort: 'high', think: true, chat_template_kwargs: { enable_thinking: true } },
 };
 
+// Lehnt ein Modell eine Stufe ab und nennt die erlaubten («Unexpected reasoning effort high. Supported
+// types are xhigh (default), medium, and low»), die nächste erlaubte Stufe wählen, bei Gleichstand die höhere.
+// null: keine Liste in der Meldung oder die Stufe ist schon erlaubt.
+const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+function nearestEffort(message, wanted) {
+  const list = /supported[^:.]*?(?:are|:)\s*([^.]+)/i.exec(String(message))?.[1] || '';
+  const allowed = EFFORTS.filter((e) => new RegExp(`\\b${e}\\b`, 'i').test(list));
+  if (!allowed.length || allowed.includes(wanted)) return null;
+  const at = EFFORTS.indexOf(wanted);
+  return allowed.reduce((best, e) => {
+    const d = Math.abs(EFFORTS.indexOf(e) - at);
+    const bd = Math.abs(EFFORTS.indexOf(best) - at);
+    return d < bd || (d === bd && EFFORTS.indexOf(e) > EFFORTS.indexOf(best)) ? e : best;
+  });
+}
+
 // Websuche in ASK eingeschaltet und für dieses Konto erlaubt? (Admins dürfen immer.)
 function webSearchAllowed(config, user) {
   if (config?.features?.enable_web_search !== true) return false;
@@ -433,7 +449,11 @@ class AskSession extends EventEmitter {
       const body = { model, messages, stream: true };
       // Websuche macht ASK auf dem Server vor der Antwort und schickt die Quellen mit.
       if (webSearch) body.features = { web_search: true };
-      if (!this.noThinkParams) Object.assign(body, THINKING_PARAMS[thinking] || {});
+      if (!this.noThinkParams && THINKING_PARAMS[thinking]) {
+        Object.assign(body, THINKING_PARAMS[thinking]);
+        const effort = this.effortFor?.[body.reasoning_effort];
+        if (effort) body.reasoning_effort = effort;
+      }
       // Tokenzahlen am Ende des Stroms; manche Server lehnen das ab, dann ohne.
       if (withUsage) body.stream_options = { include_usage: true };
       if (tools && tools.length) body.tools = tools;
@@ -442,9 +462,13 @@ class AskSession extends EventEmitter {
     let res = await send(!this.noUsage);
     let error = res.ok ? null : await errorOf(res);
     // Lehnt der Server einen Zusatz ab, ohne ihn nochmals versuchen und ihn künftig weglassen.
-    for (let retry = 0; error && res.status === 400 && retry < 2; retry++) {
+    for (let retry = 0; error && res.status === 400 && retry < 3; retry++) {
+      const thinkParams = !this.noThinkParams && THINKING_PARAMS[thinking];
+      const sent = thinkParams && (this.effortFor?.[thinkParams.reasoning_effort] || thinkParams.reasoning_effort);
+      const other = thinkParams && /reasoning[ _]effort/i.test(error.message) && nearestEffort(error.message, sent);
       if (!this.noUsage && /stream_options|include_usage/i.test(error.message)) this.noUsage = true;
-      else if (!this.noThinkParams && thinking && THINKING_PARAMS[thinking] && /reasoning_effort|chat_template_kwargs|enable_thinking|\bthink\b/i.test(error.message)) this.noThinkParams = true;
+      else if (other) this.effortFor = { ...this.effortFor, [thinkParams.reasoning_effort]: other }; // erlaubte Stufe statt gar keiner
+      else if (thinkParams && /reasoning[ _]effort|chat_template_kwargs|enable_thinking|\bthink\b/i.test(error.message)) this.noThinkParams = true;
       else break;
       res = await send(!this.noUsage);
       error = res.ok ? null : await errorOf(res);
@@ -480,4 +504,4 @@ class AskSession extends EventEmitter {
   }
 }
 
-module.exports = { sameOrigin, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS };
+module.exports = { sameOrigin, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS, nearestEffort };
