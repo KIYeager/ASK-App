@@ -97,6 +97,7 @@
             <ul id="todo-list" class="todo-list"></ul>
           </div>
           <div id="slash" class="slash" hidden></div>
+          <div id="queue-row" class="attach-row" hidden></div>
           <div id="attach-row" class="attach-row" hidden></div>
           <div class="input-box" id="input-box">
             <button id="attach-btn" class="attach-btn" title="Dateien oder Bilder anhängen (auch mit Ctrl+V oder Hineinziehen)" aria-label="Anhängen">+</button>
@@ -222,6 +223,14 @@
       <div class="actions">
         <button id="terminal-restart" class="btn">Neu starten</button>
         <button id="terminal-close" class="btn primary">Schliessen</button>
+      </div>
+    </div>
+
+    <div id="dlg-alert" class="dialog" hidden>
+      <h1>Hinweis</h1>
+      <p id="alert-text"></p>
+      <div class="actions">
+        <button id="alert-close" class="btn primary">Schliessen</button>
       </div>
     </div>
 

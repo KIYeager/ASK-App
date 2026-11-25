@@ -12,6 +12,8 @@ let chatId = null;
 let running = false;
 let runStarted = 0;
 let activityLabel = 'Denkt nach …';
+let queued = null; // eine wartende Folgenachricht { text, files }, geht nach dem Auftrag automatisch raus
+let runFailed = false; // im laufenden Auftrag kam ein Fehler: nichts automatisch senden
 let current = null; // laufende Antwort { el, body, text, textEl, thinkEl, reasoning }
 const toolRows = new Map();
 let turnStats = []; // Tokenzahlen und Zeiten der Schritte des laufenden Auftrags
@@ -66,10 +68,6 @@ function askText(a) {
     case 'pruefen': return ['ASK: Anmeldung wird geprüft', 'warn'];
     default: return ['ASK: wird geprüft', ''];
   }
-}
-
-function ready() {
-  return state && state.folder && state.terminal.state === 'läuft' && state.ask.state === 'angemeldet' && !!state.model;
 }
 
 function blocker() {
@@ -132,7 +130,7 @@ function renderStatus() {
 function renderComposer() {
   const block = blocker();
   const input = $('input');
-  input.placeholder = running ? 'Das Modell arbeitet … (Esc stoppt)' : (block || 'Was soll ich im Arbeitsordner erledigen?');
+  input.placeholder = running ? 'Das Modell arbeitet … Enter reiht die Nachricht ein, Esc stoppt' : (block || 'Was soll ich im Arbeitsordner erledigen?');
   $('input-box').classList.toggle('disabled', !!block && !running);
   const send = $('send-btn');
   send.textContent = running ? '■' : '↵';
@@ -215,10 +213,11 @@ function showAskPage() {
 
 function renderDialogs() {
   const currentDialog = activeDialog();
-  for (const name of ['warning', 'url', 'start', 'ask', 'github', 'terminal', 'preview']) {
+  for (const name of ['warning', 'url', 'start', 'ask', 'github', 'terminal', 'preview', 'alert']) {
     $(`dlg-${name}`).hidden = name !== currentDialog;
   }
   $('overlay').hidden = !currentDialog;
+  if (currentDialog !== 'github') $('github-token').value = ''; // das Token bleibt nie im Feld stehen
   const login = needsLogin() && state.warningAccepted;
   $('login-area').hidden = !login;
   $('login-area').classList.toggle('loading', login && !showAskPage());
@@ -257,9 +256,8 @@ async function openFolder(action) {
 }
 
 function alertBox(text) {
-  openDialog = 'terminal';
-  $('terminal-detail').textContent = text;
-  $('terminal-logs').hidden = true;
+  openDialog = 'alert'; // eigener Dialog: das Terminal-Fenster würde sich überschreiben und «Neu starten» anbieten
+  $('alert-text').textContent = text;
   render();
 }
 
@@ -903,7 +901,7 @@ function onEvent(ev) {
     case 'live': onLive(ev); break;
     case 'undo': onUndo(ev); break;
     case 'notice': addMessage('notice', '⎿', ev.text); break;
-    case 'error': addMessage('error', '✗', ev.text); break;
+    case 'error': runFailed = true; addMessage('error', '✗', ev.text); break;
     case 'done':
       current = null;
       addStats(turnStats);
@@ -931,10 +929,15 @@ function renderTranscript(items) {
   };
   turnNode = null;
   for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
     if (item.role === 'auto') {
       addMessage('notice auto', '↻', 'Weiter am Ziel …');
     } else if (item.role === 'undo') {
       addMessage('notice', '↶', item.text);
+    } else if (item.role === 'notice') {
+      addMessage('notice', '⎿', item.text);
+    } else if (item.role === 'error') {
+      addMessage('error', '✗', item.text);
     } else if (item.role === 'user') {
       endTurn();
       turn = item;
@@ -947,7 +950,7 @@ function renderTranscript(items) {
       if (item.reasoning) appendReasoning(item.reasoning);
       endAssistant(item.content);
       addSources(item.sources);
-      for (const call of item.calls) {
+      for (const call of item.calls || []) {
         names.set(call.id, call.name);
         toolCall(call.id, call.name, call.label, call.detail);
       }
@@ -1004,8 +1007,7 @@ const COMMANDS = [
 ];
 let slashIndex = 0;
 
-function slashMatches() {
-  const v = $('input').value;
+function slashMatches(v = $('input').value) {
   if (!v.startsWith('/') || v.includes(' ') || v.includes('\n')) return [];
   return COMMANDS.filter((c) => c.cmd.startsWith(v.toLowerCase()));
 }
@@ -1015,7 +1017,7 @@ function renderSlash() {
   const box = $('slash');
   box.hidden = matches.length === 0;
   slashIndex = Math.min(slashIndex, Math.max(matches.length - 1, 0));
-  box.replaceChildren(...matches.map((c, i) => el('div', { class: i === slashIndex ? 'active' : '', onclick: () => runSlash(c) },
+  box.replaceChildren(...matches.map((c, i) => el('div', { class: i === slashIndex ? 'active' : '', onclick: (e) => { e.stopPropagation(); runSlash(c); } }, // sonst schliesst der Klick /denken gleich wieder
     el('span', { class: 'cmd' }, c.cmd), el('span', { class: 'muted' }, c.text))));
 }
 
@@ -1032,25 +1034,82 @@ function autosize() {
   input.style.height = `${input.scrollHeight}px`;
 }
 
-async function submit() {
-  if (running) {
-    api.chatStop();
+// Wartende Nachricht: Enter während eines Auftrags reiht eine Folgenachricht ein (nur eine)
+function renderQueue() {
+  const row = $('queue-row');
+  row.hidden = !queued;
+  if (!queued) { row.replaceChildren(); return; }
+  const label = queued.text || queued.files.map((f) => f.name || 'Bild').join(', ');
+  row.replaceChildren(el('span', { class: 'attach-chip queue-chip', title: label },
+    el('span', { class: 'name' }, `Wartet: ${label}`),
+    el('button', { class: 'remove', title: 'Entfernen (Text zurück ins Eingabefeld)', 'aria-label': 'Wartende Nachricht entfernen', onclick: () => restoreQueued() }, '×')));
+}
+
+function queueMessage(text) {
+  if (queued) {
+    addMessage('notice', '⎿', 'Es wartet schon eine Nachricht. Mit × entfernen oder den Auftrag abwarten.');
     return;
   }
+  queued = { text, files: pending };
+  pending = [];
+  renderPending();
+  $('input').value = '';
+  autosize();
+  renderSlash();
+  renderQueue();
+}
+
+// Wartende Nachricht zurück ins Eingabefeld (Stopp, Fehler, anderer Chat, ×)
+function restoreQueued() {
+  if (!queued) return;
+  const q = queued;
+  queued = null;
+  const input = $('input');
+  if (q.text) input.value = input.value ? `${q.text}\n${input.value}` : q.text;
+  pending = [...q.files, ...pending].slice(0, MAX_ATTACH);
+  renderPending();
+  renderQueue();
+  autosize();
+}
+
+function stopRun() {
+  restoreQueued();
+  api.chatStop();
+}
+
+function flushQueued() {
+  if (!queued || running) return;
+  if (blocker()) { restoreQueued(); return; }
+  const q = queued;
+  queued = null;
+  renderQueue();
+  sendText(q.text, q.files);
+}
+
+async function submit() {
   const input = $('input');
   const text = input.value.trim();
-  if (!text && !pending.length) return;
+  if (!text && !pending.length) return; // auch während eines Auftrags: leere Eingabe tut nichts
   const goalCmd = /^\/goal(?:\s+([\s\S]*))?$/i.exec(text);
   if (goalCmd) {
+    const arg = (goalCmd[1] || '').trim();
+    if (running && arg && !/^(aus|stopp|stop|löschen|off|clear)$/i.test(arg)) {
+      addMessage('notice', '⎿', 'Ein neues Ziel lässt sich erst setzen, wenn der Auftrag fertig ist.');
+      return;
+    }
     input.value = '';
     autosize();
     renderSlash();
-    await handleGoal((goalCmd[1] || '').trim());
+    await handleGoal(arg);
     return;
   }
-  const matches = slashMatches();
+  const matches = slashMatches(text); // getrimmt: «/neu » mit Leerzeichen ist auch der Befehl
   if (matches.length) {
     runSlash(matches[slashIndex] || matches[0]);
+    return;
+  }
+  if (running) {
+    queueMessage(text);
     return;
   }
   if (blocker()) return;
@@ -1066,18 +1125,25 @@ async function sendText(text, files = []) {
   if (text) sent.push(text);
   sentIndex = -1;
   running = true;
+  runFailed = false;
   runStarted = Date.now();
   activityLabel = 'Denkt nach …';
   tickActivity();
   renderComposer();
-  const res = await api.chatSend(text, files.map(({ name, type, data }) => ({ name, type, data })));
+  let res;
+  try {
+    res = await api.chatSend(text, files.map(({ name, type, data }) => ({ name, type, data })));
+  } catch (err) {
+    res = { ok: false, reason: err?.message || String(err) };
+  }
   if (res && res.ok === false) {
     // Nichts gesendet: Anhänge und Text zurück ins Eingabefeld
     running = false;
-    pending = files;
+    pending = [...files, ...pending];
     renderPending();
-    if (text && !$('input').value) { $('input').value = text; autosize(); }
-    addMessage('error', '✗', res.reason);
+    const input = $('input');
+    if (text) { input.value = input.value ? `${text}\n${input.value}` : text; autosize(); }
+    addMessage('error', '✗', res.reason || 'Senden fehlgeschlagen.');
     renderComposer();
   } else {
     for (const f of files) if (f.url) URL.revokeObjectURL(f.url);
@@ -1406,6 +1472,9 @@ function onLive(ev) {
   }
 }
 
+// Pfade vergleichen: «/» und «\\» gelten gleich
+const samePath = (a, b) => String(a).replaceAll('\\', '/') === String(b).replaceAll('\\', '/');
+
 function extOf(name) {
   const m = /\.([a-z0-9]+)$/i.exec(name);
   return m ? m[1].toLowerCase() : '';
@@ -1413,7 +1482,7 @@ function extOf(name) {
 
 function fileItem(entry, meta) {
   const ext = entry.dir ? 'dir' : extOf(entry.name);
-  return el('li', { title: entry.path, class: selected?.path === entry.path ? 'active' : '',
+  return el('li', { title: entry.path, class: selected && samePath(selected.path, entry.path) ? 'active' : '',
     onclick: () => (entry.dir ? api.showFile(entry.path) : showPreview(entry)),
     ondblclick: () => !entry.dir && api.openFile(entry.path) },
   el('span', { class: `badge ${ext}` }, entry.dir ? 'DIR' : (ext || 'Datei').slice(0, 4).toUpperCase()),
@@ -1429,14 +1498,23 @@ function renderFiles() {
   $('files-empty').hidden = entries.length > 0;
   markFiles($('messages')); // neue Dateien im Chat als Link markieren
   if (selected) {
-    const found = [...files.recent, ...files.top].find((f) => f.path === selected.path);
-    if (!found) closePreview();
-    else if (found.modified !== selected.modified) showPreview(found);
+    const found = [...files.recent, ...files.top].find((f) => samePath(f.path, selected.path));
+    if (found) {
+      selected.listed = true;
+      if (found.modified !== selected.modified) showPreview(found);
+    } else if (selected.listed) {
+      // War in den Listen und fehlt jetzt: nur schliessen, wenn die Datei wirklich weg ist (die Listen sind gekürzt).
+      // Pfade, die nie in den Listen standen (.ask/, Bilder, Unterordner), bleiben offen.
+      const path = selected.path;
+      api.preview(path).then((p) => { if (p?.kind === 'missing' && selected && samePath(selected.path, path)) closePreview(); }).catch(() => {});
+    }
   }
 }
 
 async function fillPreview(container, entry) {
+  const tok = container._tok = (container._tok || 0) + 1; // spätere Füllung (andere Datei) gewinnt
   const p = await api.preview(entry.path);
+  if (container._tok !== tok) return;
   container.replaceChildren();
   if (p.kind === 'image') container.append(el('img', { src: `${p.url}?t=${entry.modified}`, alt: entry.name }));
   else if (p.kind === 'pdf') container.append(el('iframe', { src: `${p.url}?t=${entry.modified}`, title: entry.name }));
@@ -1452,8 +1530,11 @@ async function fillPreview(container, entry) {
       box.append(el('button', { class: 'btn', onclick: async () => {
         status.textContent = 'Wird mit Office in PDF umgewandelt …';
         const res = await api.toPdf(entry.path);
+        // Hat die Person inzwischen eine andere Datei gewählt, wird das Ergebnis verworfen
+        if (container._tok !== tok || !selected || !samePath(selected.path, entry.path)) return;
         if (!res.ok) { status.textContent = res.fehler; return; }
         const pdf = await api.preview(res.path);
+        if (container._tok !== tok || !selected || !samePath(selected.path, entry.path)) return;
         container.replaceChildren(el('iframe', { src: `${pdf.url}?t=${Date.now()}`, title: entry.name }));
       } }, 'Als PDF anzeigen'), status);
     }
@@ -1463,11 +1544,19 @@ async function fillPreview(container, entry) {
 
 async function showPreview(entry) {
   selected = { path: entry.path, modified: entry.modified };
+  if (document.body.classList.contains('browser-open')) {
+    // Die Seitenleiste ist bei offenem Browser ausgeblendet: Vorschau im grossen Fenster
+    openDialog = 'preview';
+    $('big-title').textContent = entry.path;
+    render();
+    await fillPreview($('big-body'), entry);
+    return;
+  }
   if (!state.sidebarOpen) await api.setSidebar(true);
   $('preview-panel').hidden = false;
   $('preview-title').textContent = baseName(entry.path);
   $('preview-title').title = entry.path;
-  document.querySelectorAll('.files li').forEach((li) => li.classList.toggle('active', li.title === entry.path));
+  document.querySelectorAll('.files li').forEach((li) => li.classList.toggle('active', samePath(li.title, entry.path)));
   await fillPreview($('preview-body'), entry);
   if (openDialog === 'preview') await fillPreview($('big-body'), entry);
 }
@@ -1488,6 +1577,13 @@ function render() {
   if (!state) return;
   renderStatus();
   renderDialogs();
+}
+
+// Der Fokus geht nur dann ins Eingabefeld, wenn er sonst nirgends ist (nicht aus Suche, Adressleiste, Dialogen)
+function inputFocusOk() {
+  if (activeDialog() || !$('think-pop').hidden) return false;
+  const a = document.activeElement;
+  return !a || a === document.body || !!a.closest('.chat-area');
 }
 
 function reportBounds() {
@@ -1517,7 +1613,7 @@ function wire() {
   document.addEventListener('click', () => toggleThinkPop(false));
   $('terminal-pill').onclick = () => { openDialog = 'terminal'; $('terminal-logs').hidden = false; render(); };
   $('ask-pill').onclick = () => { openDialog = 'ask'; render(); };
-  $('send-btn').onclick = () => submit();
+  $('send-btn').onclick = () => (running ? stopRun() : submit());
   $('input').addEventListener('keydown', onKey);
   $('input').addEventListener('input', () => { autosize(); slashIndex = 0; renderSlash(); });
   document.querySelectorAll('.example').forEach((b) => {
@@ -1570,7 +1666,12 @@ function wire() {
     render();
     await fillPreview($('big-body'), selected);
   };
-  $('big-close').onclick = () => { openDialog = null; $('big-body').replaceChildren(); render(); };
+  $('big-close').onclick = () => {
+    openDialog = null;
+    $('big-body').replaceChildren();
+    if ($('preview-panel').hidden) selected = null; // nur im grossen Fenster geöffnet
+    render();
+  };
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 't') {
       e.preventDefault();
@@ -1586,32 +1687,37 @@ function wire() {
     if (e.key !== 'Escape') return;
     if (!$('think-pop').hidden) { toggleThinkPop(false); return; }
     if (openDialog) { openDialog = null; render(); return; }
+    if (activeDialog()) return; // feste Dialoge (Warnung, Adresse, Start): Esc stoppt nichts dahinter
+    if (e.target.closest?.('#chat-search, #bp-url')) return; // dort gilt Esc nur für das Feld selbst
     if (!$('slash').hidden) { $('input').value = ''; renderSlash(); return; }
-    if (running) api.chatStop();
+    if (running) stopRun();
   });
 
   api.onState((s) => {
     const folderChanged = state && s.folder !== state.folder;
+    const recentChanged = state && JSON.stringify(s.recent) !== JSON.stringify(state.recent);
     state = s;
     goal = s.chat.goal;
-    if (folderChanged) loadChats();
+    if (folderChanged || recentChanged) loadChats(); // auch wenn ein Ordner aus der Liste entfernt wurde
     if (s.chat.running !== running) {
       running = s.chat.running;
       if (running && !runStarted) runStarted = Date.now();
       if (!running) runStarted = 0;
     }
-    if (s.chat.id !== chatId) loadTranscript();
+    if (s.chat.id !== chatId) { restoreQueued(); loadTranscript(); }
     render();
   });
   api.onChatEvent(onEvent);
   api.onChatChanged((c) => {
-    if (c.id !== chatId) loadTranscript();
+    if (c.id !== chatId) { restoreQueued(); loadTranscript(); }
     running = c.running;
     goal = c.goal;
     loadChats();
     if (!running) runStarted = 0;
     renderComposer();
-    if (!running) $('input').focus();
+    if (running) return;
+    if (queued) { if (runFailed) restoreQueued(); else flushQueued(); } // Auftrag normal beendet: wartende Nachricht senden
+    else if (inputFocusOk()) $('input').focus();
   });
   api.onFiles((f) => { files = f; renderFiles(); });
   api.onMenuChooseFolder(() => openFolder(api.chooseFolder));
@@ -1630,6 +1736,7 @@ function wire() {
   $('github-token').onkeydown = (e) => { if (e.key === 'Enter') $('github-ok').click(); };
   $('github-disconnect').onclick = async () => { await api.githubDisconnect(); showGithub(); };
   $('github-close').onclick = () => { openDialog = null; render(); };
+  $('alert-close').onclick = () => { openDialog = null; render(); };
   api.onFolderError((reason) => alertBox(reason));
   api.onAskLoaded(() => {
     askFailed = false;

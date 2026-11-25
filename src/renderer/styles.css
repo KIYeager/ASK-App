@@ -348,6 +348,7 @@ body:not(.verbose) .msg.folded { display: none; }
   display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 3px 6px; border: 1px solid var(--border-2);
   border-radius: 6px; background: var(--bg-2); font-size: 12px; color: var(--text); cursor: default;
 }
+.attach-chip.queue-chip { max-width: 100%; border-style: dashed; }
 .attach-chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 3px; }
 .attach-chip .badge { width: 34px; flex: none; }
 .attach-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
