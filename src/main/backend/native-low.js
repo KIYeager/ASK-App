@@ -21,7 +21,9 @@ class NativeLowBackend {
   async start({ workdir, port, key, origin, systemPrompt, executeDescription, onEvent }) {
     const python = paths.pythonExe();
     if (!fs.existsSync(python)) throw new Error(`Mitgeliefertes Python fehlt: ${python}`);
-    const child = spawn(python, ['-E', '-s', '-B', paths.launcherPy()], {
+    // -X utf8: Die Einstellungen gehen als UTF-8 über stdin. Ohne den Schalter liest Python sie auf Windows in
+    // der ANSI-Codepage, und ein Ordner oder Benutzername mit Umlaut («Prüfung») wird nicht gefunden.
+    const child = spawn(python, ['-E', '-s', '-B', '-X', 'utf8', paths.launcherPy()], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });

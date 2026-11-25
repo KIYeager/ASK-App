@@ -1,0 +1,6 @@
+# Ruff: findet Fehler (unbekannte Namen, unbenutzte Importe, Syntax), keine Stilregeln.
+target-version = "py313"
+line-length = 160
+
+[lint]
+select = ["E9", "F"]

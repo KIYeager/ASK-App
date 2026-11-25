@@ -4,6 +4,7 @@ const path = require('node:path');
 const { BrowserWindow, WebContentsView, Menu, shell, session, clipboard } = require('electron');
 const paths = require('./paths');
 const { allowedNavigation } = require('./visual');
+const { sameOrigin } = require('./askapi');
 
 const ASK_PARTITION = 'persist:ask';
 const BROWSER_PARTITION = 'persist:ask-browser';
@@ -110,7 +111,10 @@ class AppWindow {
     // Unsichtbares Menü, damit die üblichen Tastenkürzel funktionieren.
     const ask = () => this.view.webContents;
     const ui = () => this.win.webContents;
-    const zoom = (delta) => ui().setZoomLevel(delta === 0 ? 0 : ui().getZoomLevel() + delta);
+    const zoom = (delta) => {
+      ui().setZoomLevel(delta === 0 ? 0 : ui().getZoomLevel() + delta);
+      setTimeout(() => { this.applyAskLayout(); this.applyBrowserLayout(); }, 50); // die Ansichten liegen in Pixeln über der Oberfläche
+    };
     const menu = Menu.buildFromTemplate([
       { label: 'Bearbeiten', submenu: [
         { role: 'undo', label: 'Rückgängig' }, { role: 'redo', label: 'Wiederholen' }, { type: 'separator' },
@@ -134,7 +138,7 @@ class AppWindow {
   loadAsk(url) {
     this.askOrigin = new URL(url).origin;
     const current = this.view.webContents.getURL();
-    if (!current || !current.startsWith(this.askOrigin)) this.view.webContents.loadURL(url);
+    if (!current || !sameOrigin(current, url)) this.view.webContents.loadURL(url);
   }
 
   setAskBounds(bounds) {
@@ -151,7 +155,8 @@ class AppWindow {
     const b = this.askBounds;
     const show = this.askVisible && b && b.width > 0 && b.height > 0;
     if (show) {
-      this.view.setBounds({ x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) });
+      const z = this.win.webContents.getZoomFactor(); // Bereich in CSS-Pixeln der Oberfläche, wie beim Browser
+      this.view.setBounds({ x: Math.round(b.x * z), y: Math.round(b.y * z), width: Math.round(b.width * z), height: Math.round(b.height * z) });
     }
     this.view.setVisible(!!show);
   }

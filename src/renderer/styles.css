@@ -7,8 +7,8 @@
   --border: #2d2d2d;
   --border-2: #3a3a3a;
   --text: #e4e4e4;
-  --muted: #8d8d8d;
-  --dim: #626262;
+  --muted: #a3a3a3;
+  --dim: #8c8c8c; /* mindestens 4.5:1 auf dem dunklen Hintergrund */
   --accent: #46b8bf;
   --accent-strong: #0b6e75;
   --accent-bg: #10292b;
@@ -348,6 +348,7 @@ body:not(.verbose) .msg.folded { display: none; }
   display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 3px 6px; border: 1px solid var(--border-2);
   border-radius: 6px; background: var(--bg-2); font-size: 12px; color: var(--text); cursor: default;
 }
+.attach-chip.queue-chip { max-width: 100%; border-style: dashed; }
 .attach-chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 3px; }
 .attach-chip .badge { width: 34px; flex: none; }
 .attach-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -509,3 +510,46 @@ body.browser-big .browser-pane { position: fixed; left: 0; right: 0; bottom: 0; 
 
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes blink { 50% { opacity: 0.3; } }
+
+/* Chat-Menü, Anheften, Umbenennen, Suche im Inhalt */
+.chat-item .cmenu-btn { visibility: hidden; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; border-radius: 4px; }
+.chat-item:hover .cmenu-btn, .chat-item:focus-within .cmenu-btn, .chat-item .cmenu-btn[aria-expanded=true] { visibility: visible; }
+.chat-item .cmenu-btn:hover { color: var(--text); background: var(--panel-2); }
+.chat-item .cpin { font-size: 10px; color: var(--accent); }
+.chat-item.renaming { padding-left: 14px; cursor: default; }
+.chat-rename { flex: 1; min-width: 0; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--accent-strong); background: var(--bg); color: var(--text); font: 13px var(--sans); outline: none; }
+.chat-menu { position: fixed; z-index: 50; min-width: 170px; padding: 4px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--panel-2); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); }
+.chat-menu button { display: block; width: 100%; text-align: left; padding: 6px 10px; border: none; border-radius: 5px; background: none; color: var(--text); font: 13px var(--sans); cursor: pointer; }
+.chat-menu button:hover, .chat-menu button:focus-visible { background: var(--accent-bg); }
+.chat-menu button.danger { color: var(--bad); }
+.content-hits .group-head { cursor: default; }
+.chat-item.hit { flex-direction: column; align-items: stretch; gap: 1px; padding-left: 14px; }
+.chat-item.hit .hit-top { display: flex; gap: 6px; }
+.chat-item.hit .hit-folder { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.chat-item.hit .hit-snippet { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Aktionen an der letzten Eingabe, Kontextanzeige, Einstellungen */
+.user-actions { display: flex; gap: 6px; margin-top: 4px; opacity: 0.55; }
+.msg.user:hover .user-actions, .user-actions:focus-within { opacity: 1; }
+.user-actions button { border: 1px solid var(--border-2); border-radius: 5px; background: none; color: var(--muted); font: 12px var(--sans); padding: 1px 8px; cursor: pointer; }
+.user-actions button:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
+.user-actions button:disabled { opacity: 0.4; cursor: default; }
+.ctx { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); cursor: help; }
+.ctx-bar { width: 56px; height: 4px; border-radius: 2px; background: var(--border-2); overflow: hidden; }
+.ctx-bar span { display: block; height: 100%; width: 0; background: var(--accent); }
+.ctx.warn { color: var(--warn); }
+.ctx.warn .ctx-bar span { background: var(--warn); }
+.ctx.unknown .ctx-bar { display: none; }
+.dialog .row { display: flex; gap: 8px; }
+.dialog .row input { flex: 1; }
+.dialog input[type=url] { width: 100%; }
+.dialog label[for=settings-url] { display: block; margin-bottom: 4px; color: var(--muted); font-size: 13px; }
+
+/* Tastaturfokus sichtbar */
+button:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible, [tabindex]:focus-visible, input[type=checkbox]:focus-visible, input[type=range]:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+.group-head:focus-within .gnew { visibility: visible; }

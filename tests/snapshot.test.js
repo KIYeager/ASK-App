@@ -98,11 +98,60 @@ test('Alte Stände und nicht mehr gebrauchte Fassungen werden gelöscht', async 
     const file = path.join(f.root, '.ask', 'sicherung', 'staende', `${old.id}.json`);
     const stand = JSON.parse(fs.readFileSync(file, 'utf8'));
     fs.writeFileSync(file, JSON.stringify({ ...stand, time: Date.now() - 15 * 24 * 3600 * 1000 }));
-    assert.strictEqual(s.prune(), 1);
+    assert.strictEqual(s.prune(), 0); // frisch abgelegte Fassungen bleiben (laufende Sicherung)
+    assert.strictEqual(s.prune(Date.now() + 2 * 3600 * 1000), 1);
     assert.strictEqual(objects(f.root), 1);
     assert.ok(!fs.existsSync(file));
     assert.deepStrictEqual(await s.diff(now.id), { changed: [], added: [], removed: [] });
   } finally {
     f.done();
+  }
+});
+
+test('Veränderter Stand: kein Schreiben ausserhalb des Ordners, keine fremden Dateien als Fassung', async () => {
+  const f = folder();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-ausserhalb-'));
+  try {
+    f.write('a.txt', 'eins');
+    const s = new Snapshots(f.root);
+    const stand = await s.take();
+    const file = path.join(f.root, '.ask', 'sicherung', 'staende', `${stand.id}.json`);
+    const original = fs.readFileSync(file, 'utf8');
+    const hash = Object.values(JSON.parse(original).files)[0].hash;
+    const escape = `../${path.basename(outside)}/evil.bat`;
+    for (const [rel, h] of [[escape, hash], ['..\\evil.bat', hash], ['C:/evil.bat', hash], ['/evil.bat', hash], ['.ask/chats/x.json', hash],
+      ['ok.txt', '../../../../etc/passwd'], ['ok.txt', 'zz']]) {
+      const bad = JSON.parse(original);
+      bad.files[rel] = { size: 4, mtime: 1, hash: h };
+      fs.writeFileSync(file, JSON.stringify(bad));
+      await assert.rejects(() => s.diff(stand.id), /beschädigt/, rel);
+      await assert.rejects(() => s.restore(stand.id), /beschädigt/, rel);
+    }
+    assert.ok(!fs.existsSync(path.join(outside, 'evil.bat')));
+    fs.writeFileSync(file, original);
+    f.write('a.txt', 'zwei!');
+    assert.deepStrictEqual((await s.restore(stand.id)).failed, []);
+    assert.strictEqual(fs.readFileSync(path.join(f.root, 'a.txt'), 'utf8'), 'eins');
+  } finally {
+    f.done();
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('Ablage ausserhalb des Ordners', async () => {
+  const f = folder();
+  const store = fs.mkdtempSync(path.join(os.tmpdir(), 'ask-ablage-'));
+  try {
+    f.write('a.txt', 'eins');
+    const s = new Snapshots(f.root, store);
+    const stand = await s.take();
+    assert.ok(fs.existsSync(path.join(store, 'staende', `${stand.id}.json`)));
+    assert.ok(!fs.existsSync(path.join(f.root, '.ask', 'sicherung')));
+    f.write('a.txt', 'zwei!');
+    await s.restore(stand.id);
+    assert.strictEqual(fs.readFileSync(path.join(f.root, 'a.txt'), 'utf8'), 'eins');
+  } finally {
+    f.done();
+    fs.rmSync(store, { recursive: true, force: true });
   }
 });
