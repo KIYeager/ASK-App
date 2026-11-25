@@ -28,6 +28,7 @@ const usage = require('./usage');
 const { Servers } = require('./servers');
 const { request: terminalRequest } = require('./tools');
 const { Knowledge } = require('./knowledge');
+const { restoreLabel } = require('./lowlabel');
 
 app.setAppUserModelId('ch.tfbern.ask');
 // Nur für automatische Tests im Entwicklungsmodus: eigener Datenordner.
@@ -626,13 +627,19 @@ function forgetFolder(f) {
     return false;
   }
   settings.removeRecent(f);
+  let stopped = rt ? null : Promise.resolve(); // Marke «Low» erst entfernen, wenn kein Terminal des Ordners mehr läuft
   if (current) {
     workspace.close();
-    if (rt) stopRuntime(rt); else terminal.stop();
+    stopped = rt ? stopRuntime(rt) : terminal.stop();
     terminal = makeTerminal();
     workspace = new Workspace();
     agent = makeAgent('', { terminal, workspace, agents: new Set() });
     if (rt) runtimes.delete(path.resolve(f).toLowerCase());
+  }
+  if (stopped) {
+    const others = settings.load().projects.map((p) => p.folder);
+    Promise.resolve(stopped).then(() => restoreLabel(f, { otherFolders: others }))
+      .catch((e) => console.error('Marke «Low» nicht entfernt:', e?.message || e));
   }
   pushState();
   appWindow?.send('chat:changed', agent.state());

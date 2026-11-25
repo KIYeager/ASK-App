@@ -237,7 +237,7 @@ Tastenkürzel: Ctrl+Plus/Minus/0 zoomt die Oberfläche, Ctrl+R lädt die Anmelde
 
 ## Bekannte Grenzen
 
-- **Lesen ausserhalb des Ordners.** Windows verhindert Schreiben und Löschen ausserhalb des Arbeitsordners (Low Integrity Level). Genauer: ausserhalb aller Ordner, die je Arbeitsordner waren. Die Kennzeichnung bleibt an einem Ordner, auch wenn er aus der Liste entfernt wird; das Modell kann also aus Projekt B über die Shell auch in Projekt A schreiben, und dort gibt es dafür keine Sicherung. Lesen kann das Modell über die Shell aber alle Dateien, die der Nutzer lesen darf, und es hat Internetzugang. Die Datei-API von open-terminal ist zusätzlich auf den Ordner gesperrt. Siehe MACHBARKEIT, Abschnitt 5.
+- **Lesen ausserhalb des Ordners.** Windows verhindert Schreiben und Löschen ausserhalb des Arbeitsordners (Low Integrity Level). Genauer: ausserhalb aller Ordner, die je Arbeitsordner waren. Das Modell kann also aus Projekt B über die Shell auch in Projekt A schreiben, und dort gibt es dafür keine Sicherung. Die Kennzeichnung wird entfernt, wenn ein Projekt aus der Liste genommen wird (mit `icacls … /T`, auch bei den Dateien darin); bei verschachtelten Projekten (ein Ordner liegt im anderen) bleibt sie, damit andere Projekte nicht verändert werden. Das Entfernen ist unter Windows noch nicht getestet. Lesen kann das Modell über die Shell aber alle Dateien, die der Nutzer lesen darf, und es hat Internetzugang. Die Datei-API von open-terminal ist zusätzlich auf den Ordner gesperrt. Siehe MACHBARKEIT, Abschnitt 5.
 - **Originale im Ordner.** Das Modell ändert Dateien direkt; Windows schützt sie nicht (ENTSCHEIDE E14). Schutz bieten die Rückfrage vor Löschen und Überschreiben (E41, erkennt nur, was im Befehl selbst steht) und die Sicherung mit «Rückgängig» (E24). Sie gilt 14 Tage, nur für den letzten Auftrag mit Änderungen und nicht für Dateien über 100 MB, `.git` und Ordner mit mehr als 5000 Dateien. Fürs Rückgängigmachen müssen betroffene Dateien in Word, Excel oder PowerPoint geschlossen sein.
 - **Werkzeuge unter Low.** Windows PowerShell 5.1 und die Unix-Werkzeuge von Git for Windows starten im Terminal nicht. Das Modell arbeitet mit `cmd.exe` und Python. Office lässt sich nur über die App umwandeln, nicht direkt steuern.
 - **Ordner auf FAT/exFAT-USB-Sticks** oder Netzlaufwerken werden abgelehnt, weil sie sich nicht schützen lassen.
@@ -270,7 +270,6 @@ Technische Weiterentwicklungen:
 
 - Mit dem echten ASK und Qwen testen: Werkzeugaufrufe über die Schnittstelle, Qualität der Arbeitsschritte, Anweisungen und Skills nachschärfen (`resources/anweisungen/systemprompt.md` ist bewusst kurz).
 - Stärkere Isolation mit AppContainer, damit auch Lesen auf den Ordner beschränkt ist.
-- Die Kennzeichnung «Low» von einem Ordner wieder entfernen, wenn er aus der Liste genommen wird.
-- `pip install` in einer virtuellen Umgebung (`.venv`) scheitert im Terminal an `PIP_USER=1`; ohne `.venv` geht es.
+- `pip install` in einer virtuellen Umgebung (`.venv`): `PIP_USER` ist entfernt; pip weicht bei nicht beschreibbarem `site-packages` selbst auf die Benutzerinstallation aus. Unter Windows (Low Integrity) noch nicht getestet.
 - Die Bildmarke der Technischen Fachschule Bern steht ohne Wortmarke im Kopf der App. Das CD Manual (1.1.3) verbietet das; mit der Schule klären oder durch das ganze Logo ersetzen.
 - Vorschau für Office-Dateien direkt beim Anklicken, sobald klar ist, dass Office auf allen Laptops vorhanden ist.
