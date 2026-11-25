@@ -4,7 +4,7 @@ ASK Desktop ist eine Windows-App für die Lernenden der TF Bern. Sie ist eine ei
 
 Technisch meldet man sich einmal auf der ASK-Seite an (auch über das Microsoft-Konto); danach liest die App das Login-Token und spricht das Modell direkt über die Schnittstelle von ASK an (`/api/chat/completions`, gestreamt, mit Werkzeugliste). Die Werkzeuge führt die App selbst aus, über [open-terminal](https://github.com/open-webui/open-terminal), das lokal auf `127.0.0.1` mit niedriger Integritätsstufe läuft. ASK sieht nur Text; der ASK-Server erreicht den Laptop nie, und ASK braucht keine Freigabe für Tool-Server (ENTSCHEIDE E19).
 
-Weitere Dokumente: [Machbarkeit](docs/MACHBARKEIT.md), [Entscheide](docs/ENTSCHEIDE.md), [Testprotokoll](docs/TESTPROTOKOLL.md).
+Neue Version veröffentlichen: siehe [unten](#neue-version-veröffentlichen). Weitere Dokumente: [Machbarkeit](docs/MACHBARKEIT.md), [Entscheide](docs/ENTSCHEIDE.md), [Testprotokoll](docs/TESTPROTOKOLL.md).
 
 ## Aufbau
 
@@ -60,25 +60,81 @@ Lokal bauen braucht es nur noch zum Ausprobieren. Veröffentlichte Versionen bau
 
 ## Neue Version veröffentlichen
 
-Ein Befehl im Projektordner, Version wie `0.2.0` und ein kurzer Text, was neu ist (erscheint im Update-Dialog der App):
+Neue Versionen baut GitHub, nicht der eigene Rechner. Man gibt einen Befehl ein, GitHub baut auf einem Windows-Rechner Installer und EXE und stellt sie in das öffentliche Repository [KIYeager/ASK-Releases](https://github.com/KIYeager/ASK-Releases). Alle installierten Apps bieten das Update danach von selbst an (ENTSCHEIDE E37). Der Code in ASK-App bleibt privat; ASK-Releases enthält nur die fertigen Dateien, und die App holt sie ohne Token.
+
+### Einmal einrichten
+
+Nur vor dem allerersten Release nötig.
+
+1. **Release-Repository anlegen.** Auf GitHub «New repository», Owner `KIYeager`, Name `ASK-Releases`, **Public**, Häkchen bei «Add a README file» (ein leeres Repository nimmt keine Releases an). Danach den Inhalt von [docs/ASK-Releases-README.md](docs/ASK-Releases-README.md) als README einfügen: Er erklärt den Lernenden, was sie herunterladen sollen.
+2. **Token anlegen.** GitHub, Profilbild, Settings, Developer settings, Personal access tokens, Fine-grained tokens, «Generate new token»:
+   - Resource owner: `KIYeager`
+   - Repository access: «Only select repositories», nur `ASK-Releases`
+   - Permissions, Repository permissions: «Contents: Read and write»
+   - Expiration: nach Wunsch. Läuft das Token ab, scheitert das nächste Release beim Veröffentlichen, dann ein neues anlegen und Schritt 3 wiederholen.
+3. **Token in ASK-App eintragen.** Im Repository ASK-App: Settings, Secrets and variables, Actions, «New repository secret». Name `RELEASES_TOKEN`, Wert das Token aus Schritt 2.
+
+### Ein Release machen
+
+1. **Vorbereiten.** Am besten auf `main` (nach dem Merge der Änderungen). Alles committet, Tests grün:
+
+   ```powershell
+   git checkout main
+   ```
+
+   ```powershell
+   git pull
+   ```
+
+   ```powershell
+   npm test
+   ```
+
+2. **Versionsnummer wählen.** Die aktuelle steht in `package.json`. Faustregel: kleine Korrekturen die letzte Zahl erhöhen (`0.2.0` → `0.2.1`), neue Funktionen die mittlere (`0.2.1` → `0.3.0`). Die neue Version muss grösser sein als die aktuelle.
+
+3. **Release starten.** Version und ein kurzer Text, was neu ist. Der Text erscheint im Update-Dialog der App, also für die Lernenden verständlich schreiben:
+
+   ```powershell
+   npm run release -- 0.2.0 "Updates kommen jetzt automatisch"
+   ```
+
+   Das Skript (`scripts/release.js`) prüft, dass alles committet ist und die Version grösser ist, setzt sie in `package.json` und `package-lock.json`, macht den Commit «Version 0.2.0» und den Tag `v0.2.0` mit dem Text und lädt beides hoch.
+
+4. **Warten.** Im Repository ASK-App, Reiter «Actions», läuft jetzt «Release», rund 15 bis 20 Minuten: npm-Pakete, Lint und Tests, Python, Installer, einzelne EXE, Veröffentlichen.
+
+5. **Prüfen.** In [ASK-Releases, Releases](https://github.com/KIYeager/ASK-Releases/releases) steht «ASK 0.2.0» mit dem Vermerk «Latest» und sechs Dateien: `ASK-Setup-0.2.0.exe`, `ASK-Setup-0.2.0.exe.blockmap`, `latest.yml`, `ASK-0.2.0.exe` und mit festem Namen `ASK-Setup.exe` und `ASK.exe`. Der Link für die Lernenden (Abschnitt «Installation») liefert ab jetzt diese Version. Installierte Apps fragen spätestens 6 Stunden später oder beim nächsten Start; sofort geht es mit «Nach Updates suchen» in den Einstellungen.
+
+Jedes Release braucht rund 30 bis 40 der 2000 Gratis-Minuten von GitHub Actions pro Monat (Windows-Rechner zählen bei privaten Repositories doppelt).
+
+### Beta-Version zum Testen
+
+Gleich wie oben, nur mit `-beta.<Nummer>` hinter der Version:
 
 ```powershell
-npm run release -- 0.2.0 "Updates kommen jetzt automatisch"
+npm run release -- 0.3.0-beta.1 "Zum Testen: neue Seitenleiste"
 ```
 
-Das Skript (`scripts/release.js`) prüft, dass alles committet ist und die Version grösser ist als die aktuelle, setzt sie in `package.json` und `package-lock.json`, macht den Commit «Version 0.2.0» und den Tag `v0.2.0` mit dem Text und lädt beides hoch. Den Rest macht der Workflow `.github/workflows/release.yml` auf einem Windows-Rechner von GitHub, rund 15 bis 20 Minuten: npm-Pakete, Unit-Tests, Python, Installer, einzelne EXE, dann ein Release im öffentlichen Repository [KIYeager/ASK-Releases](https://github.com/KIYeager/ASK-Releases) mit `ASK-Setup-<Version>.exe`, `.blockmap`, `latest.yml`, `ASK-<Version>.exe` und zusätzlich `ASK-Setup.exe` und `ASK.exe` mit festem Namen. Den Fortschritt zeigt der Reiter «Actions» im Repository ASK-App.
+Die Version erscheint in ASK-Releases als «Pre-release». Angeboten bekommt sie nur, wer «Beta-Versionen erhalten» eingeschaltet hat (Einstellungen, Ordner-Menü oder `/beta`). Alle anderen sehen sie nicht, und der Link für die Lernenden zeigt weiter auf die letzte normale Version. Weitere Betas zählen hoch (`0.3.0-beta.2`), die fertige Version heisst dann `0.3.0` und geht an alle.
 
-**Beta.** Eine Version wie `0.3.0-beta.1` erscheint in ASK-Releases als Vorabversion. Nur wer im Ordner-Menü «Beta-Versionen erhalten» eingeschaltet hat (oder `/beta`), bekommt sie angeboten. Alle anderen sehen sie nicht, und der Link «neueste Version» zeigt weiter auf die letzte normale Version.
+### Wenn etwas schiefgeht
 
-Der Code bleibt privat; ASK-Releases enthält nur die fertigen Dateien. Die App holt Updates ohne Token (ENTSCHEIDE E37).
+Im Reiter «Actions» den roten Lauf öffnen; der Schritt mit dem roten Kreuz nennt den Grund.
 
-**Einmal einrichten** (vor dem ersten Release):
+| Meldung oder Lage | Abhilfe |
+|---|---|
+| «Secret RELEASES_TOKEN fehlt» | Einmal einrichten, Schritt 3. Danach im Lauf oben rechts «Re-run jobs». |
+| Fehler beim Veröffentlichen mit `401` oder `Bad credentials` | Token abgelaufen oder ohne Recht auf ASK-Releases: neues Token (Schritt 2), Secret ersetzen (Schritt 3), «Re-run jobs». |
+| «Tag … passt nicht zu package.json» | Der Tag wurde von Hand gesetzt. Immer `npm run release` verwenden. |
+| Fehler beim Herunterladen (npm, Python, NuGet) | Meist vorübergehend: einmal «Re-run jobs». |
+| Tests oder Build scheitern wegen des Codes | Fehler beheben, committen und eine neue Version veröffentlichen (`0.2.1`). Die gescheiterte Version wird nie veröffentlicht; ihr Tag kann bleiben. |
+| Release in ASK-Releases ist halb da (Dateien fehlen) | Das Release in ASK-Releases löschen («Delete»), dann «Re-run jobs». |
+| Eine veröffentlichte Version hat einen Fehler | Nicht löschen, sondern schnell eine korrigierte Version nachschieben (`0.2.1`). Apps gehen nie auf eine ältere Version zurück. |
 
-1. Auf GitHub das öffentliche Repository `KIYeager/ASK-Releases` anlegen, mit «Add a README file» (ein leeres Repository nimmt keine Releases an). Als README passt [docs/ASK-Releases-README.md](docs/ASK-Releases-README.md).
-2. Ein Token anlegen: GitHub, Settings, Developer settings, Personal access tokens, Fine-grained tokens, «Generate new token». Resource owner `KIYeager`, Repository access «Only select repositories» mit nur `ASK-Releases`, Permissions, Repository permissions, «Contents: Read and write». Ablaufdatum nach Wunsch (danach ein neues eintragen).
-3. Im Repository ASK-App: Settings, Secrets and variables, Actions, «New repository secret», Name `RELEASES_TOKEN`, Wert das Token.
+`npm run release` meldet selbst, wenn noch Änderungen nicht committet sind, die Version nicht grösser ist oder es den Tag schon gibt; dann wurde nichts verändert.
 
-Ändert sich der Ort der Releases, `updates` in `resources/app-config.json` anpassen (gilt für App und Build) und im Workflow `--repo` ändern. Bereits installierte Apps suchen am alten Ort weiter, bis sie eine Version mit der neuen Angabe haben.
+### Ort der Releases ändern
+
+`updates` in `resources/app-config.json` anpassen (gilt für App und Build) und im Workflow `.github/workflows/release.yml` das `--repo` ändern. Bereits installierte Apps suchen am alten Ort weiter, bis sie eine Version mit der neuen Angabe haben; die letzte Version am alten Ort muss also schon die neue Angabe enthalten.
 
 ## Installation
 
@@ -90,7 +146,7 @@ https://github.com/KIYeager/ASK-Releases/releases/latest/download/ASK-Setup.exe
 
 Ohne Installation: `ASK-<Version>.exe` irgendwo ablegen und doppelklicken. Beim ersten Start entpackt die EXE die App einmal nach `%LOCALAPPDATA%\ASK-Desktop\app\<Version>-<Build>` (Startbild «ASK wird gestartet …»), danach startet sie die App direkt von dort. Eine neuere EXE entpackt sich beim ersten Start neu, die App löscht dann den älteren Stand. Es gibt keine Verknüpfungen und keinen Eintrag unter «Apps». Einstellungen und Laufzeitdaten liegen am gleichen Ort wie bei der installierten App. Installierte App und EXE laufen nicht gleichzeitig.
 
-**Updates.** Die installierte App sucht 20 Sekunden nach dem Start und danach alle 6 Stunden in ASK-Releases nach einer neueren Version. Gibt es eine, fragt sie «ASK 0.2.0 ist da. Jetzt aktualisieren?» und zeigt den Text des Releases. «Jetzt aktualisieren» lädt das Update (unten in der Statuszeile «Update lädt … 40%»), danach fragt die App «Jetzt neu starten?»; sonst installiert es sich beim nächsten Schliessen. Das Installieren läuft still, ohne Admin-Rechte, und startet ASK danach wieder. Chats, Ordner und Einstellungen bleiben. Bei «Später» fragt sie bis zum nächsten Start nicht mehr von selbst, unten steht aber «Update 0.2.0» zum Anklicken. Während das Modell arbeitet, fragt sie nie, sondern erst danach. Von Hand: Ordner-Menü «Nach Updates suchen», `/update` oder der Eintrag unten. Ohne Internet bleibt die Suche still.
+**Updates.** Die installierte App sucht 20 Sekunden nach dem Start und danach alle 6 Stunden in ASK-Releases nach einer neueren Version. Gibt es eine, fragt sie «ASK 0.2.0 ist da. Jetzt aktualisieren?» und zeigt den Text des Releases. «Jetzt aktualisieren» lädt das Update (unten in der Statuszeile «Update lädt … 40%»), danach fragt die App «Jetzt neu starten?»; sonst installiert es sich beim nächsten Schliessen. Das Installieren läuft still, ohne Admin-Rechte, und startet ASK danach wieder. Chats, Ordner und Einstellungen bleiben. Bei «Später» fragt sie bis zum nächsten Start nicht mehr von selbst, unten steht aber «Update 0.2.0» zum Anklicken. Während das Modell arbeitet, fragt sie nie, sondern erst danach. Von Hand: «Nach Updates suchen» in den Einstellungen oder im Ordner-Menü, `/update` oder der Eintrag unten. Ohne Internet bleibt die Suche still.
 
 Die einzelne EXE kann sich nicht selbst ersetzen. Sie sucht genauso, meldet eine neue Version aber nur mit «Download öffnen» (Seite des Releases); die neue `ASK.exe` entpackt sich beim ersten Start und räumt den alten Stand weg.
 
