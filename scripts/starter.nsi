@@ -2,7 +2,7 @@
 ; Erster Start: App mit Startbild nach %LOCALAPPDATA%\ASK-Desktop\app\<BUILD_ID> entpacken, über
 ; einen Ordner .neu, damit ein abgebrochenes Entpacken nie als fertig gilt. Spätere Starts rufen
 ; die App direkt von dort auf, ohne Fenster. Ältere Stände räumt die App weg (src/main/portable.js).
-; Defines: BUILD_ID, VERSION, APP_DIR, OUT_FILE, SPLASH, ICON
+; Defines: BUILD_ID, VERSION, VI_VERSION (nur Zahlen X.X.X.X, auch bei Betas), APP_DIR, OUT_FILE, SPLASH, ICON
 
 Unicode true
 !include LogicLib.nsh
@@ -20,7 +20,7 @@ AutoCloseWindow true
 ShowInstDetails nevershow
 InstallDir "$LOCALAPPDATA\ASK-Desktop\app\${BUILD_ID}"
 
-VIProductVersion "${VERSION}.0"
+VIProductVersion "${VI_VERSION}"
 VIAddVersionKey ProductName "ASK"
 VIAddVersionKey FileDescription "ASK"
 VIAddVersionKey CompanyName "TF Bern"
