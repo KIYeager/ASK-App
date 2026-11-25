@@ -47,6 +47,24 @@ function allowedNavigation(url, fileRoot = '') {
   return /^https?:/i.test(url) || (!!fileRoot && String(url).toLowerCase().startsWith(fileRoot.toLowerCase()));
 }
 
+// Lokale Adresse eines Servers, den die App in diesem Projekt gestartet hat (ENTSCHEIDE E48)? Nur
+// localhost, 127.0.0.1 und [::1] mit genau einem freigegebenen Port, keine anderen Adressen im Netz.
+function allowedLocal(raw, localPorts) {
+  if (!localPorts || !localPorts.size) return false;
+  let url;
+  try { url = new URL(String(raw).trim()); } catch { return false; }
+  if (!/^https?:$/.test(url.protocol)) return false;
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.+$/, '');
+  if (!['localhost', '127.0.0.1', '::1'].includes(host)) return false;
+  return localPorts.has(Number(url.port || (url.protocol === 'https:' ? 443 : 80)));
+}
+
+// Wie checkUrl aus web.js, aber mit den Ports der eigenen Server
+function checkTarget(raw, allowLocal, localPorts) {
+  if (allowedLocal(raw, localPorts)) return new URL(String(raw).trim());
+  return checkUrl(raw, allowLocal);
+}
+
 // Tastennamen für sendInputEvent: «Pfeil hoch» usw. auf Electron-Namen abbilden
 const KEYS = { pfeilhoch: 'Up', pfeilrunter: 'Down', pfeillinks: 'Left', pfeilrechts: 'Right', arrowup: 'Up', arrowdown: 'Down',
   arrowleft: 'Left', arrowright: 'Right', leertaste: 'Space', ' ': 'Space', space: 'Space', enter: 'Enter', return: 'Enter',
@@ -187,10 +205,12 @@ class Visual {
   }
 
   // Was soll geöffnet werden? { url, fileRoot } oder null (auf der offenen Seite weiterarbeiten)
-  target(root, ziel) {
-    const text = String(ziel ?? '').trim();
+  // localPorts: Ports der Server, die die App in diesem Projekt gestartet hat (servers.js)
+  target(root, ziel, localPorts = null) {
+    let text = String(ziel ?? '').trim();
     if (!text) return null;
-    if (/^https?:\/\//i.test(text)) return { url: checkUrl(text, this.allowLocal).href, fileRoot: '' };
+    if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(text)) text = `http://${text}`; // Server ohne http://
+    if (/^https?:\/\//i.test(text)) return { url: checkTarget(text, this.allowLocal, localPorts).href, fileRoot: '' };
     if (/^[a-z][a-z0-9+.-]+:/i.test(text) && !/^[a-z]:[\\/]/i.test(text)) throw new Error('Der Browser öffnet nur http- und https-Adressen und HTML-Dateien im Arbeitsordner.');
     if (!/\.html?$/i.test(text) && /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(text) && !fs.existsSync(path.resolve(root, text))) {
       return { url: checkUrl(`https://${text}`, this.allowLocal).href, fileRoot: '' }; // Adresse ohne https://
@@ -204,9 +224,9 @@ class Visual {
   // Konsole und Seiteninhalt zurück (ENTSCHEIDE E25, E27, E29). Sichtbar im Browser-Bereich der App (getPane),
   // sonst unsichtbar. onLive meldet Start, Schritte, Konsole und Ende (unsichtbar auch Bilder) an die Oberfläche.
   // Stopp (signal) und MAX_RUN_MS beenden den Aufruf, auch wenn die Seite nicht mehr antwortet.
-  async browse(root, ziel, { aktionen, warten, chat, onLive, signal }) {
+  async browse(root, ziel, { aktionen, warten, chat, onLive, signal, localPorts = null }) {
     const live = typeof onLive === 'function' ? onLive : () => {};
-    const page = this.target(root, ziel);
+    const page = this.target(root, ziel, localPorts);
     live({ phase: 'start', path: String(ziel ?? '') });
     const pane = this.getPane ? await this.getPane().catch(() => null) : null;
     if (!page && (!pane || !/^(https?|file):/.test(pane.wc.getURL()))) {
@@ -347,7 +367,7 @@ class Visual {
       // Weiterleitungen und Links können ins lokale Netz führen; das bleibt für das Modell gesperrt
       if (info && /^https?:/.test(info.url)) {
         try {
-          checkUrl(info.url, this.allowLocal);
+          checkTarget(info.url, this.allowLocal, localPorts);
         } catch {
           return { ok: false, output: 'Diese Seite liegt im lokalen Netz oder auf diesem Rechner. Das Modell darf sie nicht lesen.', summary: 'lokale Seite gesperrt' };
         }
@@ -412,4 +432,4 @@ class Visual {
   }
 }
 
-module.exports = { Visual, parsePages, keyCode, allowedNavigation, OUT_DIR };
+module.exports = { Visual, parsePages, keyCode, allowedNavigation, allowedLocal, OUT_DIR };

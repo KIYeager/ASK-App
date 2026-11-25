@@ -576,7 +576,8 @@ TOOLS.push(
     description: 'Der eingebaute Browser der App: Öffnet eine Webseite (ziel: https://…) oder eine HTML-Datei im Arbeitsordner sichtbar im Browser-Bereich rechts in der App. '
       + 'Die Person sieht alles live und kann selbst klicken, tippen und sich anmelden. Ohne ziel arbeitest du auf der offenen Seite weiter, ohne sie neu zu laden. '
       + 'Führt Klicks, Tasten, Eingaben und Scrollen aus und liefert Adresse, Titel, Fehler der Konsole, den sichtbaren Text, die Bedienelemente und ein Bildschirmfoto. '
-      + 'Damit bedienst du Webseiten, prüfst Spiele und zeigst der Person Seiten. Frag vor allem, was etwas abschickt, kauft, postet oder löscht.',
+      + 'Damit bedienst du Webseiten, prüfst Spiele und zeigst der Person Seiten. Frag vor allem, was etwas abschickt, kauft, postet oder löscht. '
+      + 'Adressen auf diesem Rechner (http://localhost:…) öffnet er nur für Server, die du mit server_starten gestartet hast.',
     parameters: {
       type: 'object',
       properties: {
@@ -604,9 +605,91 @@ TOOLS.push(
       },
     },
     run: visualTool(async (v, folder, a, ctx) => {
-      const r = await v.browse(folder, a.ziel, { aktionen: a.aktionen, warten: a.warten, chat: ctx.chat, onLive: ctx.onLive, signal: ctx.signal });
+      // Lokale Adressen nur für Server, die die App in diesem Projekt gestartet hat (ENTSCHEIDE E48)
+      const r = await v.browse(folder, a.ziel, { aktionen: a.aktionen, warten: a.warten, chat: ctx.chat, onLive: ctx.onLive, signal: ctx.signal,
+        localPorts: ctx.servers ? ctx.servers.allowedPorts() : new Set() });
       if (!ctx.canSee) r.output = r.output.replace('Das Bildschirmfoto folgt in der nächsten Nachricht.', 'Das Bildschirmfoto bekommst du nicht: das Modell in ASK kann keine Bilder ansehen.');
       return r;
+    }),
+  },
+);
+
+// Entwicklungsserver (src/main/servers.js, ENTSCHEIDE E48): laufen im Terminal weiter, ohne dass der Auftrag
+// wartet. Die Person sieht sie im Browser-Bereich und kann sie dort öffnen und stoppen.
+function serverTool(fn) {
+  return async (terminal, args, ctx) => {
+    if (!ctx.servers) throw new Error('Server sind hier nicht verfügbar.');
+    return fn(ctx.servers, args, ctx);
+  };
+}
+
+const SERVER_STATES = { startet: 'startet', läuft: 'läuft', gestoppt: 'gestoppt', fehler: 'Fehler' };
+
+function serverLine(s) {
+  const exit = s.exitCode !== null && s.exitCode !== undefined && s.state !== 'läuft' ? `, Exitcode ${s.exitCode}` : '';
+  return `${s.id} «${s.name}»: ${SERVER_STATES[s.state] || s.state}${exit}${s.url ? `, ${s.url}` : ', keine Adresse erkannt'} (${s.command})`;
+}
+
+TOOLS.push(
+  {
+    name: 'server_starten',
+    label: 'Server',
+    describe: (a) => a.befehl,
+    description: 'Startet einen Entwicklungsserver oder ein anderes Programm, das weiterlaufen soll (z. B. npm run dev, python -m http.server 8000, node server.js), '
+      + 'im Arbeitsordner im Hintergrund. Wartet einige Sekunden und liefert id, Adresse (falls in der Ausgabe erkannt) und die ersten Zeilen der Ausgabe. '
+      + 'Der Server läuft weiter, auch nach dem Auftrag; die Person sieht ihn im Browser-Bereich. Die Adresse öffnest du mit browser.',
+    parameters: {
+      type: 'object',
+      properties: {
+        befehl: { type: 'string', description: 'Befehl für cmd.exe, z. B. npm run dev' },
+        name: { type: 'string', description: 'Kurzer Name für die Anzeige, z. B. «Webseite»' },
+      },
+      required: ['befehl'],
+    },
+    run: serverTool(async (servers, a) => {
+      const command = String(a.befehl || a.command || '').trim();
+      if (!command) throw new Error('befehl fehlt');
+      const blocked = blockedCommand(command);
+      if (blocked) return { ok: false, output: blocked, summary: 'abgelehnt' };
+      const started = await servers.start(command, { name: a.name, by: 'modell' });
+      const s = started.existing ? started : await servers.waitReady(started.id, 8000);
+      const out = servers.output(s.id, 30).join('\n').trim();
+      const head = started.existing ? `Läuft schon: ${serverLine(s)}` : serverLine(s);
+      const next = s.state === 'fehler' || s.state === 'gestoppt'
+        ? 'Der Server ist beendet. Ausgabe prüfen, Fehler beheben und neu starten.'
+        : s.url ? `Mit browser (ziel: ${s.url}) öffnen.${s.ready ? '' : ' Er antwortet noch nicht; kurz warten.'}` : 'Noch keine Adresse erkannt; später mit server_liste nachsehen.';
+      return { ok: s.state !== 'fehler', output: `${head}\n${next}\n\nAusgabe:\n${clip(out, 4000) || '(noch keine)'}`, display: out || head,
+        summary: `${SERVER_STATES[s.state] || s.state}${s.url ? ` · ${s.url}` : ''}` };
+    }),
+  },
+  {
+    name: 'server_stoppen',
+    label: 'Server',
+    describe: (a) => `stoppen ${a.id}`,
+    description: 'Stoppt einen Server, den server_starten oder die Person gestartet hat.',
+    parameters: { type: 'object', properties: { id: { type: 'string', description: 'id aus server_starten oder server_liste' } }, required: ['id'] },
+    run: serverTool(async (servers, a) => {
+      const s = servers.get(a.id);
+      if (!s) return { ok: false, output: `Kein Server mit id ${a.id}. Mit server_liste nachsehen.`, summary: 'nicht gefunden' };
+      await servers.stop(s.id);
+      return { ok: true, output: `Gestoppt: ${s.name} (${s.id})`, summary: `${s.name} gestoppt` };
+    }),
+  },
+  {
+    name: 'server_liste',
+    label: 'Server',
+    describe: () => 'Liste',
+    description: 'Listet die Server dieses Projekts mit Zustand, Adresse und den letzten Zeilen der Ausgabe.',
+    parameters: { type: 'object', properties: {} },
+    run: serverTool(async (servers) => {
+      const list = servers.list();
+      if (!list.length) return { ok: true, output: 'Keine Server gestartet.', summary: 'keine' };
+      const output = list.map((s) => {
+        const tail = servers.output(s.id, 8).join('\n   ');
+        return `${serverLine(s)}${tail ? `\n   ${tail}` : ''}`;
+      }).join('\n\n');
+      const live = list.filter((s) => s.state === 'läuft' || s.state === 'startet').length;
+      return { ok: true, output: clip(output), summary: `${live} ${live === 1 ? 'läuft' : 'laufen'}` };
     }),
   },
 );

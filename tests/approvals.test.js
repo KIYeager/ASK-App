@@ -43,3 +43,10 @@ test('Überschreiben vorhandener Dateien, ausser das Modell hat sie in diesem Au
 test('commandWords', () => {
   assert.deepStrictEqual(commandWords('@echo off && del "a b.txt" | more'), ['echo', 'del', 'more']);
 });
+
+test('server_starten wird wie ein Befehl geprüft', () => {
+  assert.strictEqual(assessRisk('server_starten', { befehl: 'npm run dev' }, { mode: 'heikel' }), null);
+  assert.strictEqual(assessRisk('server_starten', { befehl: 'del /q dist & npm run dev' }, { mode: 'heikel' })?.kind, 'loeschen');
+  assert.strictEqual(assessRisk('server_starten', { befehl: 'python -m http.server -d C:\\Users' }, { mode: 'heikel' })?.kind, 'ausserhalb');
+  assert.strictEqual(assessRisk('server_starten', { befehl: 'npm run dev' }, { mode: 'alle' })?.title, 'Server starten?');
+});

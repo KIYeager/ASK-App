@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
-const { parsePages, keyCode, Visual, allowedNavigation } = require('../src/main/visual');
+const { parsePages, keyCode, Visual, allowedNavigation, allowedLocal } = require('../src/main/visual');
 const { apiMessages, loopReason } = require('../src/main/agent');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -49,6 +49,19 @@ test('Browser: Ziele und Navigation', () => {
     assert.throws(() => v.target(root, 'javascript:alert(1)'), /nur http/);
     for (const local of ['http://127.0.0.1:8000/', 'http://localhost/', 'http://192.168.1.1/']) assert.throws(() => v.target(root, local), /lokalen Netz/, local);
     assert.strictEqual(new Visual({ allowLocal: true }).target(root, 'http://127.0.0.1:8000/').url, 'http://127.0.0.1:8000/');
+    // Server, die die App gestartet hat (ENTSCHEIDE E48): nur genau diese Ports auf diesem Rechner
+    const ports = new Set([5173, 8000]);
+    assert.strictEqual(v.target(root, 'http://localhost:5173/', ports).url, 'http://localhost:5173/');
+    assert.strictEqual(v.target(root, 'http://127.0.0.1:8000/index.html', ports).url, 'http://127.0.0.1:8000/index.html');
+    assert.strictEqual(v.target(root, 'http://[::1]:8000/', ports).url, 'http://[::1]:8000/');
+    assert.strictEqual(v.target(root, 'localhost:5173', ports).url, 'http://localhost:5173/', 'ohne http://');
+    for (const local of ['http://localhost:5174/', 'http://localhost/', 'http://192.168.1.1:5173/', 'http://intranet:8000/', 'http://0.0.0.0:8000/',
+      'file:///C:/x.html']) {
+      assert.throws(() => v.target(root, local, ports), /lokalen Netz|nur http/, local);
+    }
+    assert.ok(allowedLocal('https://localhost:5173/x', ports));
+    assert.ok(!allowedLocal('http://localhost:5173/', new Set()));
+    assert.ok(!allowedLocal('http://localhost:5173/', null));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

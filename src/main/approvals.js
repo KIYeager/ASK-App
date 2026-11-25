@@ -37,8 +37,9 @@ function assessRisk(name, args = {}, ctx = {}) {
   if (mode === 'aus') return null;
   const exists = ctx.exists || (() => false);
   const made = ctx.madeThisTurn || (() => false);
-  if (name === 'run_command') {
-    const command = String(args.command || '');
+  // server_starten (ENTSCHEIDE E48) startet einen Befehl wie run_command, er läuft nur weiter
+  if (name === 'run_command' || name === 'server_starten') {
+    const command = String((name === 'server_starten' ? args.befehl : args.command) || '');
     const words = commandWords(command);
     if (words.some((w) => DELETE_WORDS.has(w)) || DELETE_CALLS.test(command)) {
       return { kind: 'loeschen', title: 'Darf ASK Dateien löschen?', detail: shorten(command),
@@ -48,7 +49,7 @@ function assessRisk(name, args = {}, ctx = {}) {
       return { kind: 'ausserhalb', title: 'Befehl mit Pfad ausserhalb des Ordners', detail: shorten(command),
         reason: 'Der Befehl nennt einen Ort ausserhalb des Projekts.' };
     }
-    if (mode === 'alle') return { kind: 'befehl', title: 'Befehl ausführen?', detail: shorten(command), reason: '' };
+    if (mode === 'alle') return { kind: 'befehl', title: name === 'server_starten' ? 'Server starten?' : 'Befehl ausführen?', detail: shorten(command), reason: '' };
     return null;
   }
   if (name === 'write_file' || name === 'edit_file') {

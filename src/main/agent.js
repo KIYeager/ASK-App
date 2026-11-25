@@ -159,7 +159,7 @@ function apiMessages(system, messages, textMode = false, imageUrl = null, budget
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer, servers }) {
     super();
     this.getContextLimit = getContextLimit || (() => 0); // Kontextfenster des Modells in Token, 0: unbekannt
     this.onContextLimit = onContextLimit || (() => {}); // ASK hat die Grenze in einer Fehlermeldung genannt
@@ -177,6 +177,7 @@ class Agent extends EventEmitter {
     this.web = web || null; // web_search und web_fetch (web.js)
     this.githubTrust = githubTrust || null;
     this.visual = visual || null; // view_file und browser (visual.js)
+    this.servers = servers || null; // Entwicklungsserver des Projekts (servers.js)
     this.getSnapshots = getSnapshots || (() => null); // Sicherung des Arbeitsordners (snapshot.js)
     this.lastSkipped = '';
     this.github = github;
@@ -601,6 +602,7 @@ class Agent extends EventEmitter {
           github: this.github,
           githubTrust: this.githubTrust,
           visual: this.visual,
+          servers: this.servers,
           web: this.web,
           images: flux ? this.images : null,
           chatMemory: memory,
