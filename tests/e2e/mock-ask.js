@@ -17,6 +17,7 @@ const mode = process.argv[3] || 'angemeldet';
 const TOKEN = 'test-token';
 const log = [];
 const chatLog = [];
+const reviewLog = []; // Anfragen des Prüfers (Modus «Auto»)
 const searches = []; // Anfragen an die Websuche von ASK
 let toolsAccepted = true;
 let usageAccepted = true;
@@ -373,6 +374,12 @@ http.createServer((req, res) => {
     req.on('end', async () => {
       const data = JSON.parse(body);
       if ((data.tool_ids || []).includes('flux_bild')) return fluxAnswer(data, res);
+      // Prüfer des Modus «Auto» (src/main/review.js): eigene kurze Antwort, nicht im chatLog der Arbeitsschleife
+      if (/^Du prüfst einen einzelnen Arbeitsschritt/.test(data.messages[0]?.content || '')) {
+        reviewLog.push(textOf(data.messages[1]?.content));
+        const dangerous = /\breg (add|delete)\b|format [a-z]:|\| *iex\b/i.test(textOf(data.messages[1]?.content));
+        return json(res, 200, { choices: [{ message: { role: 'assistant', content: JSON.stringify({ gefaehrlich: dangerous, grund: dangerous ? 'Das ändert etwas ausserhalb des Projekts.' : 'Passt zum Auftrag.' }) }, finish_reason: 'stop' }] });
+      }
       chatLog.push({ model: data.model, stream: data.stream, usage: !!data.stream_options?.include_usage, web: !!data.features?.web_search,
         effort: data.reasoning_effort, think: data.think, enableThinking: data.chat_template_kwargs?.enable_thinking, tools: (data.tools || []).map((t) => t.function.name),
         system: data.messages[0]?.content || '', roles: data.messages.map((m) => m.role),
