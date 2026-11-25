@@ -34,11 +34,17 @@ function staleAppDirs(root, ownName, now = Date.now()) {
   return result;
 }
 
+// Läuft die App aus der einzelnen EXE (entpackt unter appCacheRoot) statt installiert?
+function isPortable(execPath = process.execPath, env = process.env) {
+  const root = appCacheRoot(env);
+  return !!root && path.dirname(path.dirname(execPath)).toLowerCase() === root.toLowerCase();
+}
+
 // Nur mit der Einzelinstanz-Sperre aufrufen: Dann läuft kein anderer Stand mehr.
 function cleanupOldVersions() {
+  if (!isPortable()) return;
   const root = appCacheRoot();
   const ownDir = path.dirname(process.execPath);
-  if (!root || path.dirname(ownDir).toLowerCase() !== root.toLowerCase()) return; // nicht aus der einzelnen EXE
   // Das fs von Electron behandelt app.asar als Ordner und kann sie nicht löschen.
   const rawFs = require('original-fs');
   for (const dir of staleAppDirs(root, path.basename(ownDir))) {
@@ -46,4 +52,4 @@ function cleanupOldVersions() {
   }
 }
 
-module.exports = { appCacheRoot, staleAppDirs, cleanupOldVersions, MIN_AGE_MS };
+module.exports = { appCacheRoot, isPortable, staleAppDirs, cleanupOldVersions, MIN_AGE_MS };

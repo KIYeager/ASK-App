@@ -226,6 +226,32 @@ class SkillTest(unittest.TestCase):
             p = self.run_py(os.path.join(".ask", "skills", "pruefen.py"), "ausgabe/matrix.xlsx")
             self.assertEqual("Kopfzeile (Zeile 3) ist nicht fett" in p.stdout, erwartet, p.stdout)
 
+    def test_word_ersetzen_in_langem_dokument(self):
+        # Früher blieb in längeren Dokumenten der grösste Teil unverändert (Vergleich über id() von Hüllen)
+        from docx import Document
+        sys.path.insert(0, os.path.join(self.dir, ".ask", "skills"))
+        try:
+            import bearbeiten
+        finally:
+            sys.path.pop(0)
+        doc = Document()
+        for n in range(300):
+            doc.add_paragraph(f"Absatz {n}: Proxmox 7 im Labor")
+        self.assertEqual(bearbeiten.word_ersetzen(doc, "Proxmox 7", "Proxmox 9"), 300)
+        self.assertFalse(any("Proxmox 7" in p.text for p in doc.paragraphs))
+
+    def test_pruefen_python(self):
+        with open(os.path.join(self.dir, "gut.py"), "w", encoding="utf-8") as f:
+            f.write("print('Grüezi')\n")
+        with open(os.path.join(self.dir, "schlecht.py"), "w", encoding="utf-8") as f:
+            f.write("def f(:\n    pass\n")
+        p = self.run_py(os.path.join(".ask", "skills", "pruefen.py"), "gut.py")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("Syntax: in Ordnung", p.stdout)
+        p = self.run_py(os.path.join(".ask", "skills", "pruefen.py"), "schlecht.py")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("Syntaxfehler (Zeile 1)", p.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,8 +5,8 @@ eine JSON-Zeile von stdin, damit der API-Key weder in der Kommandozeile noch in 
 Anpassungen gegenüber open-terminal 0.14.2:
   - Ordnersperre für die Datei-API (guard.py)
   - CORS nur für den ASK-Origin, Private-Network-Preflight erlaubt
-  - Befehle ohne ConPTY (saubere UTF-8-Ausgabe, Zeilen in der OEM-Codepage werden umgewandelt),
-    Abbruch beendet den ganzen Prozessbaum
+  - Befehle ohne ConPTY (saubere UTF-8-Ausgabe, Zeilen in der OEM-Codepage werden umgewandelt,
+    beliebig lange Zeilen), Abbruch beendet den ganzen Prozessbaum
   - Skills aus .ask/skills, eigener Systemprompt
   - read_file liest Word vollständig, auch Inhaltssteuerelemente und Kopfzeilen (documents.py)
   - WebSocket-Anmeldung über den Header, den die App einsetzt
@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ask_terminal import VERSION, winproc  # noqa: E402
 from ask_terminal.guard import PathGuard, install as install_guard  # noqa: E402
+from ask_terminal.streams import read_lines  # noqa: E402
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -117,10 +118,13 @@ def main() -> None:
     class TreePipeRunner(PipeRunner):
         async def read_output(self, log_file) -> None:
             async def read_stream(stream, label):
-                async for line in stream:
+                async def write(line):
                     if log_file:
                         entry = {"type": label, "data": decode_output(line, oem), "ts": time.time()}
                         await log_file.write(json.dumps(entry) + "\n")
+
+                # nicht «async for line in stream»: das bricht bei Zeilen über 64 KiB ab (streams.py)
+                await read_lines(stream, write)
 
             async with asyncio.TaskGroup() as readers:
                 readers.create_task(read_stream(self._process.stdout, "stdout"))

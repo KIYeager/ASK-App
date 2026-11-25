@@ -102,8 +102,9 @@ function mainAsk() {
   return all.filter((p) => !all.some((q) => q.pid === p.parent));
 }
 
-const pythonIn = (dir) => processes('python.exe')
-  .filter((p) => p.file.toLowerCase().startsWith(path.join(dir, 'resources', 'python').toLowerCase()));
+// Python entpackt die App nach %LOCALAPPDATA%\ASK-Desktop\python\<id> (ENTSCHEIDE E39), nicht in den Stand der EXE
+const pythonRoot = path.join(process.env.LOCALAPPDATA, 'ASK-Desktop', 'python').toLowerCase();
+const pythonIn = () => processes('python.exe').filter((p) => p.file.toLowerCase().startsWith(pythonRoot));
 
 // Sucht ein sichtbares Fenster des Starters im Format des Startbilds (16:9) und hält es auf Wunsch fest.
 const SPLASH_PS = `param([int]$procId, [int]$seconds, [string]$png)
@@ -164,7 +165,7 @@ function watchSplash(stubPid, png = '') {
 }
 
 function launch() {
-  const child = spawn(exe, [`--remote-debugging-port=${debugPort}`], { stdio: 'ignore' });
+  const child = spawn(exe, [`--remote-debugging-port=${debugPort}`], { stdio: 'ignore', env: { ...process.env, ASK_NO_UPDATES: '1' } });
   child.started = Date.now();
   return child;
 }
@@ -213,13 +214,13 @@ async function main() {
     check('Starter beendet sich, die App läuft weiter', mainAsk().length === 1);
     check('App läuft aus dem Zwischenspeicher', first.dir.toLowerCase() === appDir.toLowerCase(), first.dir);
     check('Kein Ordner .neu übrig', !fs.existsSync(`${appDir}.neu`));
-    check('Python läuft aus dem Zwischenspeicher', pythonIn(appDir).length >= 2);
+    check('Python läuft aus dem entpackten Python der App', pythonIn().length >= 2);
     check('Health-Check', (await get(`http://127.0.0.1:${first.port}/health`)).status === 200);
     await until('Bei ASK angemeldet', () => shell('document.getElementById("ask-text").textContent').then((t) => t === 'ASK: Lea Test'), 60000);
     check('Bei (Mock-)ASK angemeldet; Auftrag im Chat führt Befehl im Terminal aus', await chatRoundtrip());
     const extractedAt = created(appDir);
     await closeApp();
-    check('Nach Schliessen: keine Python-Prozesse mehr', pythonIn(appDir).length === 0);
+    check('Nach Schliessen: keine Python-Prozesse mehr', pythonIn().length === 0);
     check('Nach Schliessen: Port geschlossen', !(await canConnect(first.port, '127.0.0.1')));
     check('Nach Schliessen: Zwischenspeicher bleibt', fs.existsSync(path.join(appDir, 'ASK.exe')));
 

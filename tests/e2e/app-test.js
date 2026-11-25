@@ -28,11 +28,35 @@ function getJson(url) {
   });
 }
 
+// Eingabefelder der Oberfläche (React): Wert über den nativen Setter setzen, sonst sieht React die Änderung nicht.
+// Danach kurz warten, bis React neu gezeichnet hat.
+const typeJs = (id, text) => `(() => { const i = document.getElementById('${id}'); const p = i.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(p, 'value').set.call(i, ${JSON.stringify(text)}); i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`;
+async function type(shell, id, text) {
+  await shell(typeJs(id, text));
+  await wait(120);
+}
+async function sendText(shell, text) {
+  await type(shell, 'input', text);
+  await shell('document.getElementById("send-btn").click()');
+}
+// Rechte Seitenleiste: 1 Dateien, 2 Vorschau, 3 Browser
+async function panelTab(shell, n) {
+  await shell(`document.querySelector('.rt button:nth-child(${n})').click()`);
+  await wait(150);
+}
+// Datei im Dateibaum anklicken (zeigt die Vorschau)
+async function openInTree(shell, name) {
+  await panelTab(shell, 1);
+  await until(`${name} im Dateibaum`, () => shell(`[...document.querySelectorAll('.tree-row .tn')].some((n) => n.textContent === ${JSON.stringify(name)})`), 10000);
+  await shell(`[...document.querySelectorAll('.tree-row')].find((r) => r.querySelector('.tn').textContent === ${JSON.stringify(name)}).click()`);
+  await wait(150);
+}
+
 // Schickt einen Auftrag über die Oberfläche und wartet, bis das Modell fertig ist.
 async function order(shell, agent, text, timeout = 90000) {
   const before = agent.chat.messages.length;
-  await shell(`(() => { const i = document.getElementById('input'); i.value = ${JSON.stringify(text)};
-    i.dispatchEvent(new Event('input')); document.getElementById('send-btn').click(); })()`);
+  await sendText(shell, text);
   // Kurze Abläufe können fertig sein, bevor die erste Abfrage kommt: darum auch neue Nachrichten zählen.
   await until('Auftrag gestartet', () => agent.running || agent.chat.messages.length > before, 10000);
   await until('Auftrag fertig', () => !agent.running, timeout);
@@ -86,17 +110,15 @@ async function coworker(ctx, check, shell, shoot, folder) {
   check('view_file: nur Dateien im Arbeitsordner', !vbad.ok, vbad.output);
   fs.copyFileSync(path.join(pdfDir, fs.readdirSync(pdfDir).find((n) => n.endsWith('.pdf') && !n.includes('-'))),
     path.join(folder, 'Anleitung.pdf'));
-  await until('Bild unter «Zuletzt geändert»', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("diagramm.png"))'), 10000);
-  await shell('[...document.querySelectorAll("#output-list li")].find((li) => li.textContent.includes("diagramm.png")).click()');
+  await openInTree(shell, 'diagramm.png');
   const imgOk = await until('Bildvorschau', () => shell('(() => { const i = document.querySelector("#preview-body img"); return i && i.complete && i.naturalWidth > 0; })()'), 10000).catch(() => false);
   check('Bildvorschau', imgOk);
   await shoot('vorschau-bild');
-  await until('PDF unter «Zuletzt geändert»', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("Anleitung.pdf"))'), 10000);
-  await shell('[...document.querySelectorAll("#output-list li")].find((li) => li.textContent.includes("Anleitung.pdf")).click()');
+  await openInTree(shell, 'Anleitung.pdf');
   check('PDF-Vorschau eingebettet', await until('PDF-iframe', () => shell('!!document.querySelector("#preview-body iframe")'), 5000).catch(() => false));
-  await shell('[...document.querySelectorAll("#output-list li")].find((li) => li.textContent.includes("Auswertung.xlsx")).click()');
-  await until('Office-Knöpfe', () => shell('!!document.querySelector("#preview-body .office")'), 5000);
-  await shell('[...document.querySelectorAll("#preview-body .office button")].find((b) => b.textContent === "Als PDF anzeigen").click()');
+  await openInTree(shell, 'Auswertung.xlsx');
+  await until('Office-Knöpfe', () => shell('!!document.querySelector("#preview-body .preview-office")'), 5000);
+  await shell('[...document.querySelectorAll("#preview-body .preview-office button")].find((b) => b.textContent === "Als PDF anzeigen").click()');
   check('«Als PDF anzeigen» für Excel', await until('PDF aus Excel', () => shell('!!document.querySelector("#preview-body iframe")'), 120000).catch(() => false));
   await wait(2500);
   await shoot('vorschau-excel-pdf');
@@ -112,7 +134,7 @@ async function chat(ctx, check, shell, shoot) {
   check('Modelle geladen, versteckte ausgeblendet', ask.models.length === 1 && ask.models[0].id === 'qwen-test', JSON.stringify(ask.models));
   await until('Anmeldeseite ausgeblendet', () => !appWindow.view.getVisible(), 5000).catch(() => {});
   check('ASK-Seite nach der Anmeldung verborgen', !appWindow.view.getVisible());
-  check('Statuszeile «ASK: Lea Test»', (await shell('document.getElementById("ask-text").textContent')) === 'ASK: Lea Test');
+  check('Seitenleiste unten: «Lea Test», verbunden', await shell('document.querySelector(".who").textContent.includes("Lea Test") && document.getElementById("ask-pill").textContent === "Verbunden"'));
   await shoot('1-leer');
 
   await order(shell, agent, 'Bitte teste die Werkzeuge');
@@ -125,7 +147,7 @@ async function chat(ctx, check, shell, shoot) {
   const rows = await shell(`[...document.querySelectorAll('.msg.tool')].map((m) => ({ call: m.querySelector('.call').textContent,
     result: m.querySelector('.result').textContent, bad: m.classList.contains('bad'), running: m.classList.contains('running') }))`);
   check('Drei Werkzeugzeilen im Chat', rows.length === 3, JSON.stringify(rows));
-  check('Befehl mit Ausgabe «hallo aus ASK»', /Befehl\(echo hallo aus ASK\)/.test(rows[0]?.call) && rows[0].result.includes('hallo aus ASK'), JSON.stringify(rows[0]));
+  check('Befehl mit Ausgabe «hallo aus ASK»', /Befehl.*echo hallo aus ASK/.test(rows[0]?.call) && rows[0].result.includes('hallo aus ASK'), JSON.stringify(rows[0]));
   check('Aufgaben im Chat nur als Zeile «1 von 3 erledigt», Liste in den Details', /Aufgaben/.test(rows[1]?.call) && rows[1].result.includes('1 von 3 erledigt')
     && !rows[1].result.includes('Befehl testen') && await shell('[...document.querySelectorAll(".msg.tool")][1].querySelector(".details").textContent.includes("☒ Befehl testen")'), JSON.stringify(rows[1]));
   check('Datei geschrieben', fs.readFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'utf8') === 'Inhalt des Berichts');
@@ -134,7 +156,7 @@ async function chat(ctx, check, shell, shoot) {
   check('Schlusstext als Markdown (Code, Liste, fett)', /Fertig/.test(final.md) && /<code class="file">ausgabe\/bericht.txt<\/code>/.test(final.md)
     && /<li>/.test(final.md) && /<strong>Bericht<\/strong>/.test(final.md), final.md);
   check('Denktext getrennt (reasoning und <think>)', final.think.includes('Ich prüfe') && final.think.includes('Alles erledigt') && !final.md.includes('think'), final.think);
-  await until('Aufgaben über der Eingabe', () => shell('!document.getElementById("todo").hidden'), 10000).catch(() => {});
+  await until('Aufgaben über der Eingabe', () => shell('!!document.getElementById("todo")'), 10000).catch(() => {});
   const todoLine = await shell(`({ count: document.getElementById('todo-count').textContent, current: document.getElementById('todo-current').textContent,
     open: document.getElementById('todo').classList.contains('open'), sidebar: !!document.getElementById('tasks-panel') })`);
   check('Aufgaben über der Eingabe: nach dem Auftrag eine Zeile «1/3 · Bericht schreiben»', todoLine.count === '1/3' && todoLine.current === 'Bericht schreiben'
@@ -146,7 +168,7 @@ async function chat(ctx, check, shell, shoot) {
     JSON.stringify(todoOpen));
   await shoot('2a-aufgaben');
   await shell(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, bubbles: true }))`);
-  await until('Datei unter «Zuletzt geändert»', () => shell('[...document.querySelectorAll("#output-list li")].some((li) => li.textContent.includes("bericht.txt"))'), 10000);
+  await until('Ordner «ausgabe» im Dateibaum', () => shell('[...document.querySelectorAll(".tree-row .tn")].some((n) => n.textContent === "ausgabe")'), 10000);
   await shell('[...document.querySelectorAll(".md code")].find((c) => c.textContent === "ausgabe/bericht.txt").click()');
   await until('Vorschau', () => shell('(document.querySelector("#preview-body pre")||{}).textContent === "Inhalt des Berichts"'), 5000)
     .then(() => check('Klick auf Dateinamen im Chat zeigt die Vorschau', true))
@@ -213,7 +235,7 @@ await compact(ctx, check, shell, shoot);
 
   // Stoppen während eines langen Befehls
   const stopStarted = Date.now();
-  await shell(`(() => { const i = document.getElementById('input'); i.value = 'langsam bitte'; document.getElementById('send-btn').click(); })()`);
+  await sendText(shell, 'langsam bitte');
   await until('Befehl läuft', () => shell('!!document.querySelector(".msg.tool.running")'), 15000);
   await wait(1500);
   await shoot('3-laeuft');
@@ -248,16 +270,16 @@ await compact(ctx, check, shell, shoot);
   }, 5000).catch(() => null);
   check('Linke Leiste: aktueller Ordner zuerst, Chat aktiv markiert', bar && bar[0].current && bar[0].folder === folder, JSON.stringify(bar));
   await shell('document.getElementById("new-btn").click()');
-  await until('leerer Chat', () => shell('document.querySelectorAll("#messages .msg").length === 0 && !document.getElementById("welcome").hidden'), 5000);
+  await until('leerer Chat', () => shell('document.querySelectorAll("#messages .msg").length === 0 && !!document.getElementById("welcome")'), 5000);
   check('Neuer Chat ist leer', true);
   bar = await items();
   check('Linke Leiste: «Neuer Chat» oben und aktiv, alter Chat darunter', bar[0].chats[0]?.title === 'Neuer Chat' && bar[0].chats[0].active
     && bar[0].chats[1]?.title === 'Bitte teste die Werkzeuge', JSON.stringify(bar[0]));
-  await shell(`(() => { const i = document.getElementById('chat-search'); i.value = 'gibt es nicht'; i.dispatchEvent(new Event('input')); })()`);
+  await type(shell, 'chat-search', 'gibt es nicht');
   check('Suche ohne Treffer', await shell('document.querySelectorAll(".chat-item").length === 0 && document.getElementById("chat-groups").textContent.includes("Keine Treffer")'));
-  await shell(`(() => { const i = document.getElementById('chat-search'); i.value = 'TESTE'; i.dispatchEvent(new Event('input')); })()`);
+  await type(shell, 'chat-search', 'TESTE');
   check('Suche findet den Chat (ohne Gross-/Kleinschreibung)', await shell('[...document.querySelectorAll(".chat-item")].map((i) => i.textContent).join("|").includes("Bitte teste")'));
-  await shell(`(() => { const i = document.getElementById('chat-search'); i.value = ''; i.dispatchEvent(new Event('input')); })()`);
+  await type(shell, 'chat-search', '');
   await shoot('4-chats');
   await shell('[...document.querySelectorAll(".chat-item")].find((i) => i.textContent.includes("Bitte teste")).click()');
   await until('Chat geladen', () => shell('document.querySelectorAll(".msg.tool").length >= 3'), 5000)
@@ -336,7 +358,7 @@ async function attachFlow(ctx, check, shell, shoot) {
   let log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
   check('Bild geht ans Modell, Pfade stehen in der Nachricht', log.images === 1 && log.lastUser.includes(`.ask/anhaenge/${agent.chat.id}/notiz.txt`), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
   check('Eingabe im Chat zeigt Bild und Datei, Eingabezeile wieder leer', await shell(`(() => { const u = [...document.querySelectorAll('.msg.user')].pop();
-    return !!u.querySelector('img.attach-thumb') && u.textContent.includes('notiz.txt') && document.getElementById('attach-row').hidden; })()`));
+    return !!u.querySelector('img.attach-thumb') && u.textContent.includes('notiz.txt') && !document.getElementById('attach-row'); })()`));
   await until('Vorschaubild geladen', () => shell('[...document.querySelectorAll(".msg.user img.attach-thumb")].pop().naturalWidth > 0'), 5000).catch(() => {});
   check('Vorschaubild im Chat aus .ask/anhaenge geladen', await shell('[...document.querySelectorAll(".msg.user img.attach-thumb")].pop().naturalWidth === 40'));
   check('Anhänge im Chat gespeichert', agent.chat.messages.filter((m) => m.role === 'user').pop().attachments?.length === 2);
@@ -380,7 +402,7 @@ async function browserFlow(ctx, check, shell, shoot) {
     && (await inPage('z.textContent')) === '2' && (await inPage('feld.value')) === 'hallo', `${await inPage('feld.value')} | ${t.content}`);
   check('Klicks und Text auf der Seite lassen den Fokus im Eingabefeld des Chats', await shell('document.activeElement === document.getElementById("input")')
     && !appWindow.browser.webContents.isFocused(), JSON.stringify({ pane: appWindow.browser.webContents.isFocused(), app: appWindow.win.isFocused() }));
-  check('Zeile «Browser(offene Seite, 5 Aktionen)»', await shell(`[...document.querySelectorAll('.msg.tool')].pop().querySelector('.call').textContent === 'Browser(offene Seite, 5 Aktionen)'`));
+  check('Zeile «Browser · offene Seite, 5 Aktionen»', await shell(`(() => { const t = [...document.querySelectorAll('.msg.tool')].pop().querySelector('.call').textContent; return t.startsWith('Browser') && t.includes('offene Seite, 5 Aktionen'); })()`));
 
   await order(shell, agent, 'browser link folgen');
   t = lastTool();
@@ -389,7 +411,8 @@ async function browserFlow(ctx, check, shell, shoot) {
   await until('zurück', () => page().endsWith('/__mock/app'), 5000).catch(() => {});
   check('Knopf «Zurück» funktioniert', page().endsWith('/__mock/app'));
 
-  await shell(`(() => { document.getElementById('bp-url').value = '${mockUrl}/__mock/seite'; document.getElementById('bp-form').requestSubmit(); })()`);
+  await type(shell, 'bp-url', `${mockUrl}/__mock/seite`);
+  await shell('document.getElementById("bp-form").requestSubmit()');
   await until('Adresse', () => page().endsWith('/__mock/seite'), 5000).catch(() => {});
   check('Adressleiste öffnet eine Adresse', page().endsWith('/__mock/seite'));
 
@@ -406,7 +429,7 @@ async function browserFlow(ctx, check, shell, shoot) {
   fs.rmSync(path.join(folder, 'leer.html'), { force: true });
 
   // Stopp beendet den Aufruf sofort
-  await shell(`(() => { const i = document.getElementById('input'); i.value = 'browser warte'; document.getElementById('send-btn').click(); })()`);
+  await sendText(shell, 'browser warte');
   await until('läuft', () => agent.running, 5000);
   await wait(1200);
   const stopped = Date.now();
@@ -426,16 +449,16 @@ ${t.content.slice(0, 700)}`);
 ${t.content.slice(0, 900)}`);
     await shell('document.getElementById("bp-close").click()');
   }
-  await shell('document.getElementById("browser-btn").click()');
+  await panelTab(shell, 3);
   await until('offen', () => appWindow.browser.getVisible(), 3000).catch(() => {});
-  check('Knopf «Browser» oben öffnet den Browser auch ohne Modell', appWindow.browser.getVisible() && await shell('document.getElementById("browser-btn").classList.contains("on")'));
-  await shell('document.getElementById("browser-btn").click()');
+  check('Reiter «Browser» rechts zeigt den Browser auch ohne Modell', appWindow.browser.getVisible() && await shell('document.querySelector(".rt button:nth-child(3)").getAttribute("aria-selected") === "true"'));
+  await shell('document.getElementById("bp-close").click()');
 }
 
 // Scrollen: Wer hochscrollt, bleibt dort, auch wenn er nur wenig gescrollt hat und das Modell weiterarbeitet
 async function scrollFlow(ctx, check, shell) {
   const { agent } = ctx;
-  await shell(`(() => { const i = document.getElementById('input'); i.value = 'langsam bitte'; document.getElementById('send-btn').click(); })()`);
+  await sendText(shell, 'langsam bitte');
   await until('läuft', () => agent.running, 5000);
   await wait(800);
   const top = await shell(`(() => { const t = document.getElementById('transcript');
@@ -469,7 +492,7 @@ async function resizeFlow(ctx, check, shell, shoot) {
     await wait(250);
   };
   const reset = (panel) => shell(`document.querySelector('.resizer[data-panel=${panel}]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
-  if (await shell('!document.getElementById("browser-pane").hidden')) await shell('document.getElementById("bp-close").click()');
+  if (await shell('!!document.getElementById("browser-pane")')) await shell('document.getElementById("bp-close").click()');
   appWindow.win.focus();
 
   const chats = await width('#chatbar');
@@ -481,29 +504,30 @@ async function resizeFlow(ctx, check, shell, shoot) {
   const saved = await shell('JSON.parse(localStorage.getItem("ask.breiten") || "{}")');
   check('Breiten gespeichert', Math.abs(saved.chatbar - (chats + 80)) <= 2 && Math.abs(saved.sidebar - (side + 100)) <= 2, JSON.stringify(saved));
   await drag('chatbar', -600);
-  check('Nicht schmaler als 180 Pixel', (await width('#chatbar')) === 180, String(await width('#chatbar')));
+  check('Nicht schmaler als 200 Pixel', (await width('#chatbar')) === 200, String(await width('#chatbar')));
   await reset('chatbar');
   check('Doppelklick: wieder Standardbreite', (await width('#chatbar')) === 260, String(await width('#chatbar')));
 
-  await shell('document.getElementById("browser-btn").click()');
+  // Der Browser liegt im rechten Bereich und folgt dessen Rand
+  await panelTab(shell, 3);
   await until('Browser offen', () => appWindow.browserReady(), 5000).catch(() => {});
   await wait(300);
   const pane = await width('#browser-pane');
-  await drag('browser', 150);
+  await drag('sidebar', 150);
   await wait(200);
   const host = await shell('document.getElementById("browser-host").getBoundingClientRect().width');
   const view = appWindow.browser.getBounds().width;
   const zoom = wc.getZoomFactor();
   check('Rand des Browsers ziehen: 150 Pixel schmaler, die Seite folgt', Math.abs((await width('#browser-pane')) - (pane - 150)) <= 2 && Math.abs(view - host * zoom) <= 3,
     `${pane} → ${await width('#browser-pane')}, Seite ${view} bei ${host} × ${zoom}`);
-  await drag('browser', -3000);
+  await drag('sidebar', -3000);
   check('Der Chat bleibt mindestens 360 Pixel breit', (await width('.chat-area')) >= 359, String(await width('.chat-area')));
-  const foot = await shell(`(() => { const s = document.querySelector('.statusline'); const a = document.querySelector('.chat-area').getBoundingClientRect();
-    return { right: Math.max(...[...s.children].map((c) => c.getBoundingClientRect().right).filter((r, i) => getComputedStyle(s.children[i]).display !== 'none')), area: a.right }; })()`);
-  check('Schmaler Chat: Statuszeile bleibt im Chat', foot.right <= foot.area + 1, JSON.stringify(foot));
+  const foot = await shell(`(() => { const s = document.querySelector('.input-box').getBoundingClientRect(); const a = document.querySelector('.chat-area').getBoundingClientRect();
+    return { right: s.right, area: a.right }; })()`);
+  check('Schmaler Chat: Eingabe bleibt im Chat', foot.right <= foot.area + 1, JSON.stringify(foot));
   await shoot('17-breiten');
   await shell('document.getElementById("bp-close").click()');
-  for (const p of ['chatbar', 'sidebar', 'browser']) await reset(p);
+  for (const p of ['chatbar', 'sidebar']) await reset(p);
   check('Zurückgesetzt: nichts mehr gespeichert', (await shell('localStorage.getItem("ask.breiten")')) === '{}');
 }
 
@@ -533,9 +557,9 @@ async function memoryFlow(ctx, check, shell, shoot) {
     { role: 'assistant', content: 'Der Bericht liegt in bericht.docx. Backups laufen jeden Tag um 2 Uhr.', time: 2 }] }));
   await order(shell, agent, 'Was haben wir früher gemacht?');
   let log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
-  check('Schalter «Chats» aus: keine Liste, keine Chat-Werkzeuge', !log.system.includes('Frühere Chats') && !log.tools.includes('chat_search')
-    && !(await shell('document.getElementById("memory-btn").classList.contains("on")')));
-  await shell('document.getElementById("memory-btn").click()');
+  check('Frühere Chats aus: keine Liste, keine Chat-Werkzeuge', !log.system.includes('Frühere Chats') && !log.tools.includes('chat_search')
+    && settings.get('chatMemory') !== true);
+  await shell('window.ask.setChatMemory(true)'); // Schalter in den Einstellungen und /chats
   await until('Chats an', () => settings.get('chatMemory') === true, 3000).catch(() => {});
   await order(shell, agent, 'Was haben wir früher gemacht?');
   const first = (await getJson(`${mockUrl}/__mock/chatlog`)).slice(-3)[0];
@@ -544,7 +568,7 @@ async function memoryFlow(ctx, check, shell, shoot) {
   const tools = agent.chat.messages.filter((m) => m.role === 'tool').slice(-2);
   check('chat_search findet, chat_read liest den alten Chat', tools[0].ok && tools[0].content.includes('(id alt-test') && tools[1].ok
     && tools[1].content.includes('Backups laufen jeden Tag um 2 Uhr'), JSON.stringify(tools.map((t) => t.content.slice(0, 160))));
-  await shell('document.getElementById("memory-btn").click()');
+  await shell('window.ask.setChatMemory(false)');
   await until('Chats aus', () => settings.get('chatMemory') === false, 3000).catch(() => {});
   fs.rmSync(old, { force: true });
 }
@@ -674,12 +698,12 @@ async function visualFlow(ctx, check, shell, shoot) {
     JSON.stringify({ size, rgb: [r, g, b], pane, text: /Fenster \d+ × \d+/.exec(tested.content)?.[0] }));
   log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
   check('Bildschirmfoto geht ans Modell', log.lastImages === 1 && log.lastUser.startsWith('[Ansicht] Bilder zu browser(spiel.html'), JSON.stringify({ images: log.images, lastUser: log.lastUser }));
-  const live = await shell(`({ visible: !document.getElementById('browser-pane').hidden, mode: document.getElementById('browser-pane').dataset.mode,
+  const live = await shell(`({ visible: !!document.getElementById('browser-pane'), mode: document.getElementById('browser-pane').dataset.mode,
     status: document.getElementById('bp-status').textContent, log: document.getElementById('bp-log').textContent,
     path: document.getElementById('bp-url').value, running: document.getElementById('browser-pane').classList.contains('running'),
-    sidebar: getComputedStyle(document.getElementById('sidebar')).display })`);
-  check('Browser-Bereich: echte Seite sichtbar, Schritte, Konsole, Seitenleiste weg', live.visible && live.mode === 'sichtbar' && appWindow.browser?.getVisible()
-    && /1 Fehler in der Konsole/.test(live.status) && live.log.includes('absichtlicher Testfehler') && live.path.endsWith('spiel.html') && !live.running && live.sidebar === 'none', JSON.stringify(live));
+    tab: document.querySelector('.rt button:nth-child(3)').getAttribute('aria-selected') })`);
+  check('Browser-Bereich: echte Seite sichtbar, Schritte, Konsole, Reiter «Browser» aktiv', live.visible && live.mode === 'sichtbar' && appWindow.browser?.getVisible()
+    && /1 Fehler in der Konsole/.test(live.status) && live.log.includes('absichtlicher Testfehler') && live.path.endsWith('spiel.html') && !live.running && live.tab === 'true', JSON.stringify(live));
   check('Seite bleibt nach dem Test offen und bedienbar', appWindow.browser.webContents.getURL().endsWith('spiel.html')
     && await appWindow.browser.webContents.executeJavaScript('document.getElementById("s").textContent') === 'Gestartet Rechts');
   // Eigene Eingabe der Person: Klick in die Seite
@@ -696,7 +720,7 @@ async function visualFlow(ctx, check, shell, shoot) {
   await shell('document.getElementById("bp-big").click()');
   await shell('document.getElementById("bp-close").click()');
   await until('zu', () => !appWindow.browser.getVisible(), 3000).catch(() => {});
-  check('Schliessen versteckt den Browser und leert die Seite', !appWindow.browser.getVisible() && await shell('getComputedStyle(document.getElementById("sidebar")).display !== "none"'));
+  check('Schliessen versteckt den Browser, zurück bei den Dateien', !appWindow.browser.getVisible() && await shell('document.querySelector(".rt button:nth-child(1)").getAttribute("aria-selected") === "true"'));
 
   // App nicht sichtbar: unsichtbar testen, Bilder an die Oberfläche
   const { Visual } = require('../../src/main/visual');
@@ -719,7 +743,7 @@ async function undoFlow(ctx, check, shell, shoot) {
   check('Modell ändert direkt und legt neu an', fs.readFileSync(bericht, 'utf8') === 'Vom Modell geändert' && fs.existsSync(path.join(folder, 'projekt', 'neu.txt')));
   const row = await shell(`(() => { const c = [...document.querySelectorAll('.msg.changes')]; const last = c.pop();
     return { text: last.textContent, button: !last.querySelector('.undo-btn').hidden, others: c.every((r) => r.querySelector('.undo-btn').hidden) }; })()`);
-  check('Änderungen «1 geändert · 1 neu», «Rückgängig» nur beim letzten Auftrag', /1 geändert · 1 neu/.test(row.text) && row.button && row.others, JSON.stringify(row));
+  check('Änderungen «1 neu, 1 geändert», «Rückgängig» nur beim letzten Auftrag', /1 neu, 1 geändert/.test(row.text) && row.button && row.others, JSON.stringify(row));
   await shoot('13-aenderungen');
   await shell(`[...document.querySelectorAll('.msg.changes')].pop().querySelector('.undo-btn').click()`);
   await until('zurückgesetzt', () => agent.chat.messages.some((m) => m.note === 'undo'), 10000).catch(() => {});
@@ -730,8 +754,9 @@ async function undoFlow(ctx, check, shell, shoot) {
       && [...document.querySelectorAll('.msg.notice')].some((n) => n.textContent.includes('Rückgängig gemacht: 2 Dateien')); })()`));
   const note = agent.chat.messages.find((m) => m.note === 'undo');
   check('Das Modell erfährt es im Verlauf', note?.role === 'user' && note.content.includes('rückgängig gemacht'), JSON.stringify(note));
-  const stands = fs.readdirSync(path.join(folder, '.ask', 'sicherung', 'staende')).length;
-  check('Sicherung in .ask/sicherung (ein Stand pro Auftrag, einer vor Rückgängig)', stands >= 3, String(stands));
+  const projectData = require('../../src/main/paths').projectDataDir(agent.getFolder());
+  const stands = fs.readdirSync(path.join(projectData, 'sicherung', 'staende')).length;
+  check('Sicherung ausserhalb des Arbeitsordners (ein Stand pro Auftrag, einer vor Rückgängig)', stands >= 3 && !fs.existsSync(path.join(folder, '.ask', 'sicherung')), String(stands));
 }
 
 // GitHub: verbinden über /github, Projekt anlegen, hochladen, holen (gegen den Nachbau in mock-github.js)
@@ -745,12 +770,15 @@ async function githubFlow(ctx, check, shell, shoot) {
   const notConnected = await shell(`[...document.querySelectorAll('.msg.tool')].pop().querySelector('.result').textContent`);
   check('Ohne Verbindung: Hinweis auf /github', /Nicht mit GitHub verbunden.*\/github/.test(notConnected), notConnected);
 
-  await shell(`(() => { const i = document.getElementById('input'); i.value = '/github'; i.dispatchEvent(new Event('input')); document.getElementById('send-btn').click(); })()`);
-  await until('GitHub-Dialog', () => shell('!document.getElementById("dlg-github").hidden'), 5000);
-  await shell(`(() => { document.getElementById('github-token').value = 'falsch'; document.getElementById('github-ok').click(); })()`).catch(() => {});
-  await until('Fehler', () => shell('!document.getElementById("github-error").hidden'), 5000).catch(() => {});
+  await sendText(shell, '/github');
+  await until('GitHub-Dialog', () => shell('!!document.getElementById("dlg-github")'), 5000);
+  await until('Token-Feld', () => shell('!!document.getElementById("github-token")'), 5000).catch(() => {});
+  await type(shell, 'github-token', 'falsch');
+  await shell('document.getElementById("github-ok").click()').catch(() => {});
+  await until('Fehler', () => shell('!!document.getElementById("github-error")'), 5000).catch(() => {});
   check('Falsches Token wird abgelehnt', await shell('document.getElementById("github-error").textContent.includes("Token")'));
-  await shell(`(() => { document.getElementById('github-token').value = 'gh-test-token'; document.getElementById('github-ok').click(); })()`);
+  await type(shell, 'github-token', 'gh-test-token');
+  await shell('document.getElementById("github-ok").click()');
   await until('verbunden', () => shell('document.getElementById("github-body").textContent.includes("lea-test")'), 5000).catch(() => {});
   check('Verbunden als lea-test', await shell('document.getElementById("github-body").textContent.includes("Verbunden als lea-test")'));
   const stored = JSON.parse(fs.readFileSync(path.join(process.env.ASK_TEST_USER_DATA, 'einstellungen.json'), 'utf8')).githubToken;
@@ -762,14 +790,14 @@ async function githubFlow(ctx, check, shell, shoot) {
   const readme = await onGitHub('ausgabe/bericht.txt');
   check('Projekt auf GitHub angelegt und hochgeladen', readme.text === fs.readFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'utf8'), JSON.stringify(readme));
   check('.ask nicht hochgeladen', (await onGitHub('.ask/tasks.json')).text === null);
-  check('Ordner mit dem Repository verbunden', JSON.parse(fs.readFileSync(path.join(folder, '.ask', 'github.json'), 'utf8')).repo === 'lea-test/testprojekt');
+  check('Ordner mit dem Repository verbunden', JSON.parse(fs.readFileSync(path.join(require('../../src/main/paths').projectDataDir(agent.getFolder()), 'github.json'), 'utf8')).repo === 'lea-test/testprojekt');
 
   fs.writeFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'Inhalt des Berichts, ergänzt');
   process.env.ASK_TEST_REMEMBER = '1'; // Häkchen «Für dieses Repository nicht mehr fragen»
   await order(shell, agent, 'Bitte auf github hochladen');
   delete process.env.ASK_TEST_REMEMBER;
   check('Häkchen: Repository ohne Rückfrage gemerkt', JSON.stringify(settings.get('githubTrusted')) === '["lea-test/testprojekt"]', JSON.stringify(settings.get('githubTrusted')));
-  await shell(`(() => { const i = document.getElementById('input'); i.value = '/github'; i.dispatchEvent(new Event('input')); document.getElementById('send-btn').click(); })()`);
+  await sendText(shell, '/github');
   await until('Liste ohne Rückfrage', () => shell('document.getElementById("github-body").textContent.includes("lea-test/testprojekt wieder fragen")'), 5000).catch(() => {});
   await shell('[...document.querySelectorAll("#github-body .trusted button")][0].click()').catch(() => {});
   await until('wieder fragen', () => (settings.get('githubTrusted') || []).length === 0, 5000).catch(() => {});
@@ -781,7 +809,7 @@ async function githubFlow(ctx, check, shell, shoot) {
   await order(shell, agent, 'Bitte von github holen');
   check('Änderung aus anderer Sitzung geholt', fs.readFileSync(path.join(folder, 'notizen.txt'), 'utf8') === 'aus einer anderen Sitzung');
   const rows = await shell(`[...document.querySelectorAll('.msg.tool')].slice(-3).map((r) => r.querySelector('.call').textContent + ' ⎿ ' + r.querySelector('.result').textContent)`);
-  check('GitHub-Zeilen im Chat', rows.some((r) => /GitHub\(neu testprojekt \(privat\)\)/.test(r)) && rows.some((r) => /GitHub\(holen\)/.test(r)), JSON.stringify(rows));
+  check('GitHub-Zeilen im Chat', rows.some((r) => /GitHub.*neu testprojekt \(privat\)/.test(r)) && rows.some((r) => /GitHub.*holen/.test(r)), JSON.stringify(rows));
   fs.writeFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'Inhalt des Berichts'); // für die folgenden Prüfungen
 }
 
@@ -798,7 +826,7 @@ async function compact(ctx, check, shell, shoot) {
   check('Details der Werkzeuge zugeklappt', !(await visible('.msg.tool .details')));
   check('Gedanken ausgeblendet', !(await visible('details.thinking')));
   const first = await shell('(() => { const r = document.querySelector(".msg.tool"); return { call: r.querySelector(".call").textContent, result: r.querySelector(".result").textContent }; })()');
-  check('Werkzeugzeile: Aufruf und Kurzresultat', /Befehl\(echo hallo aus ASK\)/.test(first.call) && first.result.includes('hallo aus ASK'), JSON.stringify(first));
+  check('Werkzeugzeile: Aufruf und Kurzresultat', /Befehl.*echo hallo aus ASK/.test(first.call) && first.result.includes('hallo aus ASK'), JSON.stringify(first));
   await shell('document.querySelector(".msg.tool .call").click()');
   check('Klick klappt Details auf (ganzer Befehl)', await shell('(() => { const d = document.querySelector(".msg.tool .details"); return d.offsetParent !== null && d.textContent.includes("echo hallo aus ASK"); })()'));
   await shell('document.querySelector(".msg.tool .call").click()');
@@ -834,18 +862,24 @@ async function compact(ctx, check, shell, shoot) {
   await shoot('7-kompakt');
 
   // Denkaufwand: Regler im Aufklappfenster (Standard, Tief bis Maximal)
-  const slide = (value) => shell(`(() => { document.getElementById('think-btn').click(); const r = document.getElementById('think-range');
-    r.value = '${value}'; r.dispatchEvent(new Event('input')); })()`);
+  const slide = async (value) => {
+    if (!(await shell('!!document.getElementById("think-pop")'))) await shell('document.getElementById("think-btn").click()');
+    await wait(150);
+    await type(shell, 'think-range', String(value));
+  };
+  const outside = () => shell('document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }))');
   check('Denkaufwand: Standard voreingestellt', await shell('document.getElementById("think-label").textContent === "Standard"'));
   await slide(3);
   await until('Denken hoch', () => settings.get('thinking') === 'hoch', 5000).catch(() => {});
   await shoot('8-denkaufwand');
-  await shell('document.body.click()');
-  check('Regler auf «Hoch», Fenster schliesst beim Klick daneben', await shell('document.getElementById("think-label").textContent === "Hoch" && document.getElementById("think-pop").hidden'));
+  await outside();
+  await wait(150);
+  check('Regler auf «Hoch», Fenster schliesst beim Klick daneben', await shell('document.getElementById("think-label").textContent === "Hoch" && !document.getElementById("think-pop")'));
   await order(shell, agent, 'Bitte lies gründlich');
   let log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
   check('Denken «Hoch»: reasoning_effort high, Qwen-Signale und /think', log.effort === 'high' && log.think === true && log.enableThinking === true && log.system.trimEnd().endsWith('/think'), JSON.stringify({ ...log, system: log.system.slice(-20) }));
   await slide(1);
+  await outside();
   await until('Denken tief', () => settings.get('thinking') === 'tief', 5000).catch(() => {});
   await order(shell, agent, 'Bitte lies kurz');
   log = (await getJson(`${mockUrl}/__mock/chatlog`)).at(-1);
@@ -857,18 +891,23 @@ async function compact(ctx, check, shell, shoot) {
     && await shell('[...document.querySelectorAll(".msg.assistant .md")].pop().textContent === "Gelesen."'), JSON.stringify({ ...log, system: log.system.slice(-20) }));
   await getJson(`${mockUrl}/__mock/think/an`);
   ctx.ask.noThinkParams = false;
-  await shell(`(() => { document.getElementById('think-btn').click(); document.getElementById('think-standard').click(); document.body.click(); })()`);
+  await shell('document.getElementById("think-btn").click()');
+  await wait(150);
+  await shell('document.getElementById("think-standard").click()');
+  await outside();
   await until('Denken Standard', () => settings.get('thinking') === 'standard', 5000).catch(() => {});
   check('Knopf «Standard» setzt zurück', settings.get('thinking') === 'standard');
 
   // Fertiger Auftrag mit vielen Schritten: zu einer Zeile zusammengeklappt
   await order(shell, agent, 'viele schritte bitte');
-  const fold = await shell(`(() => { const f = [...document.querySelectorAll('.msg.fold')].pop(); if (!f) return null;
-    const hidden = [...document.querySelectorAll('.msg.tool.folded')].every((n) => n.offsetParent === null);
+  const fold = await shell(`(() => { const w = [...document.querySelectorAll('.work')].pop(); if (!w) return null; const f = w.querySelector('.work-head');
+    const hidden = [...w.querySelectorAll('.msg.tool')].every((n) => n.offsetParent === null);
     const answer = [...document.querySelectorAll('.msg.assistant .md')].pop().textContent; f.click();
-    return { text: f.textContent, hidden, answer, open: [...document.querySelectorAll('.msg.tool.folded')].length === 0 }; })()`);
+    return { text: f.textContent, hidden, answer }; })()`);
+  await wait(150);
+  const unfolded = await shell(`[...[...document.querySelectorAll('.work')].pop().querySelectorAll('.msg.tool')].every((n) => n.offsetParent !== null)`);
   check('Viele Schritte eingeklappt, Antwort sichtbar, Klick klappt auf', fold && /5 Arbeitsschritte/.test(fold.text) && fold.hidden
-    && fold.answer === 'Viele erledigt.' && fold.open, JSON.stringify(fold));
+    && fold.answer === 'Viele erledigt.' && unfolded, JSON.stringify({ ...fold, unfolded }));
   await shoot('9-eingeklappt');
 
   // /goal: Ziel setzen; das Modell hört zu früh auf, die App stösst an, goal_done beendet
@@ -878,11 +917,11 @@ async function compact(ctx, check, shell, shoot) {
   check('/goal: nach «Ich fange an:» automatisch weiter', await shell('[...document.querySelectorAll(".msg.notice.auto")].some((n) => n.textContent.includes("Weiter am Ziel"))'));
   check('/goal: Ziel erreicht und gespeichert', agent.chat.goal?.done === true && agent.chat.goal.summary === 'Bericht steht.', JSON.stringify(agent.chat.goal));
   check('/goal: Ziel-Leiste zeigt «✓ erreicht»', await shell(`(() => { const b = document.getElementById('goal-bar');
-    return !b.hidden && document.getElementById('goal-text').textContent === 'Erstelle den Zielbericht' && document.getElementById('goal-state').textContent === '✓ erreicht'; })()`));
+    return !!b && document.getElementById('goal-text').textContent === 'Erstelle den Zielbericht' && document.getElementById('goal-state').textContent === '✓ erreicht'; })()`));
   await shoot('10-ziel');
-  await shell(`(() => { const i = document.getElementById('input'); i.value = '/goal aus'; i.dispatchEvent(new Event('input')); document.getElementById('send-btn').click(); })()`);
+  await sendText(shell, '/goal aus');
   await until('Ziel weg', () => !agent.chat.goal, 5000).catch(() => {});
-  check('/goal aus hebt das Ziel auf', !agent.chat.goal && await shell('document.getElementById("goal-bar").hidden'));
+  check('/goal aus hebt das Ziel auf', !agent.chat.goal && await shell('!document.getElementById("goal-bar")'));
 
   // Schleifenschutz
   const before = (await getJson(`${mockUrl}/__mock/chatlog`)).length;
@@ -916,12 +955,14 @@ module.exports = async function run(ctx) {
       check('Ersthinweis wird angezeigt', true);
       check('ASK-Seite ist während Dialog verborgen', !appWindow.view.getVisible());
       await shoot('1-ersthinweis');
-      await shell('document.getElementById("warning-check").click(); document.getElementById("warning-ok").click()');
+      await shell('document.getElementById("warning-check").click()');
+      await wait(150);
+      await shell('document.getElementById("warning-ok").click()');
       // Die Adresse von ASK ist in resources/app-config.json eingebaut: kein Dialog «Adresse von ASK».
       const builtIn = settings.appConfig().askUrl;
       await until('Startdialog', () => shell('!!document.querySelector("#dlg-start:not([hidden])")'), 10000).catch(() => {});
       check('Eingebaute ASK-Adresse, kein Adress-Dialog', /^https:\/\//.test(builtIn) && settings.get('askUrl') === builtIn
-        && await shell('document.getElementById("dlg-url").hidden'), builtIn);
+        && await shell('!document.getElementById("dlg-url")'), builtIn);
       const http = await shell('window.ask.setAskUrl("http://unsicher.example")');
       check('http-Adresse wird abgelehnt', http.ok === false, JSON.stringify(http));
       // https-Adressen gibt es lokal nicht; die Test-Adresse wird direkt gesetzt.
@@ -966,7 +1007,7 @@ module.exports = async function run(ctx) {
       check('Während der Prüfung war die ASK-Seite nie sichtbar', seen.length > 10 && !seen.includes(true), `${seen.length} Proben, sichtbar: ${seen.filter(Boolean).length}`);
       await until('Seite verborgen', () => !appWindow.view.getVisible(), 5000).catch(() => {});
       check('Nach der Anmeldung: ASK-Seite verborgen', !appWindow.view.getVisible());
-      check('Nach der Anmeldung: Ladebildschirm weg', await until('Chat sichtbar', () => shell('document.getElementById("login-area").hidden'), 5000).catch(() => false));
+      check('Nach der Anmeldung: Ladebildschirm weg', await until('Chat sichtbar', () => shell('!document.getElementById("login-area")'), 5000).catch(() => false));
       return;
     }
 

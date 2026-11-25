@@ -226,12 +226,14 @@ def pruefe_csv(pfad):
 
 
 def pruefe_py(pfad):
-    import py_compile
+    # Nur übersetzen, nichts schreiben (py_compile mit einer Zieldatei wie nul scheitert)
     try:
-        py_compile.compile(str(pfad), doraise=True, cfile=os.devnull)
+        with open(pfad, "rb") as f:
+            compile(f.read(), str(pfad), "exec")
         print("Syntax: in Ordnung. Jetzt mit python ausführen und die Ausgabe prüfen.")
-    except py_compile.PyCompileError as e:
-        fehler.append(f"Syntaxfehler: {e.msg}")
+    except (SyntaxError, ValueError) as e:
+        zeile = f" (Zeile {e.lineno})" if getattr(e, "lineno", None) else ""
+        fehler.append(f"Syntaxfehler{zeile}: {getattr(e, 'msg', None) or e}")
 
 
 def office_sicher(pfad):

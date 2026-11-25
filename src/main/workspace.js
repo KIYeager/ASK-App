@@ -5,7 +5,6 @@ const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const paths = require('./paths');
 const { cleanupWorkDirs, hideFolder } = require('./cleanup');
-const { Snapshots } = require('./snapshot');
 
 const ASK_DIR = '.ask';
 const MAX_ENTRIES = 300;
@@ -80,31 +79,12 @@ function hashDir(dir) {
   return hash.digest('hex');
 }
 
-// Akzeptiert auch abweichende Schreibweisen, die ein Modell gern benutzt.
-function normalizeTasks(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const list = Array.isArray(raw) ? raw : raw.aufgaben || raw.tasks || raw.todos || raw.items || [];
-  const tasks = list.map((t) => {
-    if (typeof t === 'string') return { titel: t, status: 'offen' };
-    const titel = t.titel || t.title || t.text || t.name || t.beschreibung || t.description || '';
-    let status = String(t.status || t.state || '').toLowerCase();
-    if (t.done === true || t.erledigt === true || t.completed === true) status = 'erledigt';
-    if (['done', 'completed', 'fertig', 'ok', 'erledigt'].includes(status)) status = 'erledigt';
-    else if (['in_progress', 'in-progress', 'in arbeit', 'in_arbeit', 'läuft', 'laeuft', 'running', 'aktiv']
-      .includes(status)) status = 'in_arbeit';
-    else status = 'offen';
-    return { titel: String(titel), status };
-  }).filter((t) => t.titel);
-  return { auftrag: Array.isArray(raw) ? '' : String(raw.auftrag || raw.goal || raw.titel || raw.title || ''), aufgaben: tasks };
-}
-
 class Workspace extends EventEmitter {
   constructor() {
     super();
     this.root = '';
     this.watcher = null;
     this.timer = null;
-    this.pending = new Set();
   }
 
   open(folder) {
@@ -112,10 +92,7 @@ class Workspace extends EventEmitter {
     this.root = folder;
     fs.mkdirSync(path.join(folder, ASK_DIR), { recursive: true });
     hideFolder(path.join(folder, ASK_DIR));
-    setTimeout(() => { // nicht beim Öffnen bremsen
-      cleanupWorkDirs(folder);
-      try { new Snapshots(folder).prune(); } catch { /* beim nächsten Mal */ }
-    }, 2000);
+    setTimeout(() => cleanupWorkDirs(folder), 2000); // nicht beim Öffnen bremsen; die Sicherung räumt main.js auf
     fs.rmSync(path.join(folder, ASK_DIR, 'auftraege'), { recursive: true, force: true });
     this.syncSkills();
     try {
@@ -125,13 +102,15 @@ class Workspace extends EventEmitter {
       this.watcher = null;
     }
     this.emit('files', this.files());
-    this.emit('tasks', this.tasks());
   }
 
   close() {
     if (this.watcher) this.watcher.close();
     this.watcher = null;
     clearTimeout(this.timer);
+    clearTimeout(this.cleanupTimer);
+    for (const t of this.orderTimers?.values() || []) clearTimeout(t);
+    this.orderTimers = new Map();
     this.root = '';
   }
 
@@ -155,20 +134,20 @@ class Workspace extends EventEmitter {
   onChange(name) {
     if (['skills', 'chats', 'skripte', 'arbeit', 'anhaenge', 'sicherung'].some((sub) => name.startsWith(path.join(ASK_DIR, sub)))) return;
     if (/^\.ask[\\/]auftraege[\\/][0-9a-f]{6,32}\.json$/i.test(name)) {
+      // Erst melden, wenn die Datei eine Weile unverändert ist: sonst wäre sie vielleicht halb geschrieben
       const file = path.join(this.root, name);
-      if (fs.existsSync(file)) this.emit('auftrag', file);
+      this.orderTimers = this.orderTimers || new Map();
+      clearTimeout(this.orderTimers.get(file));
+      this.orderTimers.set(file, setTimeout(() => {
+        this.orderTimers.delete(file);
+        if (fs.existsSync(file)) this.emit('auftrag', file);
+      }, 300));
       return;
     }
     if (name.startsWith(path.join(ASK_DIR, 'auftraege')) || name.startsWith(path.join(ASK_DIR, 'pdf'))) return;
-    this.pending.add(name.toLowerCase() === path.join(ASK_DIR, 'tasks.json').toLowerCase() ? 'tasks' : 'files');
+    if (name.toLowerCase() === path.join(ASK_DIR, 'tasks.json').toLowerCase()) return; // Datei früherer Versionen
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      const kinds = this.pending;
-      this.pending = new Set();
-      if (!this.root) return;
-      if (kinds.has('tasks')) this.emit('tasks', this.tasks());
-      if (kinds.has('files')) this.emit('files', this.files());
-    }, 250);
+    this.timer = setTimeout(() => { if (this.root) this.emit('files', this.files()); }, 250);
   }
 
   files() {
@@ -179,14 +158,75 @@ class Workspace extends EventEmitter {
     return { top: top.sort(sortTop), recent: recentFiles(this.root) };
   }
 
-  tasks() {
-    if (!this.root) return null;
+  // Inhalt eines Unterordners für den Dateibaum (rel '' = Arbeitsordner), Ordner zuerst
+  list(rel = '') {
+    if (!this.root) return { ok: false, entries: [] };
+    const dir = rel ? this.resolve(rel) : fs.realpathSync.native(this.root);
+    if (!dir) return { ok: false, entries: [] };
+    let entries;
     try {
-      const text = fs.readFileSync(path.join(this.root, ASK_DIR, 'tasks.json'), 'utf8');
-      return normalizeTasks(JSON.parse(text.replace(/^﻿/, '')));
-    } catch (err) {
-      return err.code === 'ENOENT' ? null : { fehler: 'tasks.json ist gerade nicht lesbar', aufgaben: [] };
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return { ok: false, entries: [] };
     }
+    const out = [];
+    for (const entry of entries) {
+      if (out.length >= MAX_ENTRIES || HIDDEN.test(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      try {
+        const stat = fs.statSync(full);
+        out.push({ path: path.join(rel, entry.name), name: entry.name, dir: stat.isDirectory(), size: stat.size, modified: stat.mtimeMs });
+      } catch {
+        // gerade gelöscht oder gesperrt
+      }
+    }
+    out.sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name, 'de'));
+    return { ok: true, entries: out, more: entries.length > MAX_ENTRIES };
+  }
+
+  // Dateien im ganzen Projekt nach Namen suchen (für die Suche im Dateibereich), höchstens 200 Treffer
+  find(query) {
+    const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!this.root || !words.length) return [];
+    const out = [];
+    let seen = 0;
+    const walk = (dir, depth) => {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (out.length >= 200 || ++seen > 20000 || HIDDEN.test(entry.name)) continue;
+        const full = path.join(dir, entry.name);
+        const rel = path.relative(this.root, full);
+        if (words.every((w) => rel.toLowerCase().includes(w))) {
+          try {
+            const stat = fs.statSync(full);
+            out.push({ path: rel, name: entry.name, dir: stat.isDirectory(), size: stat.size, modified: stat.mtimeMs });
+          } catch { /* gerade gelöscht */ }
+        }
+        if (entry.isDirectory() && depth > 0) walk(full, depth - 1);
+      }
+    };
+    walk(this.root, 8);
+    return out.sort((a, b) => (b.dir - a.dir) || b.modified - a.modified);
+  }
+
+  // Hineingezogene Dateien in einen Ordner des Projekts kopieren. Vorhandene Dateien werden nie
+  // überschrieben («name (2).ext»). files: [{ name, data }]; liefert die neuen relativen Pfade.
+  import(relDir, files) {
+    const dir = relDir ? this.resolve(relDir) : (this.root ? fs.realpathSync.native(this.root) : null);
+    if (!dir || !fs.statSync(dir).isDirectory()) throw new Error('Ordner nicht gefunden.');
+    // resolve() liefert den echten Pfad; der gespeicherte Ordner kann eine Kurzform sein (C:\Users\RUNNER~1\…)
+    const realRoot = fs.realpathSync.native(this.root);
+    const { cleanName, freeName } = require('./attachments');
+    const done = [];
+    for (const f of (Array.isArray(files) ? files : []).slice(0, 50)) {
+      const name = freeName(dir, cleanName(f.name, f.type));
+      const data = Buffer.from(f.data || []);
+      if (data.length > 200 * 1024 * 1024) throw new Error(`${name} ist grösser als 200 MB.`);
+      fs.writeFileSync(path.join(dir, name), data, { flag: 'wx' });
+      done.push(path.relative(realRoot, path.join(dir, name)));
+    }
+    return done;
   }
 
   // Absoluter Pfad zu einer Datei im Arbeitsordner, oder null, wenn sie ausserhalb liegt.
@@ -205,4 +245,4 @@ class Workspace extends EventEmitter {
   }
 }
 
-module.exports = { Workspace, normalizeTasks, recentFiles, ASK_DIR };
+module.exports = { Workspace, recentFiles, ASK_DIR };

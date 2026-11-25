@@ -61,14 +61,33 @@ const outputText = (json) => (json.output || []).map((o) => o.data ?? '').join('
 const WINDOWED = new Set(['start', 'winword', 'excel', 'powerpnt', 'outlook', 'msaccess', 'notepad', 'mspaint', 'explorer',
   'msedge', 'chrome', 'firefox']);
 
+// Befehlsteile, getrennt durch &, |, Klammern oder Zeilenumbruch; in Anführungszeichen trennt nichts.
+function commandParts(command) {
+  const parts = [];
+  let part = '';
+  let quoted = false;
+  for (const c of String(command)) {
+    if (c === '"') quoted = !quoted;
+    if (!quoted && /[&|()\r\n]/.test(c)) { parts.push(part); part = ''; } else part += c;
+  }
+  parts.push(part);
+  return parts;
+}
+
+// Programm eines Befehlsteils (ohne Pfad und .exe); hinter «call», «@» und «cmd /c» zählt, was dort gestartet wird.
+function programOf(part, depth = 0) {
+  let s = part.trim().replace(/^@\s*/, '').replace(/^call\s+/i, '');
+  const shell = /^(?:"[^"]*\\)?cmd(?:\.exe)?"?\s+(?:\/\S+\s+)*?\/[ck]\s*(.*)$/i.exec(s);
+  if (shell && depth < 3) {
+    s = shell[1].trim().replace(/^"(.*)"$/, '$1');
+    return commandParts(s).map((p) => programOf(p, depth + 1)).find((p) => WINDOWED.has(p)) || '';
+  }
+  const word = s.startsWith('"') ? s.slice(1).split('"')[0] : s.split(/\s/)[0];
+  return word.split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|com)$/, '');
+}
+
 function blockedCommand(command) {
-  // Erstes Wort jedes Befehlsteils (getrennt durch &, |, Klammern), in Anführungszeichen auch mit Leerzeichen
-  const programs = String(command).split(/[&|()]/).map((part) => {
-    const s = part.trim();
-    const word = s.startsWith('"') ? s.slice(1).split('"')[0] : s.split(/\s/)[0];
-    return word.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
-  });
-  if (!programs.some((p) => WINDOWED.has(p))) return '';
+  if (!commandParts(command).some((part) => WINDOWED.has(programOf(part)))) return '';
   return 'Abgelehnt: Dieser Befehl würde ein Programm mit Fenster starten (z. B. Word, Excel, Explorer oder «start»). '
     + 'Das sperrt Dateien und wartet auf Eingaben. Für eine PDF-Prüfung python .ask/skills/pruefen.py <datei> --pdf verwenden; '
     + 'sonst der Person sagen, dass sie die Datei selbst öffnen soll.';
@@ -81,6 +100,7 @@ async function runCommand(terminal, args, { signal, onProgress }) {
   const blocked = blockedCommand(command);
   if (blocked) return { ok: false, output: blocked, summary: 'abgelehnt' };
   const limit = Math.min(Math.max(Number(args.wait) || 120, 5), 600);
+  if (signal?.aborted) throw new Error('abgebrochen');
   const started = await request(terminal, 'POST', `/execute?${q({ wait: POLL_SECONDS })}`, { command });
   if (started.status !== 200 || !started.json) throw fail(started);
   let data = started.json;
@@ -89,6 +109,11 @@ async function runCommand(terminal, args, { signal, onProgress }) {
   let offset = data.next_offset ?? (data.output || []).length;
   const end = Date.now() + limit * 1000;
   const kill = () => request(terminal, 'DELETE', `/execute/${encodeURIComponent(id)}`).catch(() => {});
+  // Stopp während des Starts: Der Befehl läuft schon, das Ereignis kommt aber nicht mehr
+  if (signal?.aborted) {
+    if (data.status === 'running') await kill();
+    throw new Error('abgebrochen');
+  }
   signal?.addEventListener('abort', kill, { once: true });
   try {
     while (data.status === 'running' && Date.now() < end) {
@@ -272,7 +297,7 @@ const TOOLS = [
     name: 'update_tasks',
     label: 'Aufgaben',
     describe: (a) => a.auftrag || '',
-    description: 'Legt die Aufgabenliste an oder aktualisiert sie. Die Person sieht sie in der Seitenleiste. Bei Aufträgen mit mehr als zwei Schritten zuerst anlegen und nach jedem Schritt aktualisieren.',
+    description: 'Legt die Aufgabenliste dieses Chats an oder aktualisiert sie. Die Person sieht sie über dem Eingabefeld. Bei Aufträgen mit mehr als zwei Schritten zuerst anlegen und nach jedem Schritt aktualisieren.',
     parameters: {
       type: 'object',
       properties: {
@@ -289,9 +314,11 @@ const TOOLS = [
       required: ['aufgaben'],
     },
     async run(terminal, args) {
-      const tasks = { auftrag: String(args.auftrag || ''), aufgaben: Array.isArray(args.aufgaben) ? args.aufgaben : [] };
-      const res = await request(terminal, 'POST', '/files/write', { path: '.ask/tasks.json', content: JSON.stringify(tasks, null, 2) });
-      if (res.status !== 200) throw fail(res);
+      // Die Liste gehört zum Chat und steht dort im Ergebnis dieses Aufrufs (früher: eine Datei für den ganzen Ordner)
+      const status = (s) => (['offen', 'in_arbeit', 'erledigt'].includes(s) ? s : 'offen');
+      const tasks = { auftrag: String(args.auftrag || ''),
+        aufgaben: (Array.isArray(args.aufgaben) ? args.aufgaben : []).filter((t) => t && String(t.titel || '').trim())
+          .slice(0, 100).map((t) => ({ titel: String(t.titel).trim().slice(0, 300), status: status(t.status) })) };
       const done = tasks.aufgaben.filter((t) => t.status === 'erledigt').length;
       return { ok: true, output: 'Aufgabenliste gespeichert.', tasks: tasks.aufgaben, summary: `${done} von ${tasks.aufgaben.length} erledigt` };
     },
@@ -306,6 +333,8 @@ function githubTool(fn) {
   return async (terminal, args, ctx) => {
     if (!ctx.github || !ctx.folder) throw new Error('GitHub ist hier nicht verfügbar.');
     if (!ctx.github.connected()) return { ok: false, output: NOT_CONNECTED, summary: 'nicht verbunden' };
+    // Die Person gleicht gerade selbst im Bereich «GitHub» ab (main.js): nicht gleichzeitig
+    if (!ctx.panel && ctx.github.locked?.(ctx.folder)) return { ok: false, output: 'Die Person gleicht gerade selbst mit GitHub ab. Kurz warten und nochmals versuchen.', summary: 'Abgleich läuft' };
     return fn(ctx.github, ctx.folder, args, ctx);
   };
 }
@@ -352,7 +381,7 @@ TOOLS.push(
     run: githubTool(async (gh, folder) => {
       const r = await gh.pull(folder);
       const output = [`Geholt: ${list(r.written)}`, `Gelöscht (auf GitHub entfernt): ${list(r.removed)}`,
-        r.conflicts.length ? `Konflikte (hier und auf GitHub geändert, nichts überschrieben): ${list(r.conflicts)}. Die Person entscheiden lassen.` : 'Keine Konflikte.'].join('\n');
+        r.conflicts.length ? `Konflikte (hier und auf GitHub geändert, nichts überschrieben): ${list(r.conflicts)}. Die Person entscheiden lassen, welche Fassung gilt.` : 'Keine Konflikte.'].join('\n');
       return { ok: true, output, summary: `${r.written.length} geholt${r.removed.length ? `, ${r.removed.length} gelöscht` : ''}${r.conflicts.length ? ` · ${r.conflicts.length} Konflikte` : ''}` };
     }),
   },
@@ -360,21 +389,41 @@ TOOLS.push(
     name: 'github_push',
     label: 'GitHub',
     describe: (a) => `hochladen «${a.nachricht || ''}»`,
-    description: 'Lädt die Änderungen im Arbeitsordner als Commit auf das verbundene GitHub-Repository hoch (ohne .ask). Die Person bestätigt vorher, ausser sie hat das für dieses Repository abgeschaltet.',
-    parameters: { type: 'object', properties: { nachricht: { type: 'string', description: 'Kurze Commit-Nachricht, was sich geändert hat' } }, required: ['nachricht'] },
+    description: 'Lädt die Änderungen im Arbeitsordner als Commit auf das verbundene GitHub-Repository hoch (ohne .ask und ohne das, was .gitignore ausschliesst). '
+      + 'Die Person bestätigt vorher, ausser sie hat das für dieses Repository abgeschaltet.',
+    parameters: {
+      type: 'object',
+      properties: {
+        nachricht: { type: 'string', description: 'Kurze Commit-Nachricht, was sich geändert hat' },
+        ueberschreiben: { type: 'boolean', description: 'Nur nach einem gemeldeten Konflikt und wenn die Person es will: Die Fassung hier ersetzt die auf GitHub.' },
+      },
+      required: ['nachricht'],
+    },
     run: githubTool(async (gh, folder, a, ctx) => {
       const s = await gh.status(folder);
       if (!s.linked) return { ok: false, output: 'Der Ordner ist mit keinem Repository verbunden (github_create oder github_clone).', summary: 'kein Repository' };
       const changes = [...s.changed, ...s.added, ...s.deleted];
       if (changes.length === 0) return { ok: true, output: 'Nichts hochzuladen: keine Änderungen seit dem letzten Abgleich.', summary: 'nichts zu tun' };
-      // Rückfrage, ausser die Person hat für dieses Repository «nicht mehr fragen» gewählt
-      if (!ctx.githubTrust?.has(s.repo)) {
+      const clash = s.conflicts || [];
+      const overwrite = a.ueberschreiben === true && clash.length > 0;
+      if (clash.length && !overwrite) {
+        return { ok: false, summary: `${clash.length} ${clash.length === 1 ? 'Konflikt' : 'Konflikte'}`,
+          output: `Nicht hochgeladen. Hier und auf GitHub verschieden geändert: ${list(clash)}. Hochladen würde die Fassung auf GitHub ersetzen. `
+            + 'Frag die Person, welche Fassung gelten soll. GitHub gewinnt: die Datei hier löschen und github_pull. Hier gewinnt: github_push mit ueberschreiben: true.' };
+      }
+      // Überschreiben auf GitHub bestätigt die Person immer, auch wenn sie sonst nicht mehr gefragt werden will
+      if (overwrite) {
+        if (!(await ctx.confirm(`${clash.length} ${clash.length === 1 ? 'Datei' : 'Dateien'} auf GitHub mit der Fassung von hier ersetzen?`,
+          `Repository: ${s.repo}\nNachricht: ${a.nachricht}\n\nAuf GitHub inzwischen geändert:\n${list(clash, 20)}\n\nDie Änderungen auf GitHub an diesen Dateien gehen verloren (im Verlauf von GitHub bleiben sie).`))) {
+          return { ok: false, output: 'Die Person hat das Überschreiben abgelehnt.', summary: 'abgelehnt' };
+        }
+      } else if (!ctx.githubTrust?.has(s.repo)) {
         const answer = await ctx.confirm(`${changes.length} Änderungen auf GitHub hochladen?`, `Repository: ${s.repo}\nNachricht: ${a.nachricht}\n\n${list(changes, 20)}`,
           { checkbox: 'Für dieses Repository nicht mehr fragen' });
         if (!(answer?.ok ?? answer)) return { ok: false, output: 'Die Person hat das Hochladen abgelehnt.', summary: 'abgelehnt' };
         if (answer?.checked) ctx.githubTrust?.add(s.repo);
       }
-      const r = await gh.push(folder, a.nachricht);
+      const r = await gh.push(folder, a.nachricht, { overwrite });
       return { ok: true, output: `Hochgeladen: ${r.uploaded} Dateien, ${r.deleted.length} gelöscht. ${r.url}`, summary: `${r.uploaded} hochgeladen${r.deleted.length ? `, ${r.deleted.length} gelöscht` : ''} · ${s.repo}` };
     }),
   },
@@ -400,6 +449,92 @@ TOOLS.push(
       }
       const r = await gh.create(folder, String(a.name).trim(), { privat, beschreibung: a.beschreibung || '' });
       return { ok: true, output: `Angelegt: ${r.repo} (${r.private ? 'privat' : 'öffentlich'}), ${r.uploaded} Dateien hochgeladen. ${r.url}`, summary: `${r.repo} · ${r.uploaded} Dateien` };
+    }),
+  },
+  {
+    name: 'github_branch',
+    label: 'GitHub',
+    describe: (a) => ({ liste: 'Branches', wechseln: `Branch wechseln zu ${a.name || ''}`, neu: `neuer Branch ${a.name || ''}` }[a.aktion] || 'Branches'),
+    description: 'Branches des verbundenen Repositorys: «liste» zeigt sie, «neu» legt einen Branch auf dem Stand des letzten Abgleichs an und verbindet den Ordner damit '
+      + '(Änderungen hier bleiben und gehen beim nächsten github_push auf den neuen Branch), «wechseln» verbindet den Ordner mit einem anderen Branch und holt dessen Stand. '
+      + 'Wechseln geht nur ohne Änderungen, die noch nicht hochgeladen sind.',
+    parameters: {
+      type: 'object',
+      properties: {
+        aktion: { type: 'string', enum: ['liste', 'wechseln', 'neu'] },
+        name: { type: 'string', description: 'Name des Branches (bei wechseln und neu), z. B. neue-startseite' },
+      },
+      required: ['aktion'],
+    },
+    run: githubTool(async (gh, folder, a) => {
+      const aktion = a.aktion || 'liste';
+      if (aktion === 'liste') {
+        const b = await gh.branches(folder);
+        const names = b.branches.map((n) => `${n}${n === b.default ? ' (Standard)' : ''}${n === b.current ? ' (verbunden)' : ''}`);
+        return { ok: true, output: `Branches: ${names.join(', ')}`, summary: `${b.branches.length} Branches · ${b.current}` };
+      }
+      if (!String(a.name || '').trim()) return { ok: false, output: 'Für wechseln und neu braucht es den Namen des Branches (name).', summary: 'Name fehlt' };
+      if (aktion === 'neu') {
+        const r = await gh.createBranch(folder, a.name);
+        return { ok: true, output: `Branch ${r.branch} angelegt (von ${r.from}), der Ordner ist jetzt mit ihm verbunden. Änderungen hier gehen beim nächsten github_push auf ${r.branch}. ${r.url}`,
+          summary: `${r.branch} angelegt` };
+      }
+      if (aktion === 'wechseln') {
+        try {
+          const r = await gh.switchBranch(folder, a.name);
+          if (r.same) return { ok: true, output: `Der Ordner ist schon mit ${r.branch} verbunden.`, summary: r.branch };
+          const output = [`Gewechselt von ${r.from} zu ${r.branch}.`, `Geholt: ${list(r.written)}`, `Gelöscht (gibt es auf ${r.branch} nicht): ${list(r.removed)}`,
+            r.conflicts.length ? `Nicht überschrieben (hier anders vorhanden): ${list(r.conflicts)}.` : ''].filter(Boolean).join('\n');
+          return { ok: true, output, summary: `${r.branch} · ${r.written.length} geholt` };
+        } catch (err) {
+          if (err.pending) return { ok: false, output: `${err.message} Frag die Person, ob du zuerst hochladen (github_push) oder einen neuen Branch anlegen sollst.`, summary: 'Änderungen noch nicht hochgeladen' };
+          throw err;
+        }
+      }
+      return { ok: false, output: `Unbekannte Aktion «${aktion}». Möglich: liste, wechseln, neu.`, summary: 'unbekannte Aktion' };
+    }),
+  },
+  {
+    name: 'github_pr',
+    label: 'GitHub',
+    describe: (a) => (a.aktion === 'neu' ? `Pull Request «${a.titel || ''}»` : 'Pull Requests'),
+    description: 'Pull Requests des verbundenen Repositorys: «liste» zeigt die offenen mit Adresse, «neu» erstellt einen vom Branch des Ordners in den Standard-Branch '
+      + '(oder ziel). Er enthält nur, was schon hochgeladen ist; vorher github_push. Die Person bestätigt vorher.',
+    parameters: {
+      type: 'object',
+      properties: {
+        aktion: { type: 'string', enum: ['liste', 'neu'] },
+        titel: { type: 'string', description: 'Titel des Pull Requests (bei neu)' },
+        beschreibung: { type: 'string', description: 'Was sich ändert und warum (bei neu)' },
+        ziel: { type: 'string', description: 'Ziel-Branch, sonst der Standard-Branch' },
+      },
+      required: ['aktion'],
+    },
+    run: githubTool(async (gh, folder, a, ctx) => {
+      if ((a.aktion || 'liste') === 'liste') {
+        const prs = await gh.pullRequests(folder);
+        if (!prs.length) return { ok: true, output: 'Keine offenen Pull Requests.', summary: 'keine offenen' };
+        return { ok: true, output: prs.map((p) => `#${p.number} ${p.title} (${p.head} → ${p.base}, ${p.user}) ${p.url}`).join('\n'), summary: `${prs.length} offen` };
+      }
+      if (a.aktion !== 'neu') return { ok: false, output: `Unbekannte Aktion «${a.aktion}». Möglich: liste, neu.`, summary: 'unbekannte Aktion' };
+      if (!String(a.titel || '').trim()) return { ok: false, output: 'Für einen neuen Pull Request braucht es einen Titel (titel).', summary: 'Titel fehlt' };
+      const s = await gh.status(folder);
+      if (!s.linked) return { ok: false, output: 'Der Ordner ist mit keinem Repository verbunden (github_create oder github_clone).', summary: 'kein Repository' };
+      const pending = [...s.changed, ...s.added, ...s.deleted];
+      if (pending.length) {
+        return { ok: false, summary: 'zuerst hochladen',
+          output: `Hier gibt es ${pending.length} Änderungen, die noch nicht hochgeladen sind (${list(pending, 8)}). Ein Pull Request enthält nur, was auf GitHub liegt: zuerst github_push.` };
+      }
+      const ziel = String(a.ziel || '').trim() || (await gh.branches(folder)).default;
+      if (ziel === s.branch) {
+        return { ok: false, summary: 'eigener Branch nötig',
+          output: `Der Ordner ist mit ${ziel} verbunden, dem Ziel des Pull Requests. Zuerst mit github_branch (aktion neu) einen eigenen Branch anlegen, dort hochladen, dann den Pull Request erstellen.` };
+      }
+      if (!(await ctx.confirm(`Pull Request in ${s.repo} erstellen?`, `Von ${s.branch} nach ${ziel}\nTitel: ${a.titel}${a.beschreibung ? `\n\n${String(a.beschreibung).slice(0, 1500)}` : ''}`))) {
+        return { ok: false, output: 'Die Person hat den Pull Request abgelehnt.', summary: 'abgelehnt' };
+      }
+      const r = await gh.createPullRequest(folder, { title: a.titel, body: a.beschreibung || '', base: ziel });
+      return { ok: true, output: `Pull Request #${r.number} erstellt (${r.head} → ${r.base}): ${r.url}`, summary: `#${r.number} · ${r.head} → ${r.base}` };
     }),
   },
 );
@@ -529,7 +664,8 @@ TOOLS.push(
     description: 'Der eingebaute Browser der App: Öffnet eine Webseite (ziel: https://…) oder eine HTML-Datei im Arbeitsordner sichtbar im Browser-Bereich rechts in der App. '
       + 'Die Person sieht alles live und kann selbst klicken, tippen und sich anmelden. Ohne ziel arbeitest du auf der offenen Seite weiter, ohne sie neu zu laden. '
       + 'Führt Klicks, Tasten, Eingaben und Scrollen aus und liefert Adresse, Titel, Fehler der Konsole, den sichtbaren Text, die Bedienelemente und ein Bildschirmfoto. '
-      + 'Damit bedienst du Webseiten, prüfst Spiele und zeigst der Person Seiten. Frag vor allem, was etwas abschickt, kauft, postet oder löscht.',
+      + 'Damit bedienst du Webseiten, prüfst Spiele und zeigst der Person Seiten. Frag vor allem, was etwas abschickt, kauft, postet oder löscht. '
+      + 'Adressen auf diesem Rechner (http://localhost:…) öffnet er nur für Server, die du mit server_starten gestartet hast.',
     parameters: {
       type: 'object',
       properties: {
@@ -557,9 +693,91 @@ TOOLS.push(
       },
     },
     run: visualTool(async (v, folder, a, ctx) => {
-      const r = await v.browse(folder, a.ziel, { aktionen: a.aktionen, warten: a.warten, chat: ctx.chat, onLive: ctx.onLive, signal: ctx.signal });
+      // Lokale Adressen nur für Server, die die App in diesem Projekt gestartet hat (ENTSCHEIDE E48)
+      const r = await v.browse(folder, a.ziel, { aktionen: a.aktionen, warten: a.warten, chat: ctx.chat, onLive: ctx.onLive, signal: ctx.signal,
+        localPorts: ctx.servers ? ctx.servers.allowedPorts() : new Set() });
       if (!ctx.canSee) r.output = r.output.replace('Das Bildschirmfoto folgt in der nächsten Nachricht.', 'Das Bildschirmfoto bekommst du nicht: das Modell in ASK kann keine Bilder ansehen.');
       return r;
+    }),
+  },
+);
+
+// Entwicklungsserver (src/main/servers.js, ENTSCHEIDE E48): laufen im Terminal weiter, ohne dass der Auftrag
+// wartet. Die Person sieht sie im Browser-Bereich und kann sie dort öffnen und stoppen.
+function serverTool(fn) {
+  return async (terminal, args, ctx) => {
+    if (!ctx.servers) throw new Error('Server sind hier nicht verfügbar.');
+    return fn(ctx.servers, args, ctx);
+  };
+}
+
+const SERVER_STATES = { startet: 'startet', läuft: 'läuft', gestoppt: 'gestoppt', fehler: 'Fehler' };
+
+function serverLine(s) {
+  const exit = s.exitCode !== null && s.exitCode !== undefined && s.state !== 'läuft' ? `, Exitcode ${s.exitCode}` : '';
+  return `${s.id} «${s.name}»: ${SERVER_STATES[s.state] || s.state}${exit}${s.url ? `, ${s.url}` : ', keine Adresse erkannt'} (${s.command})`;
+}
+
+TOOLS.push(
+  {
+    name: 'server_starten',
+    label: 'Server',
+    describe: (a) => a.befehl,
+    description: 'Startet einen Entwicklungsserver oder ein anderes Programm, das weiterlaufen soll (z. B. npm run dev, python -m http.server 8000, node server.js), '
+      + 'im Arbeitsordner im Hintergrund. Wartet einige Sekunden und liefert id, Adresse (falls in der Ausgabe erkannt) und die ersten Zeilen der Ausgabe. '
+      + 'Der Server läuft weiter, auch nach dem Auftrag; die Person sieht ihn im Browser-Bereich. Die Adresse öffnest du mit browser.',
+    parameters: {
+      type: 'object',
+      properties: {
+        befehl: { type: 'string', description: 'Befehl für cmd.exe, z. B. npm run dev' },
+        name: { type: 'string', description: 'Kurzer Name für die Anzeige, z. B. «Webseite»' },
+      },
+      required: ['befehl'],
+    },
+    run: serverTool(async (servers, a) => {
+      const command = String(a.befehl || a.command || '').trim();
+      if (!command) throw new Error('befehl fehlt');
+      const blocked = blockedCommand(command);
+      if (blocked) return { ok: false, output: blocked, summary: 'abgelehnt' };
+      const started = await servers.start(command, { name: a.name, by: 'modell' });
+      const s = started.existing ? started : await servers.waitReady(started.id, 8000);
+      const out = servers.output(s.id, 30).join('\n').trim();
+      const head = started.existing ? `Läuft schon: ${serverLine(s)}` : serverLine(s);
+      const next = s.state === 'fehler' || s.state === 'gestoppt'
+        ? 'Der Server ist beendet. Ausgabe prüfen, Fehler beheben und neu starten.'
+        : s.url ? `Mit browser (ziel: ${s.url}) öffnen.${s.ready ? '' : ' Er antwortet noch nicht; kurz warten.'}` : 'Noch keine Adresse erkannt; später mit server_liste nachsehen.';
+      return { ok: s.state !== 'fehler', output: `${head}\n${next}\n\nAusgabe:\n${clip(out, 4000) || '(noch keine)'}`, display: out || head,
+        summary: `${SERVER_STATES[s.state] || s.state}${s.url ? ` · ${s.url}` : ''}` };
+    }),
+  },
+  {
+    name: 'server_stoppen',
+    label: 'Server',
+    describe: (a) => `stoppen ${a.id}`,
+    description: 'Stoppt einen Server, den server_starten oder die Person gestartet hat.',
+    parameters: { type: 'object', properties: { id: { type: 'string', description: 'id aus server_starten oder server_liste' } }, required: ['id'] },
+    run: serverTool(async (servers, a) => {
+      const s = servers.get(a.id);
+      if (!s) return { ok: false, output: `Kein Server mit id ${a.id}. Mit server_liste nachsehen.`, summary: 'nicht gefunden' };
+      await servers.stop(s.id);
+      return { ok: true, output: `Gestoppt: ${s.name} (${s.id})`, summary: `${s.name} gestoppt` };
+    }),
+  },
+  {
+    name: 'server_liste',
+    label: 'Server',
+    describe: () => 'Liste',
+    description: 'Listet die Server dieses Projekts mit Zustand, Adresse und den letzten Zeilen der Ausgabe.',
+    parameters: { type: 'object', properties: {} },
+    run: serverTool(async (servers) => {
+      const list = servers.list();
+      if (!list.length) return { ok: true, output: 'Keine Server gestartet.', summary: 'keine' };
+      const output = list.map((s) => {
+        const tail = servers.output(s.id, 8).join('\n   ');
+        return `${serverLine(s)}${tail ? `\n   ${tail}` : ''}`;
+      }).join('\n\n');
+      const live = list.filter((s) => s.state === 'läuft' || s.state === 'startet').length;
+      return { ok: true, output: clip(output), summary: `${live} ${live === 1 ? 'läuft' : 'laufen'}` };
     }),
   },
 );
@@ -607,6 +825,9 @@ TOOLS.push({
     };
   },
 });
+
+// Gedächtnis und eigene Skills (memorytools.js)
+TOOLS.push(...require('./memorytools').KNOWLEDGE_TOOLS);
 
 const byName = new Map(TOOLS.map((t) => [t.name, t]));
 

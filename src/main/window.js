@@ -4,6 +4,7 @@ const path = require('node:path');
 const { BrowserWindow, WebContentsView, Menu, shell, session, clipboard } = require('electron');
 const paths = require('./paths');
 const { allowedNavigation } = require('./visual');
+const { sameOrigin } = require('./askapi');
 
 const ASK_PARTITION = 'persist:ask';
 const BROWSER_PARTITION = 'persist:ask-browser';
@@ -19,7 +20,7 @@ class AppWindow {
 
     this.win = new BrowserWindow({
       width: 1440, height: 920, minWidth: 960, minHeight: 600,
-      title: 'ASK', icon: paths.iconFile(), backgroundColor: '#141414', show: false, autoHideMenuBar: true,
+      title: 'ASK', icon: paths.iconFile(), backgroundColor: require('electron').nativeTheme.shouldUseDarkColors ? '#16191b' : '#ffffff', show: false, autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(paths.preloadDir(), 'shell.js'),
         contextIsolation: true, sandbox: true, plugins: true, spellcheck: false,
@@ -29,7 +30,13 @@ class AppWindow {
     this.win.once('ready-to-show', () => this.win.show());
     this.win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     this.win.webContents.on('will-navigate', (e) => e.preventDefault());
-    this.win.loadFile(path.join(paths.rendererDir(), 'index.html'));
+    this.win.webContents.on('did-fail-load', (_e, code, desc, url, main) => {
+      if (main && code !== -3) console.error(`Oberfläche nicht geladen (${desc}): ${url}. Zuerst «npm run build:ui».`);
+    });
+    // Entwicklung mit Vite: ASK_DEV_UI=http://localhost:5173 lädt die Oberfläche vom Dev-Server
+    const devUi = !require('electron').app.isPackaged && /^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/.test(process.env.ASK_DEV_UI || '');
+    if (devUi) this.win.loadURL(process.env.ASK_DEV_UI).catch(() => {});
+    else this.win.loadFile(path.join(paths.rendererDir(), 'index.html')).catch(() => {});
 
     this.askSession = session.fromPartition(ASK_PARTITION);
     this.setupAskSession();
@@ -110,7 +117,10 @@ class AppWindow {
     // Unsichtbares Menü, damit die üblichen Tastenkürzel funktionieren.
     const ask = () => this.view.webContents;
     const ui = () => this.win.webContents;
-    const zoom = (delta) => ui().setZoomLevel(delta === 0 ? 0 : ui().getZoomLevel() + delta);
+    const zoom = (delta) => {
+      ui().setZoomLevel(delta === 0 ? 0 : ui().getZoomLevel() + delta);
+      setTimeout(() => { this.applyAskLayout(); this.applyBrowserLayout(); }, 50); // die Ansichten liegen in Pixeln über der Oberfläche
+    };
     const menu = Menu.buildFromTemplate([
       { label: 'Bearbeiten', submenu: [
         { role: 'undo', label: 'Rückgängig' }, { role: 'redo', label: 'Wiederholen' }, { type: 'separator' },
@@ -134,7 +144,7 @@ class AppWindow {
   loadAsk(url) {
     this.askOrigin = new URL(url).origin;
     const current = this.view.webContents.getURL();
-    if (!current || !current.startsWith(this.askOrigin)) this.view.webContents.loadURL(url);
+    if (!current || !sameOrigin(current, url)) this.view.webContents.loadURL(url).catch(() => {}); // did-fail-load zeigt den Fehler
   }
 
   setAskBounds(bounds) {
@@ -151,7 +161,8 @@ class AppWindow {
     const b = this.askBounds;
     const show = this.askVisible && b && b.width > 0 && b.height > 0;
     if (show) {
-      this.view.setBounds({ x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) });
+      const z = this.win.webContents.getZoomFactor(); // Bereich in CSS-Pixeln der Oberfläche, wie beim Browser
+      this.view.setBounds({ x: Math.round(b.x * z), y: Math.round(b.y * z), width: Math.round(b.width * z), height: Math.round(b.height * z) });
     }
     this.view.setVisible(!!show);
   }

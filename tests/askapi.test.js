@@ -1,8 +1,8 @@
 // Tests für das Lesen der Antworten von ASK und den Verlauf an das Modell (node --test tests/).
 const test = require('node:test');
 const assert = require('node:assert');
-const { AskSession, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal } = require('../src/main/askapi');
-const { apiMessages } = require('../src/main/agent');
+const { AskSession, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, nearestEffort } = require('../src/main/askapi');
+const { apiMessages, shortArgs, TIGHT, TOO_LONG } = require('../src/main/agent');
 const { parseArgs, clip, toolSpecs } = require('../src/main/tools');
 
 test('SSE: Ereignisse über Teilstücke hinweg, [DONE] und Kommentare ignoriert', () => {
@@ -173,4 +173,60 @@ test('Werkzeuge: Argumente, Kürzen, Beschreibungen', () => {
   const specs = toolSpecs(' Hinweis');
   assert.ok(specs.find((s) => s.function.name === 'run_command').function.description.endsWith(' Hinweis'));
   assert.ok(specs.every((s) => s.type === 'function' && s.function.parameters.type === 'object'));
+});
+
+test('Verlauf: lange Argumente früherer Aufrufe werden gekürzt, Hinweise gehen nicht an das Modell', () => {
+  const big = 'x'.repeat(5000);
+  const messages = [{ role: 'user', content: 'los' }];
+  for (let n = 0; n < 12; n++) {
+    messages.push({ role: 'assistant', content: '', tool_calls: [{ id: `c${n}`, type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: `d${n}.txt`, content: big }) } }] });
+    messages.push({ role: 'note', kind: 'notice', content: 'Hinweis für die Person' });
+    messages.push({ role: 'tool', tool_call_id: `c${n}`, content: `Geschrieben ${big}` });
+  }
+  const out = apiMessages('SYS', messages);
+  assert.ok(out.every((m) => ['system', 'user', 'assistant', 'tool'].includes(m.role)));
+  const calls = out.filter((m) => m.tool_calls).map((m) => m.tool_calls[0].function.arguments);
+  assert.strictEqual(calls.length, 12);
+  assert.ok(calls[0].length < 1500 && JSON.parse(calls[0]).path === 'd0.txt', 'alter Aufruf gekürzt, bleibt gültiges JSON');
+  assert.ok(JSON.parse(calls[0]).content.includes('gekürzt'));
+  assert.strictEqual(JSON.parse(calls[11]).content, big, 'neuer Aufruf unverändert');
+  assert.strictEqual(messages[1].tool_calls[0].function.arguments.length > 5000, true, 'der gespeicherte Chat bleibt vollständig');
+  const size = (list) => JSON.stringify(list).length;
+  assert.ok(size(apiMessages('SYS', messages, false, null, TIGHT)) < size(out) / 2);
+  // Textmodus: frühere Aufrufe ebenfalls gekürzt
+  const text = apiMessages('SYS', messages, true);
+  assert.ok(text[1].role === 'user' && text[2].content.includes('<tool_call>') && text[2].content.length < 1500);
+  assert.strictEqual(shortArgs('kein json '.repeat(500), 100).length, 5000);
+  assert.strictEqual(shortArgs('{"a":"kurz"}', 100), '{"a":"kurz"}');
+});
+
+test('Meldungen «Verlauf zu lang» werden erkannt, andere nicht', () => {
+  for (const m of ["This model's maximum context length is 32768 tokens. However, your request has 40211 input tokens.", 'context_length_exceeded',
+    'prompt is too long: 210000 tokens > 200000 maximum', 'Please reduce the length of the messages.']) assert.ok(TOO_LONG.test(m), m);
+  for (const m of ['tools is not supported', 'model does not support image input', 'Model not found']) assert.ok(!TOO_LONG.test(m), m);
+});
+
+test('Denkaufwand: abgelehnte Stufe durch die nächste erlaubte ersetzen', async () => {
+  const msg = 'litellm.BadRequestError: OpenAIException - Unexpected reasoning effort high. Supported types are xhigh (default), medium, and low.';
+  assert.strictEqual(nearestEffort(msg, 'high'), 'xhigh', 'bei Gleichstand die höhere');
+  assert.strictEqual(nearestEffort(msg, 'low'), null, 'erlaubt: nichts ändern');
+  assert.strictEqual(nearestEffort('Unrecognized request argument: reasoning_effort', 'high'), null, 'ohne Liste: keine Wahl');
+
+  const ask = new AskSession();
+  ask.base = 'https://ask.example.ch';
+  ask.token = 't';
+  const sent = [];
+  const reply = (status, body) => ({ ok: status < 300, status, headers: { get: () => 'application/json' }, text: async () => JSON.stringify(body), json: async () => body });
+  ask.session = {
+    fetch: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      sent.push(body.reasoning_effort);
+      if (body.reasoning_effort === 'high') return reply(400, { detail: msg });
+      return reply(200, { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] });
+    },
+  };
+  const first = await ask.chat({ model: 'm', messages: [], thinking: 'hoch' });
+  assert.strictEqual(first.content, 'ok');
+  await ask.chat({ model: 'm', messages: [], thinking: 'hoch' });
+  assert.deepStrictEqual(sent, ['high', 'xhigh', 'xhigh'], 'einmal abgelehnt, danach gleich die erlaubte Stufe');
 });

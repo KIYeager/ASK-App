@@ -10,7 +10,8 @@ const { spawn, execFileSync } = require('node:child_process');
 
 const exe = path.resolve(process.argv[2]);
 const base = process.argv[3] || path.join(os.homedir(), 'ASK-Test-paket');
-const pythonDir = path.join(path.dirname(exe), 'resources', 'python').toLowerCase();
+// Python entpackt die App nach %LOCALAPPDATA%\ASK-Desktop\python\<id> (ENTSCHEIDE E39)
+const pythonDir = path.join(process.env.LOCALAPPDATA, 'ASK-Desktop', 'python').toLowerCase();
 const settingsFile = path.join(process.env.APPDATA, 'ASK', 'einstellungen.json');
 const workdir = path.join(base, 'ordner-paket');
 const mockPort = 18800 + Math.floor(Math.random() * 90);
@@ -98,7 +99,7 @@ function listening(port) {
 }
 
 function launch() {
-  const child = spawn(exe, [`--remote-debugging-port=${debugPort}`], { stdio: 'ignore' });
+  const child = spawn(exe, [`--remote-debugging-port=${debugPort}`], { stdio: 'ignore', env: { ...process.env, ASK_NO_UPDATES: '1' } });
   return child;
 }
 
