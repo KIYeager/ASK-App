@@ -155,8 +155,8 @@ function GithubDialog({ onClose }) {
             {s.linked ? (
               <p>Dieses Projekt gehört zu <a href={s.url} onClick={(e) => { e.preventDefault(); api().openLink(s.url); }}>{s.repo}</a>.
                 {' '}Hier geändert: {s.changed.length + s.added.length + s.deleted.length} Dateien{s.remoteNewer ? '; auf GitHub gibt es Neueres' : ''}.</p>
-            ) : <p>Dieses Projekt ist mit keinem Repository verbunden. Sag ASK zum Beispiel «Hol das Repository besitzer/name» oder «Leg das Projekt auf GitHub an».</p>}
-            <p className="muted small">Im Chat: «lade die Änderungen auf GitHub hoch», «hol die neuesten Änderungen von GitHub».</p>
+            ) : <p>Dieses Projekt ist mit keinem Repository verbunden. Verbinde es rechts im Bereich «GitHub» oder sag ASK zum Beispiel «Hol das Repository besitzer/name» oder «Leg das Projekt auf GitHub an».</p>}
+            <p className="muted small">Holen, Hochladen, Branches und Pull Requests: rechts im Bereich «GitHub» oder im Chat, z. B. «lade die Änderungen auf GitHub hoch».</p>
             {s.trusted?.length ? (
               <>
                 <p>Hochladen ohne Rückfrage:</p>

@@ -1,4 +1,5 @@
-// Nachbau der GitHub-REST-API, die src/main/github.js benutzt (Repositories, Git-Daten, Contents).
+// Nachbau der GitHub-REST-API, die src/main/github.js benutzt (Repositories, Git-Daten, Contents,
+// Branches, Pull Requests).
 // Alles im Speicher. Für Unit-Tests (tests/github.test.js) und den Mock von ASK (mock-ask.js).
 const crypto = require('node:crypto');
 
@@ -35,7 +36,7 @@ function createMockGitHub() {
     if (method === 'POST' && p === '/user/repos') {
       const name = `${LOGIN}/${body.name}`;
       if (repos.has(name)) return { status: 422, body: { message: 'name already exists on this account' } };
-      const repo = { name, private: body.private !== false, branch: 'main', blobs: new Map(), trees: new Map(), commits: new Map(), refs: {} };
+      const repo = { name, private: body.private !== false, branch: 'main', blobs: new Map(), trees: new Map(), commits: new Map(), refs: {}, pulls: [] };
       repos.set(name, repo);
       if (body.auto_init) repo.refs.main = commitFiles(repo, { 'README.md': addBlob(repo, Buffer.from(`# ${body.name}\n`)) }, 'Initial commit', []);
       return { status: 201, body: { full_name: name, default_branch: 'main', private: repo.private } };
@@ -49,6 +50,32 @@ function createMockGitHub() {
         const sha = repo.refs[decodeURIComponent(m[1])];
         if (!sha) return Object.keys(repo.refs).length ? { status: 404, body: { message: 'Not Found' } } : { status: 409, body: { message: 'Git Repository is empty.' } };
         return { status: 200, body: { object: { sha } } };
+      }
+      if (method === 'GET' && rest === '/branches') {
+        return { status: 200, body: Object.entries(repo.refs).map(([name, sha]) => ({ name, commit: { sha }, protected: false })) };
+      }
+      if (rest === '/git/refs' && method === 'POST') {
+        const ref = /^refs\/heads\/(.+)$/.exec(body.ref || '');
+        if (!ref) return { status: 422, body: { message: 'Reference name is invalid' } };
+        if (repo.refs[ref[1]]) return { status: 422, body: { message: 'Reference already exists' } };
+        if (!repo.commits.has(body.sha)) return { status: 422, body: { message: 'Object does not exist' } };
+        repo.refs[ref[1]] = body.sha;
+        return { status: 201, body: { ref: body.ref, object: { sha: body.sha } } };
+      }
+      if (rest === '/pulls' && method === 'GET') {
+        const state = u.searchParams.get('state') || 'open';
+        return { status: 200, body: repo.pulls.filter((pr) => state === 'all' || pr.state === state) };
+      }
+      if (rest === '/pulls' && method === 'POST') {
+        const invalid = (message) => ({ status: 422, body: { message: 'Validation Failed', errors: [{ resource: 'PullRequest', code: 'custom', message }] } });
+        if (!repo.refs[body.head] || !repo.refs[body.base]) return invalid(`${repo.refs[body.head] ? 'base' : 'head'} invalid`);
+        if (repo.refs[body.head] === repo.refs[body.base]) return invalid(`No commits between ${body.base} and ${body.head}`);
+        if (repo.pulls.some((pr) => pr.state === 'open' && pr.head.ref === body.head && pr.base.ref === body.base)) return invalid(`A pull request already exists for ${LOGIN}:${body.head}.`);
+        const number = repo.pulls.length + 1;
+        const pr = { number, state: 'open', title: body.title, body: body.body, draft: false, html_url: `https://github.com/${repo.name}/pull/${number}`,
+          head: { ref: body.head }, base: { ref: body.base }, user: { login: LOGIN } };
+        repo.pulls.push(pr);
+        return { status: 201, body: pr };
       }
       if ((m = /^\/git\/refs\/heads\/(.+)$/.exec(rest)) && method === 'PATCH') {
         if (!repo.commits.has(body.sha)) return { status: 422, body: { message: 'Object does not exist' } };
@@ -91,10 +118,10 @@ function createMockGitHub() {
     return { status: 404, body: { message: 'Not Found' } };
   }
 
-  // Für Tests: aktueller Inhalt einer Datei auf GitHub und Anzahl Commits
-  function fileOnGitHub(name, file) {
+  // Für Tests: aktueller Inhalt einer Datei auf GitHub (Standard-Branch oder branch) und Anzahl Commits
+  function fileOnGitHub(name, file, branch) {
     const repo = repos.get(name);
-    const head = repo?.refs[repo.branch];
+    const head = repo?.refs[branch || repo.branch];
     const entry = head && repo.trees.get(repo.commits.get(head).tree).find((e) => e.path === file);
     return entry ? repo.blobs.get(entry.sha).toString('utf8') : null;
   }
@@ -106,14 +133,15 @@ function createMockGitHub() {
     return n;
   }
 
-  // Eine Änderung direkt auf GitHub (wie aus einer anderen Sitzung)
-  function commitOnGitHub(name, file, text) {
+  // Eine Änderung direkt auf GitHub (wie aus einer anderen Sitzung), auf dem Standard-Branch oder branch
+  function commitOnGitHub(name, file, text, branch) {
     const repo = repos.get(name);
-    const head = repo.refs[repo.branch];
+    const b = branch || repo.branch;
+    const head = repo.refs[b];
     const files = {};
     for (const e of repo.trees.get(repo.commits.get(head).tree)) files[e.path] = e.sha;
     files[file] = addBlob(repo, Buffer.from(text));
-    repo.refs[repo.branch] = commitFiles(repo, files, `Änderung an ${file}`, [head]);
+    repo.refs[b] = commitFiles(repo, files, `Änderung an ${file}`, [head]);
   }
 
   return { handle, fileOnGitHub, commitCount, commitOnGitHub, repos };

@@ -4,7 +4,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { GitHub, blobSha, parseRepo, validLink, listLocal } = require('../src/main/github');
+const { GitHub, blobSha, parseRepo, validLink, validBranch, listLocal } = require('../src/main/github');
+const { runTool } = require('../src/main/tools');
 const { createMockGitHub, TOKEN } = require('./e2e/mock-github');
 
 // fetch-Ersatz, der direkt den Nachbau aufruft
@@ -195,5 +196,143 @@ test('Gespeicherte Verbindung wird geprüft, Ablage ausserhalb des Ordners', asy
   } finally {
     fs.rmSync(a, { recursive: true, force: true });
     fs.rmSync(store, { recursive: true, force: true });
+  }
+});
+
+test('Branch-Namen', () => {
+  for (const ok of ['main', 'neue-startseite', 'feature/login', 'v1.2', 'lea_test']) assert.strictEqual(validBranch(ok), true, ok);
+  for (const bad of ['', '-x', '.x', 'a..b', 'a//b', 'a/', 'a.', 'x.lock', 'a/.b', 'HEAD', 'mit leerzeichen', 'ä', '../main', 'a'.repeat(201), null]) {
+    assert.strictEqual(validBranch(bad), false, String(bad));
+  }
+});
+
+test('Branches: auflisten, anlegen, wechseln (nur ohne Änderungen hier)', async () => {
+  const { mock, gh } = setup();
+  await gh.connect(TOKEN);
+  const a = folder({ 'index.html': 'eins', 'alt.txt': 'alt' });
+  try {
+    await gh.create(a, 'zweige');
+    let b = await gh.branches(a);
+    assert.deepStrictEqual(b, { current: 'main', default: 'main', branches: ['main'], url: 'https://github.example/lea-test/zweige' });
+
+    // Neuer Branch mit einer Änderung hier: Die Änderung bleibt und geht auf den neuen Branch
+    fs.writeFileSync(path.join(a, 'index.html'), 'zwei');
+    const created = await gh.createBranch(a, 'neue-startseite');
+    assert.strictEqual(created.from, 'main');
+    assert.strictEqual(read(a, 'index.html'), 'zwei');
+    await assert.rejects(gh.createBranch(a, 'neue-startseite'), /schon mit dem Branch/);
+    await assert.rejects(gh.createBranch(a, 'a..b'), /geht nicht als Branch-Name/);
+    b = await gh.branches(a);
+    assert.deepStrictEqual(b.branches, ['main', 'neue-startseite']);
+    assert.strictEqual(b.current, 'neue-startseite');
+    assert.deepStrictEqual((await gh.status(a)).changed, ['index.html']);
+
+    // Wechseln mit Änderungen hier: abgelehnt, mit Grund
+    await assert.rejects(gh.switchBranch(a, 'main'), (err) => /noch nicht hochgeladen/.test(err.message) && /index\.html/.test(err.message) && err.pending.length === 1);
+    fs.rmSync(path.join(a, 'alt.txt'));
+    fs.writeFileSync(path.join(a, 'neu.txt'), 'neu');
+    await gh.push(a, 'Neue Startseite');
+    assert.strictEqual(mock.fileOnGitHub('lea-test/zweige', 'index.html', 'neue-startseite'), 'zwei');
+    assert.strictEqual(mock.fileOnGitHub('lea-test/zweige', 'index.html'), 'eins', 'main bleibt, wie es war');
+
+    // Zurück auf main: Dateien bekommen dessen Stand, die nur auf dem Branch vorhandenen verschwinden
+    const back = await gh.switchBranch(a, 'main');
+    assert.strictEqual(back.from, 'neue-startseite');
+    assert.strictEqual(read(a, 'index.html'), 'eins');
+    assert.strictEqual(read(a, 'alt.txt'), 'alt');
+    assert.ok(!fs.existsSync(path.join(a, 'neu.txt')));
+    const s = await gh.status(a);
+    assert.strictEqual(s.branch, 'main');
+    assert.deepStrictEqual([...s.changed, ...s.added, ...s.deleted], []);
+    assert.strictEqual(s.remoteNewer, false);
+    assert.strictEqual((await gh.switchBranch(a, 'main')).same, true);
+    await assert.rejects(gh.switchBranch(a, 'gibt-es-nicht'), /gibt es auf GitHub nicht/);
+    assert.strictEqual(read(a, 'index.html'), 'eins', 'ein fehlender Branch löscht nichts');
+
+    // Und wieder auf den Branch
+    await gh.switchBranch(a, 'neue-startseite');
+    assert.strictEqual(read(a, 'neu.txt'), 'neu');
+    assert.ok(!fs.existsSync(path.join(a, 'alt.txt')));
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+});
+
+test('Pull Requests: erstellen und auflisten', async () => {
+  const { gh } = setup();
+  await gh.connect(TOKEN);
+  const a = folder({ 'index.html': 'eins' });
+  try {
+    await gh.create(a, 'pr');
+    await assert.rejects(gh.createPullRequest(a, { title: 'x' }), /Zuerst einen eigenen Branch/);
+    await gh.createBranch(a, 'titel');
+    await assert.rejects(gh.createPullRequest(a, { title: 'Ohne Änderung' }), /No commits between main and titel/);
+    fs.writeFileSync(path.join(a, 'index.html'), 'zwei');
+    await gh.push(a, 'Titel geändert');
+    await assert.rejects(gh.createPullRequest(a, { title: ' ' }), /braucht einen Titel/);
+    const pr = await gh.createPullRequest(a, { title: 'Neuer Titel', body: 'Die Startseite hat einen neuen Titel.' });
+    assert.deepStrictEqual(pr, { number: 1, url: 'https://github.com/lea-test/pr/pull/1', head: 'titel', base: 'main' });
+    await assert.rejects(gh.createPullRequest(a, { title: 'Nochmals' }), /already exists/);
+    const prs = await gh.pullRequests(a);
+    assert.deepStrictEqual(prs, [{ number: 1, title: 'Neuer Titel', url: 'https://github.com/lea-test/pr/pull/1', head: 'titel', base: 'main', user: 'lea-test', draft: false }]);
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+  }
+});
+
+test('Werkzeuge github_branch und github_pr', async () => {
+  const { gh } = setup();
+  await gh.connect(TOKEN);
+  const a = folder({ 'index.html': 'eins' });
+  const asked = [];
+  let answer = true;
+  const ctx = { github: gh, folder: a, confirm: async (message, detail) => { asked.push({ message, detail }); return answer; } };
+  try {
+    await gh.create(a, 'werkzeug');
+    let r = await runTool(null, 'github_branch', { aktion: 'liste' }, ctx);
+    assert.ok(r.ok && /main \(Standard\) \(verbunden\)/.test(r.output), r.output);
+    r = await runTool(null, 'github_branch', { aktion: 'neu' }, ctx);
+    assert.ok(!r.ok && /Namen des Branches/.test(r.output));
+    r = await runTool(null, 'github_branch', { aktion: 'neu', name: 'aenderung' }, ctx);
+    assert.ok(r.ok && /aenderung angelegt/.test(r.output), r.output);
+
+    // PR mit Änderungen, die noch nicht hochgeladen sind: zuerst hochladen
+    fs.writeFileSync(path.join(a, 'index.html'), 'zwei');
+    r = await runTool(null, 'github_pr', { aktion: 'neu', titel: 'Änderung' }, ctx);
+    assert.ok(!r.ok && /zuerst github_push/.test(r.output), r.output);
+    // Wechseln mit Änderungen: abgelehnt, das Modell soll fragen
+    r = await runTool(null, 'github_branch', { aktion: 'wechseln', name: 'main' }, ctx);
+    assert.ok(!r.ok && /noch nicht hochgeladen/.test(r.output) && /Frag die Person/.test(r.output), r.output);
+    await gh.push(a, 'zwei');
+
+    // Abgelehnt: kein PR
+    answer = false;
+    r = await runTool(null, 'github_pr', { aktion: 'neu', titel: 'Änderung', beschreibung: 'Text geändert' }, ctx);
+    assert.ok(!r.ok && /abgelehnt/.test(r.output));
+    assert.strictEqual(asked.length, 1);
+    assert.match(asked[0].message, /Pull Request in lea-test\/werkzeug erstellen/);
+    assert.match(asked[0].detail, /Von aenderung nach main/);
+    assert.deepStrictEqual(await gh.pullRequests(a), []);
+    answer = true;
+    r = await runTool(null, 'github_pr', { aktion: 'neu', titel: 'Änderung', beschreibung: 'Text geändert' }, ctx);
+    assert.ok(r.ok && /#1/.test(r.output) && /pull\/1/.test(r.output), r.output);
+    r = await runTool(null, 'github_pr', { aktion: 'liste' }, ctx);
+    assert.ok(r.ok && /#1 Änderung \(aenderung → main/.test(r.output), r.output);
+
+    // Zurück auf main, dort kein PR auf sich selbst
+    r = await runTool(null, 'github_branch', { aktion: 'wechseln', name: 'main' }, ctx);
+    assert.ok(r.ok && /Gewechselt von aenderung zu main/.test(r.output), r.output);
+    assert.strictEqual(read(a, 'index.html'), 'eins');
+    r = await runTool(null, 'github_pr', { aktion: 'neu', titel: 'x' }, ctx);
+    assert.ok(!r.ok && /eigenen Branch/.test(r.output));
+
+    // Während die Person im Bereich «GitHub» abgleicht, wartet das Modell
+    await gh.exclusive(a, async () => {
+      const busy = await runTool(null, 'github_pull', {}, ctx);
+      assert.ok(!busy.ok && /gleicht gerade selbst/.test(busy.output));
+      assert.ok((await runTool(null, 'github_status', {}, { ...ctx, panel: true })).ok, 'der Bereich selbst darf');
+    });
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
   }
 });

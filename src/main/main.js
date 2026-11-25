@@ -15,6 +15,7 @@ const { convertToPdf } = require('./office');
 const { cleanupOldVersions, isPortable } = require('./portable');
 const { Updater } = require('./updater');
 const { GitHub } = require('./github');
+const { runTool } = require('./tools');
 const { saveAttachments, imageUrl, nativeResize } = require('./attachments');
 const { Snapshots } = require('./snapshot');
 const { Visual } = require('./visual');
@@ -94,6 +95,26 @@ const githubTrust = {
   add: (repo) => { if (!githubTrust.has(repo)) settings.set({ githubTrusted: [...githubTrust.list(), String(repo)] }); },
   remove: (repo) => settings.set({ githubTrusted: githubTrust.list().filter((r) => r.toLowerCase() !== String(repo).toLowerCase()) }),
 };
+
+// Aktionen aus dem Bereich «GitHub» für das sichtbare Projekt. Während das Modell dort arbeitet, nicht:
+// Es könnte gleichzeitig abgleichen, und beide schrieben dieselbe Verbindung. Eine Aktion zur Zeit pro Ordner.
+function ghRead(fn) {
+  const folder = settings.get('folder');
+  if (!folder) return Promise.resolve({ ok: false, message: 'Kein Projekt geöffnet.' });
+  return Promise.resolve().then(() => fn(folder)).then((r) => ({ ok: true, ...r }), (err) => ({ ok: false, message: err.message }));
+}
+async function ghAction(fn) {
+  const folder = settings.get('folder');
+  if (!folder) return { ok: false, message: 'Kein Projekt geöffnet.' };
+  if ([...(runtimes.get(path.resolve(folder).toLowerCase())?.agents || [])].some((a) => a.running || a.undoing)) {
+    return { ok: false, message: 'ASK arbeitet gerade in diesem Projekt. Warte, bis der Auftrag fertig ist, oder stoppe ihn (Esc).' };
+  }
+  try {
+    return { ok: true, ...(await github.exclusive(folder, () => fn(folder))) };
+  } catch (err) {
+    return { ok: false, message: err.message, pending: err.pending };
+  }
+}
 
 // Internet für das Modell; lokale Adressen nur im Test (Mock-Server auf 127.0.0.1)
 const web = new Web({ ask, fetchImpl: (url, options) => net.fetch(url, options), allowLocal: testMode });
@@ -837,6 +858,18 @@ function setupIpc() {
   });
   ipcMain.handle('github:disconnect', () => github.disconnect());
   ipcMain.handle('github:untrust', (_e, repo) => githubTrust.remove(repo));
+  // Bereich «GitHub» rechts: dieselben Abläufe wie die Werkzeuge des Modells. Hochladen und Anlegen laufen
+  // über die Werkzeuge selbst, damit Rückfrage und «nicht mehr fragen» genau gleich gelten.
+  const ghTool = (name, args) => ghAction((folder) => runTool(null, name, args, { github, githubTrust, confirm, folder, panel: true }));
+  ipcMain.handle('github:branches', () => ghRead((folder) => github.branches(folder)));
+  ipcMain.handle('github:pulls', () => ghRead(async (folder) => ({ pulls: await github.pullRequests(folder) })));
+  ipcMain.handle('github:pull', () => ghAction((folder) => github.pull(folder)));
+  ipcMain.handle('github:clone', (_e, repo) => ghAction((folder) => github.clone(folder, String(repo || ''))));
+  ipcMain.handle('github:push', (_e, message, overwrite) => ghTool('github_push', { nachricht: String(message || '').trim() || 'Änderungen aus ASK', ueberschreiben: overwrite === true }));
+  ipcMain.handle('github:create', (_e, name, privat) => ghTool('github_create', { name: String(name || '').trim(), privat: privat !== false }));
+  ipcMain.handle('github:switch', (_e, name) => ghAction((folder) => github.switchBranch(folder, String(name || ''))));
+  ipcMain.handle('github:branch-create', (_e, name) => ghAction((folder) => github.createBranch(folder, String(name || ''))));
+  ipcMain.handle('github:pr-create', (_e, title, body) => ghAction((folder) => github.createPullRequest(folder, { title, body })));
   ipcMain.handle('chat:new', (_e, folder) => openChat(folder || settings.get('folder'), NEW));
   ipcMain.handle('chat:groups', () => chatGroups());
   ipcMain.handle('chat:open', (_e, folder, id) => openChat(folder, id));

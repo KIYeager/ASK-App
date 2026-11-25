@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
+import GithubPane from './GithubPane.jsx';
 import { api } from '../api.js';
 import ServerBar from './Servers.jsx';
 import { baseName, extOf, fileBadge, fileUrl, formatSize } from '../lib/format.js';
@@ -284,7 +285,8 @@ function BrowserTab({ browser, active, onClose, onBig, big, servers, root, notic
 
 // ---------- Panel ----------
 
-export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice, servers = [] }) {
+export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice,
+  servers = [], running, dialogOpen, onGithub }) {
   const serversUp = servers.some((s) => s.state === 'läuft' || s.state === 'startet');
   const entry = selected ? (files.recent.find((f) => f.path === selected.path) || selected) : null;
   return (
@@ -296,6 +298,7 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
           <Icon name="browser" size={15} /> Browser{browser.running ? <span className="live-dot" aria-hidden="true" />
             : serversUp ? <span className="srv-dot up" title="Ein Server läuft" aria-hidden="true" /> : null}
         </button>
+        <button id="tab-github" type="button" role="tab" aria-selected={tab === 'github'} className={tab === 'github' ? 'on' : ''} onClick={() => setTab('github')}><Icon name="github" size={15} /> GitHub</button>
       </div>
       <div className="rp-body">
         {tab === 'dateien' ? (
@@ -321,6 +324,7 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
         ) : null}
         {tab === 'browser' ? <BrowserTab browser={browser} active={browserActive} onClose={onBrowserClose} onBig={onBrowserBig} big={browserBig}
           servers={servers} root={root} notice={notice} /> : null}
+        {tab === 'github' ? <GithubPane root={root} files={files} running={running} dialogOpen={dialogOpen} onConnect={onGithub} /> : null}
       </div>
     </aside>
   );

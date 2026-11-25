@@ -49,6 +49,8 @@ const PATHS = {
   server: <><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>,
   chart: <path d="M4 20h16M7 16v-5M12 16V6M17 16v-8" />,
+  branch: <><circle cx="6" cy="5.5" r="2.2" /><circle cx="6" cy="18.5" r="2.2" /><circle cx="18" cy="7.5" r="2.2" /><path d="M6 7.7v8.6M18 9.7c0 4-3 5.3-7 5.8-2 .3-3.4 1-4.3 2" /></>,
+  pr: <><circle cx="6" cy="5.5" r="2.2" /><circle cx="6" cy="18.5" r="2.2" /><circle cx="18" cy="18.5" r="2.2" /><path d="M6 7.7v8.6M18 16.3V10a3 3 0 0 0-3-3h-4.5M12.5 4.5 10 7l2.5 2.5" /></>,
 };
 
 export default function Icon({ name, size = 16, className = '', title, strokeWidth = 1.8 }) {
@@ -66,6 +68,6 @@ export const TOOL_ICONS = {
   run_command: 'term', command_status: 'term', read_file: 'read', write_file: 'pen', edit_file: 'pen', list_files: 'folder',
   find_files: 'search', search_text: 'search', update_tasks: 'list', web_search: 'globe', web_fetch: 'globe', browser: 'browser',
   view_file: 'eye', bild_erstellen: 'image', chat_search: 'history', chat_read: 'history', goal_done: 'target',
-  github_status: 'github', github_clone: 'github', github_pull: 'github', github_push: 'github', github_create: 'github',
+  github_status: 'github', github_clone: 'github', github_pull: 'github', github_push: 'github', github_create: 'github', github_branch: 'branch', github_pr: 'pr',
   frage_stellen: 'help', plan_vorlegen: 'map', server_starten: 'server', server_stoppen: 'server', server_liste: 'server',
 };
