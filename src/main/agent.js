@@ -31,6 +31,12 @@ function goalPrompt(goal) {
     + 'Kündige Arbeit nicht nur an, sondern führe sie mit den Werkzeugen aus. Ist das Ziel erreicht, rufe goal_done auf.';
 }
 const KEEP_FULL_TOOL_RESULTS = 8; // ältere Werkzeugergebnisse gehen gekürzt an das Modell
+// Wie viel vom Verlauf an das Modell geht. Ältere Schritte werden gekürzt: Ergebnisse auf «clip» Zeichen,
+// lange Argumente früherer Aufrufe (der Inhalt einer geschriebenen Datei) auf «args» Zeichen; die Datei
+// selbst liegt ja im Ordner. TIGHT gilt, sobald ASK meldet, dass der Verlauf zu lang für das Modell ist.
+const NORMAL = { keep: KEEP_FULL_TOOL_RESULTS, clip: 1500, args: 1200 };
+const TIGHT = { keep: 3, clip: 400, args: 200 };
+const TOO_LONG = /context length|context window|maximum context|context_length|too many tokens|input tokens|prompt is too long|exceeds? the (model'?s? )?(maximum|max)|reduce the length/i;
 const IMAGE_TURNS = 2; // Bilder aus so vielen der letzten Eingaben gehen an das Modell
 const VIEW_TURNS = 2; // ebenso aus so vielen der letzten Ansichten (view_file, browser)
 const CHAT_DIR = path.join('.ask', 'chats');
@@ -77,9 +83,27 @@ function userText(m) {
 // Verlauf für die Anfrage: ohne Denktexte, alte Ergebnisse gekürzt, im Textmodus ohne tool-Rollen
 // (auch für frühere Schritte, die noch mit Werkzeugliste liefen). imageUrl(anhang) liefert Bilder
 // als data-URL; sie gehen nur bei den letzten IMAGE_TURNS Eingaben mit, ältere nur als Pfad.
-function apiMessages(system, messages, textMode = false, imageUrl = null) {
+// Lange Texte in den Argumenten eines früheren Aufrufs kürzen; das Ergebnis bleibt gültiges JSON.
+function shortArgs(raw, max) {
+  if (!raw || raw.length <= max) return raw;
+  try {
+    const args = JSON.parse(raw);
+    if (!args || typeof args !== 'object') return raw;
+    const cut = (v) => (typeof v === 'string' && v.length > max ? `${v.slice(0, Math.floor(max / 2))}\n… (für den Verlauf gekürzt, ${v.length} Zeichen; den heutigen Stand zeigt read_file)` : v);
+    return JSON.stringify(Object.fromEntries(Object.entries(args).map(([k, v]) => [k, cut(v)])));
+  } catch {
+    return raw;
+  }
+}
+
+function apiMessages(system, messages, textMode = false, imageUrl = null, budget = NORMAL) {
   const toolIndexes = messages.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
-  const recent = new Set(toolIndexes.slice(-KEEP_FULL_TOOL_RESULTS));
+  const recentList = toolIndexes.slice(-budget.keep);
+  const recent = new Set(recentList);
+  const firstRecent = recentList.length ? recentList[0] : messages.length;
+  // Aufrufe eines Schritts, dessen Ergebnisse schon gekürzt sind: auch die Argumente kürzen
+  const calls = (m, i) => (i + m.tool_calls.length < firstRecent
+    ? m.tool_calls.map((c) => ({ ...c, function: { ...c.function, arguments: shortArgs(c.function.arguments, budget.args) } })) : m.tool_calls);
   // Bilder: Anhänge der letzten IMAGE_TURNS Eingaben, Ansichten (view_file, browser) der letzten VIEW_TURNS
   const withImage = (view) => messages.map((m, i) => (m.role === 'user' && (m.note === 'view') === view && m.attachments?.some((a) => a.image) ? i : -1))
     .filter((i) => i >= 0);
@@ -92,17 +116,18 @@ function apiMessages(system, messages, textMode = false, imageUrl = null) {
       out.push({ role: 'user', content: urls.length ? [{ type: 'text', text }, ...urls.map((url) => ({ type: 'image_url', image_url: { url } }))] : text });
     }
     else if (m.role === 'assistant') {
-      if (m.textMode) out.push({ role: 'assistant', content: m.raw || m.content || '' });
-      else if (textMode && m.tool_calls?.length) {
-        const calls = m.tool_calls.map((c) => `<tool_call>\n{"name": ${JSON.stringify(c.function.name)}, "arguments": ${c.function.arguments || '{}'}}\n</tool_call>`);
-        out.push({ role: 'assistant', content: [m.content, ...calls].filter(Boolean).join('\n') });
+      const old = !!m.tool_calls?.length && i + m.tool_calls.length < firstRecent;
+      if (m.textMode && !old) out.push({ role: 'assistant', content: m.raw || m.content || '' });
+      else if ((textMode || m.textMode) && m.tool_calls?.length) {
+        const written = calls(m, i).map((c) => `<tool_call>\n{"name": ${JSON.stringify(c.function.name)}, "arguments": ${c.function.arguments || '{}'}}\n</tool_call>`);
+        out.push({ role: 'assistant', content: [m.content, ...written].filter(Boolean).join('\n') });
       } else {
         const msg = { role: 'assistant', content: m.content || '' };
-        if (m.tool_calls?.length) msg.tool_calls = m.tool_calls;
+        if (m.tool_calls?.length) msg.tool_calls = calls(m, i);
         out.push(msg);
       }
     } else if (m.role === 'tool') {
-      const content = recent.has(i) ? m.content : clip(m.content, 1500);
+      const content = recent.has(i) ? m.content : clip(m.content, budget.clip);
       if (m.textMode || textMode) out.push({ role: 'user', content: `<tool_response>\n${content}\n</tool_response>` });
       else out.push({ role: 'tool', tool_call_id: m.tool_call_id, content });
     }
@@ -124,7 +149,7 @@ class Agent extends EventEmitter {
     this.confirm = confirm || (async () => false);
     this.getImageUrl = getImageUrl || null; // Anhang → data-URL für das Modell
     this.getVision = getVision || (() => undefined); // false: Modell versteht laut ASK keine Bilder
-    this.noImages = false; // ASK hat Bilder abgelehnt
+    this.noImagesFor = new Set(); // Modelle, bei denen ASK Bilder abgelehnt hat
     this.ask = ask;
     this.terminal = terminal;
     this.getFolder = getFolder;
@@ -133,17 +158,33 @@ class Agent extends EventEmitter {
     this.getCommandHint = getCommandHint;
     this.getWebSearch = getWebSearch;
     this.getThinking = getThinking || (() => 'normal');
-    this.textMode = false;
+    this.textModeFor = new Set(); // Modelle, die Werkzeuge nur als Text bekommen
+    this.tightFor = new Set(); // Chats, deren Verlauf für das Modell zu lang wurde
     this.running = false;
     this.controller = null;
     this.chat = this.blank();
   }
 
+  // Bilder und Werkzeugliste lehnt ein bestimmtes Modell ab, nicht ASK als Ganzes: Nach einem Wechsel
+  // des Modells gilt wieder der normale Weg.
+  get textMode() { return this.textModeFor.has(this.getModel()); }
+
+  set textMode(on) { if (on) this.textModeFor.add(this.getModel()); else this.textModeFor.delete(this.getModel()); }
+
+  get noImages() { return this.noImagesFor.has(this.getModel()); }
+
+  set noImages(on) { if (on) this.noImagesFor.add(this.getModel()); else this.noImagesFor.delete(this.getModel()); }
+
   blank() {
     return { id: newId(), title: '', created: Date.now(), updated: Date.now(), messages: [] };
   }
 
+  // Hinweise und Fehler eines Auftrags bleiben im Chat stehen (das Modell bekommt sie nicht): Wer den
+  // Chat später öffnet, sieht, warum ein Auftrag aufgehört hat.
   event(payload) {
+    if (this.running && (payload.type === 'notice' || payload.type === 'error') && payload.text) {
+      this.push({ role: 'note', kind: payload.type, content: String(payload.text), time: Date.now() });
+    }
     this.emit('event', payload);
   }
 
@@ -170,7 +211,17 @@ class Agent extends EventEmitter {
     this.chat.updated = Date.now();
     try {
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, `${this.chat.id}.json`), JSON.stringify(this.chat));
+      const file = path.join(dir, `${this.chat.id}.json`);
+      const text = JSON.stringify(this.chat);
+      // Erst daneben schreiben, dann umbenennen: Ein Absturz mitten im Schreiben zerstört den Chat nicht
+      const tmp = `${file}.tmp`;
+      try {
+        fs.writeFileSync(tmp, text);
+        fs.renameSync(tmp, file);
+      } catch {
+        fs.rmSync(tmp, { force: true });
+        fs.writeFileSync(file, text);
+      }
     } catch {
       // Ordner nicht beschreibbar: Chat bleibt nur im Speicher
     }
@@ -323,7 +374,7 @@ class Agent extends EventEmitter {
     const request = () => {
       const system = this.getSystemPrompt(this.chat.id) + (goal ? goalPrompt(goal) : '') + (this.textMode ? textModePrompt(specs) : '');
       const imageUrl = this.canSee() ? this.getImageUrl : null;
-      const messages = apiMessages(system, this.chat.messages, this.textMode, imageUrl);
+      const messages = apiMessages(system, this.chat.messages, this.textMode, imageUrl, this.tightFor.has(this.chat.id) ? TIGHT : NORMAL);
       sentImages = messages.some((m) => Array.isArray(m.content));
       this.event({ type: 'assistant-start', webSearch });
       return this.ask.chat({
@@ -340,8 +391,16 @@ class Agent extends EventEmitter {
     try {
       completion = await request();
     } catch (err) {
-      // Nimmt das Modell keine Bilder an, gehen sie künftig nur als Pfad mit.
-      if (sentImages && err.status >= 400 && /image|vision|multimodal|modalit/i.test(err.message)) {
+      this.keepPartial(err);
+      // Der Verlauf ist zu lang für das Modell: ältere Schritte stärker kürzen und nochmals
+      if (err.status >= 400 && TOO_LONG.test(err.message) && !this.tightFor.has(this.chat.id)) {
+        this.tightFor.add(this.chat.id);
+        this.event({ type: 'notice', text: 'Der Chat ist für das Modell zu lang geworden. Ältere Arbeitsschritte gehen ab jetzt stark gekürzt an das Modell; für ein neues Thema besser einen neuen Chat beginnen (/neu).' });
+        completion = await request();
+      } else if (err.status >= 400 && TOO_LONG.test(err.message)) {
+        throw new Error('Der Chat ist zu lang für das Modell, auch gekürzt. Beginne einen neuen Chat (/neu); mit dem Schalter «Chats» kann das Modell diesen hier nachlesen.');
+      } else if (sentImages && err.status >= 400 && /image|vision|multimodal|modalit/i.test(err.message)) {
+        // Nimmt das Modell keine Bilder an, gehen sie künftig nur als Pfad mit.
         this.noImages = true;
         this.event({ type: 'notice', text: 'Das Modell in ASK nimmt keine Bilder an. Die Bilder liegen als Datei bei den Anhängen, das Modell kann sie nur so bearbeiten, nicht ansehen.' });
         completion = await request();
@@ -383,6 +442,9 @@ class Agent extends EventEmitter {
     if (textMode) { message.textMode = true; message.raw = completion.content; }
     this.push(message);
     this.event({ type: 'assistant-end', content, stats: message.stats, sources: message.sources || [], calls: toolCalls.map((c) => ({ id: c.id, name: c.function.name, ...this.describeCall(c) })) });
+    if (completion.finish === 'length') {
+      this.event({ type: 'notice', text: 'ASK hat die Antwort wegen der Längengrenze abgeschnitten. Schreib «weiter», oder lass grosse Dateien in mehreren Teilen schreiben.' });
+    }
     if (toolCalls.length === 0) {
       if (!content.trim()) this.event({ type: 'notice', text: 'Das Modell hat keine Antwort geschrieben.' });
       return true;
@@ -392,7 +454,7 @@ class Agent extends EventEmitter {
     const canSee = this.canSee();
     for (const call of toolCalls) {
       if (signal.aborted) {
-        this.push({ role: 'tool', tool_call_id: call.id, content: 'Von der Person abgebrochen.', textMode });
+        this.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: 'Von der Person abgebrochen.', ok: false, summary: 'abgebrochen', textMode });
         continue;
       }
       const started = Date.now();
@@ -428,6 +490,16 @@ class Agent extends EventEmitter {
         attachments: seen.flatMap((s) => s.images).map((p) => ({ path: p, name: path.basename(p), image: true })) });
     }
     return false;
+  }
+
+  // Was vom Modell schon angekommen war, als die Antwort abbrach (Stopp, Verbindung weg), bleibt im Chat:
+  // Die Person hat es gesehen, und das Modell soll beim nächsten Auftrag wissen, wie weit es war.
+  keepPartial(err) {
+    const p = err?.partial;
+    if (!p || !(String(p.content || '').trim() || String(p.reasoning || '').trim())) return;
+    const message = { role: 'assistant', content: p.content || '', time: Date.now(), stats: p.stats(), stopped: true };
+    if (p.reasoning) message.reasoning = p.reasoning;
+    this.push(message);
   }
 
   // Darf das Modell Bilder bekommen? (ASK meldet Bildfähigkeit nicht ab und hat keine abgelehnt)
@@ -514,8 +586,9 @@ class Agent extends EventEmitter {
   // Für die Anzeige eines gespeicherten Chats.
   transcript() {
     return this.chat.messages.filter((m) => m.note !== 'view').map((m) => {
+      if (m.role === 'note') return { role: m.kind === 'error' ? 'error' : 'notice', text: m.content };
       if (m.role === 'assistant') {
-        return { role: 'assistant', content: m.content, reasoning: m.reasoning || '', stats: m.stats || null, sources: m.sources || [], time: m.time,
+        return { role: 'assistant', content: m.content, reasoning: m.reasoning || '', stats: m.stats || null, sources: m.sources || [], time: m.time, stopped: !!m.stopped,
           calls: (m.tool_calls || []).map((c) => ({ id: c.id, name: c.function.name, ...this.describeCall(c) })) };
       }
       if (m.role === 'tool') return { role: 'tool', id: m.tool_call_id, ok: m.ok !== false, summary: m.summary || '', output: m.display ?? m.content, tasks: m.tasks, images: m.images || [] };
@@ -526,4 +599,4 @@ class Agent extends EventEmitter {
   }
 }
 
-module.exports = { Agent, apiMessages, textModePrompt, loopReason, NEW };
+module.exports = { Agent, apiMessages, shortArgs, textModePrompt, loopReason, NEW, NORMAL, TIGHT, TOO_LONG };

@@ -15,12 +15,26 @@ const date = (ms) => {
   return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
+const cache = new Map(); // Datei → { mtime, chat }
+
 function loadChats(folder) {
   const dir = path.join(folder, CHAT_DIR);
   let names = [];
   try { names = fs.readdirSync(dir).filter((n) => n.endsWith('.json')); } catch { return []; }
+  // Bei eingeschaltetem Schalter «Chats» liest jeder Arbeitsschritt die Liste: unveränderte Dateien nicht neu lesen
   return names.map((n) => {
-    try { return JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8')); } catch { return null; }
+    const file = path.join(dir, n);
+    try {
+      const mtime = fs.statSync(file).mtimeMs;
+      const hit = cache.get(file);
+      if (hit && hit.mtime === mtime) return hit.chat;
+      const chat = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (cache.size > 500) cache.clear();
+      cache.set(file, { mtime, chat });
+      return chat;
+    } catch {
+      return null;
+    }
   }).filter((c) => c && c.id && Array.isArray(c.messages)).sort((a, b) => (b.updated || 0) - (a.updated || 0));
 }
 
