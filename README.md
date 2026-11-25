@@ -100,6 +100,8 @@ Nur vor dem allerersten Release nötig.
 5. **Mergen.** Der Workflow «Release» setzt die Version in `package.json`, macht den Commit «Version 0.2.1» und den Tag `v0.2.1` auf `main` und baut dann rund 15 bis 20 Minuten (Reiter «Actions»): npm-Pakete, Lint und Tests, Python, Installer, einzelne EXE, Veröffentlichen.
 6. **Prüfen.** In [ASK-Releases, Releases](https://github.com/KIYeager/ASK-Releases/releases) steht «ASK 0.2.1» mit sechs Dateien: `ASK-Setup-0.2.1.exe`, `ASK-Setup-0.2.1.exe.blockmap`, `latest.yml`, `ASK-0.2.1.exe` und mit festem Namen `ASK-Setup.exe` und `ASK.exe`; eine Vollversion mit «Latest», eine Beta mit «Pre-release». Installierte Apps fragen spätestens 6 Stunden später oder beim nächsten Start; sofort geht es mit «Nach Updates suchen» in den Einstellungen.
 
+Erstellt ein KI-Agent den PR (Claude Code, Codex, Copilot), fragt er nach der Release-Art und setzt das Label selbst; die Regel dafür steht in [AGENTS.md](AGENTS.md).
+
 Nach dem Merge liegt auf `main` ein Commit «Version …» mehr. Vor der nächsten Arbeit darum `git pull`.
 
 Jedes Release braucht rund 30 bis 40 der 2000 Gratis-Minuten von GitHub Actions pro Monat (Windows-Rechner zählen bei privaten Repositories doppelt).
