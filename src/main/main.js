@@ -197,6 +197,8 @@ function makeAgent(folder, rt) {
     getImageUrl: (attachment) => imageUrl(folder, attachment, nativeResize(nativeImage)),
     getVision: () => ask.models.find((m) => m.id === currentModel())?.vision,
     getSnapshots: () => snapshotsFor(folder),
+    // Andere Chats, die gerade im selben Ordner arbeiten (Warnung, ENTSCHEIDE E46)
+    getSiblings: () => [...rt.agents].filter((x) => x !== a && x.running).map((x) => x.chat.title || 'ohne Titel'),
     servers: rt.servers || null,
     // Modus im Eingabefeld: Auto lässt ASK jeden Befehl prüfen (review.js), Nachfragen fragt vor jedem
     getApprovalMode: () => 'alle',
@@ -735,8 +737,10 @@ function setupIpc() {
   });
   knowledge.setupIpc({ ipcMain, dialog, getWindow: () => appWindow?.win, confirm, onSettings: pushState,
     projects: () => settings.load().projects.map((p) => ({ folder: p.folder, name: p.name, color: p.color })) });
-  ipcMain.handle('chat:approve', (_e, id, answer) => allAgents().some((a) => a.answerApproval(id, answer)));
-  ipcMain.handle('chat:answer', (_e, id, text) => allAgents().some((a) => a.answerQuestion(id, text)));
+  // Zuerst der sichtbare Chat: Fragen tragen die Kennung des Werkzeugaufrufs, die bei manchen Modellen in
+  // jedem Chat gleich ist (call_0); die Oberfläche beantwortet immer die Frage des sichtbaren Chats.
+  ipcMain.handle('chat:approve', (_e, id, answer) => agent.answerApproval(id, answer) || allAgents().some((a) => a.answerApproval(id, answer)));
+  ipcMain.handle('chat:answer', (_e, id, text) => agent.answerQuestion(id, text) || allAgents().some((a) => a.answerQuestion(id, text)));
   ipcMain.handle('chat:stop-chat', (_e, folder, id) => {
     const rt = runtimes.get(path.resolve(String(folder || '')).toLowerCase());
     const a = rt && agentFor(rt, String(id || ''));
@@ -835,8 +839,14 @@ function setupIpc() {
   });
   ipcMain.handle('chat:undo', (_e, snapshot) => agent.undo(String(snapshot || '')));
   ipcMain.handle('chat:rewind', () => agent.rewind());
-  ipcMain.handle('chat:rename', (_e, folder, id, title) => agent.rename(String(folder || ''), String(id || ''), title));
-  ipcMain.handle('chat:pin', (_e, folder, id, on) => agent.pin(String(folder || ''), String(id || ''), !!on));
+  // Läuft der Chat (auch im Hintergrund), ändert sein eigener Agent ihn: sonst überschriebe dessen nächstes
+  // Speichern den neuen Titel wieder
+  const chatOwner = (folder, id) => {
+    const rt = runtimes.get(path.resolve(String(folder || '')).toLowerCase());
+    return (rt && agentFor(rt, String(id || ''))) || agent;
+  };
+  ipcMain.handle('chat:rename', (_e, folder, id, title) => chatOwner(folder, id).rename(String(folder || ''), String(id || ''), title));
+  ipcMain.handle('chat:pin', (_e, folder, id, on) => chatOwner(folder, id).pin(String(folder || ''), String(id || ''), !!on));
   // Suche über den Inhalt aller Chats der Ordner in der Liste: [{ folder, id, title, updated, snippets }]
   ipcMain.handle('chat:search', (_e, query) => {
     const hits = [];

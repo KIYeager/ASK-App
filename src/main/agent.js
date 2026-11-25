@@ -109,18 +109,34 @@ const { WORK_DIRS } = require('./cleanup'); // unter .ask, je ein Unterordner pr
 const normRel = (p) => String(p || '').trim().replace(/^\.?[\\/]+/, '').replaceAll('\\', '/').toLowerCase();
 const newId = () => `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${crypto.randomBytes(3).toString('hex')}`;
 
+// Argumente eines Werkzeugaufrufs: «null», eine Zahl oder eine Liste werden zu {}, damit kein Schritt daran
+// scheitert. Unlesbares JSON bleibt, wie es ist: runTool meldet dem Modell den Fehler.
+function cleanArgs(raw) {
+  const text = typeof raw === 'string' ? raw : raw && typeof raw === 'object' ? JSON.stringify(raw) : '';
+  if (!text.trim()) return '{}';
+  try {
+    const v = JSON.parse(text);
+    return v && typeof v === 'object' && !Array.isArray(v) ? text : '{}';
+  } catch {
+    return text;
+  }
+}
+
 // Steckt das Modell in einer Schleife? Betrachtet nur den laufenden Auftrag (seit der letzten Eingabe).
 function loopReason(messages) {
   const start = messages.map((m) => (m.role === 'user' && m.note !== 'view' ? 'user' : '')).lastIndexOf('user');
   const calls = [];
   const results = [];
+  const output = new Map(); // Ergebnis pro Aufruf: Abfragen wie command_status mit neuer Ausgabe sind keine Schleife
   for (const m of messages.slice(start + 1)) {
-    if (m.role === 'assistant') for (const c of m.tool_calls || []) calls.push(`${c.function.name} ${c.function.arguments}`);
-    if (m.role === 'tool') results.push(m.ok !== false);
+    if (m.role === 'tool') { results.push(m.ok !== false); output.set(m.tool_call_id, String(m.content ?? '').slice(0, 4000)); }
+  }
+  for (const m of messages.slice(start + 1)) {
+    if (m.role === 'assistant') for (const c of m.tool_calls || []) calls.push(`${c.function.name} ${c.function.arguments}\u0000${output.get(c.id) ?? ''}`);
   }
   const last = calls.slice(-SAME_CALL_LIMIT);
   if (last.length === SAME_CALL_LIMIT && last.every((c) => c === last[0])) {
-    return `Das Modell hat ${SAME_CALL_LIMIT}-mal hintereinander genau denselben Schritt ausgeführt (${last[0].split(' ')[0]}).`;
+    return `Das Modell hat ${SAME_CALL_LIMIT}-mal hintereinander genau denselben Schritt mit demselben Ergebnis ausgeführt (${last[0].split(' ')[0]}).`;
   }
   const fails = results.slice(-FAIL_LIMIT);
   if (fails.length === FAIL_LIMIT && fails.every((ok) => !ok)) {
@@ -214,12 +230,13 @@ function apiMessages(system, messages, textMode = false, imageUrl = null, budget
 }
 
 class Agent extends EventEmitter {
-  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer, getMode, retryWaits, servers, review, knowledge }) {
+  constructor({ ask, terminal, getFolder, getModel, getSystemPrompt, getCommandHint, getWebSearch, getThinking, github, githubTrust, visual, web, images, confirm, getImageUrl, getVision, getSnapshots, getChatMemory, getContextLimit, onContextLimit, getApprovalMode, fileExists, autoApprove, autoAnswer, getMode, retryWaits, servers, review, knowledge, getSiblings }) {
     super();
     // Modus «Auto»: Prüfer in ASK (review.js), beurteilt Befehle und heikle Schritte
     this.review = review || null;
     this.reviewedSafe = new Set(); // in diesem Chat schon als harmlos beurteilte Schritte
     this.getMode = getMode || (() => 'nachfragen'); // auto | nachfragen | plan (Eingabefeld)
+    this.getSiblings = getSiblings || (() => []);
     this.retryWaits = retryWaits || RETRY_WAITS;
     this.getContextLimit = getContextLimit || (() => 0); // Kontextfenster des Modells in Token, 0: unbekannt
     this.onContextLimit = onContextLimit || (() => {}); // ASK hat die Grenze in einer Fehlermeldung genannt
@@ -398,6 +415,21 @@ class Agent extends EventEmitter {
   // Ordner geht (nach Rückfrage) auf den Stand vor diesem Auftrag. Liefert Text und Anhänge für das Eingabefeld.
   async rewind() {
     if (this.running) return { ok: false, reason: 'Es läuft gerade ein Auftrag.' };
+    if (this.undoing) return { ok: false, reason: 'Es wird schon zurückgesetzt.' };
+    // Während Rückfrage und Zurücksetzen startet kein Auftrag (send prüft undoing) und kein zweites Rückgängig
+    this.undoing = true;
+    this.emit('changed');
+    try {
+      return await this.rewindNow();
+    } catch (err) {
+      return { ok: false, reason: `Zurücknehmen nicht möglich: ${err.message}` };
+    } finally {
+      this.undoing = false;
+      this.emit('changed');
+    }
+  }
+
+  async rewindNow() {
     const index = this.chat.messages.findLastIndex((m) => m.role === 'user' && !m.auto);
     if (index < 0) return { ok: false, reason: 'In diesem Chat gibt es keine Eingabe.' };
     const message = this.chat.messages[index];
@@ -411,7 +443,7 @@ class Agent extends EventEmitter {
         const names = [...d.changed, ...d.added, ...d.removed];
         const answer = await this.confirm('Auch die Dateien auf den Stand vor dieser Eingabe zurücksetzen?',
           `Seit dieser Eingabe geändert, angelegt oder gelöscht:\n${names.slice(0, 12).map((f) => `  ${f}`).join('\n')}${names.length > 12 ? `\n  … und ${names.length - 12} weitere` : ''}`
-          + '\n\nJa: Der Ordner ist danach wie vor der Eingabe. Nein: Die Eingabe wird nicht zurückgenommen.');
+          + `\n\nJa: Der Ordner ist danach wie vor der Eingabe. Nein: Die Eingabe wird nicht zurückgenommen.${this.siblingWarning()}`);
         if (!answer) return { ok: false, cancelled: true };
         restored = await snapshots.restore(message.snapshot);
       }
@@ -510,6 +542,11 @@ class Agent extends EventEmitter {
     this.controller = new AbortController();
     const { signal } = this.controller;
     this.emit('changed');
+    const others = this.getSiblings();
+    if (others.length) {
+      this.event({ type: 'notice', text: `Im selben Projekt arbeitet gerade auch ${others.map((t) => `«${clip(t, 60)}»`).join(', ')}. `
+        + 'Beide Chats ändern dieselben Dateien, und «Rückgängig» setzt die Änderungen beider zurück.' });
+    }
     const snapshots = this.getSnapshots();
     let failed = false;
     try {
@@ -525,7 +562,8 @@ class Agent extends EventEmitter {
           // Ziel-Modus: aufgehört, ohne das Ziel als erreicht zu melden? Dann anstossen, höchstens
           // zweimal ohne Arbeitsschritt dazwischen; danach wartet das Modell offenbar auf die Person.
           const goal = this.chat.goal;
-          if (!goal || goal.done || signal.aborted) break;
+          // Im Planmodus fehlt goal_done: dort wartet der Plan auf die Person, nicht auf einen Anstoss
+          if (!goal || goal.done || signal.aborted || this.getMode() === 'plan') break;
           if (idle >= GOAL_IDLE_LIMIT) {
             this.event({ type: 'notice', text: 'Das Modell arbeitet nicht weiter am Ziel und wartet offenbar auf dich. Antworte oder schreib «weiter».' });
             break;
@@ -642,7 +680,7 @@ class Agent extends EventEmitter {
       }
     }
     const toolCalls = calls.map((c) => ({ id: c.id || `call_${crypto.randomBytes(6).toString('hex')}`, type: 'function',
-      function: { name: c.name, arguments: c.arguments || '{}' } }));
+      function: { name: String(c.name || ''), arguments: cleanArgs(c.arguments) } }));
     const message = { role: 'assistant', content, time: Date.now(), stats: completion.stats() };
     // Quellen unter der Schlussantwort: Websuche von ASK und die Seiten, die das Modell mit web_fetch
     // gelesen hat (ohne gelesene Seiten die ersten Treffer von web_search)
@@ -657,6 +695,9 @@ class Agent extends EventEmitter {
     if (textMode) { message.textMode = true; message.raw = completion.content; }
     this.push(message);
     this.event({ type: 'assistant-end', content, stats: message.stats, sources: message.sources || [], calls: toolCalls.map((c) => ({ id: c.id, name: c.function.name, ...this.describeCall(c) })) });
+    if (completion.incomplete) {
+      this.event({ type: 'notice', text: 'Die Antwort von ASK endete ohne Abschluss; sie ist vielleicht unvollständig. Schreib «weiter», falls etwas fehlt.' });
+    }
     if (completion.finish === 'length') {
       this.event({ type: 'notice', text: 'ASK hat die Antwort wegen der Längengrenze abgeschnitten. Schreib «weiter», oder lass grosse Dateien in mehreren Teilen schreiben.' });
     }
@@ -676,36 +717,43 @@ class Agent extends EventEmitter {
       const started = Date.now();
       this.event({ type: 'tool-start', id: call.id, name: call.function.name, ...this.describeCall(call) });
       const name = call.function.name;
-      const verdict = plan && !PLAN_ALLOWED.has(name) ? 'plan' : await this.approve(call, signal);
-      const result = verdict === 'plan'
-        ? { ok: false, summary: 'im Planmodus nicht erlaubt', output: 'Im Planmodus änderst du nichts. Lege mit plan_vorlegen einen Plan vor.' }
-        : name === 'plan_vorlegen'
-        ? this.proposePlan(call.function.arguments)
-        : verdict !== 'yes'
-        ? { ok: false, summary: 'abgelehnt', output: signal.aborted ? 'Von der Person abgebrochen.'
-          : 'Die Person hat diesen Schritt abgelehnt. Mach ohne ihn weiter oder frag kurz nach, was sie stattdessen möchte.' }
-        : call.function.name === 'goal_done'
-        ? this.finishGoal(call.function.arguments)
-        : call.function.name === 'frage_stellen'
-        ? await this.askQuestion(call, signal)
-        : await runTool(this.terminal, call.function.name, call.function.arguments, {
-          signal,
-          onProgress: (output) => this.event({ type: 'tool-progress', id: call.id, output: clip(output, 4000) }),
-          github: this.github,
-          githubTrust: this.githubTrust,
-          visual: this.visual,
-          servers: this.servers,
-          web: this.web,
-          images: flux ? this.images : null,
-          chatMemory: memory,
-          onLive: (data) => this.event({ type: 'live', id: call.id, ...data }),
-          canSee,
-          chat: this.chat.id,
-          chatTitle: this.chat.title,
-          knowledge: this.knowledge,
-          folder: this.getFolder(),
-          confirm: this.confirm,
-        });
+      // Ein Fehler in der App darf den Verlauf nicht kaputt machen: Jeder Aufruf bekommt ein Ergebnis,
+      // sonst lehnt ASK jede weitere Anfrage dieses Chats ab (tool_calls ohne Antwort)
+      let result;
+      try {
+        const verdict = plan && !PLAN_ALLOWED.has(name) ? 'plan' : await this.approve(call, signal);
+        result = verdict === 'plan'
+          ? { ok: false, summary: 'im Planmodus nicht erlaubt', output: 'Im Planmodus änderst du nichts. Lege mit plan_vorlegen einen Plan vor.' }
+          : name === 'plan_vorlegen'
+          ? this.proposePlan(call.function.arguments)
+          : verdict !== 'yes'
+          ? { ok: false, summary: 'abgelehnt', output: signal.aborted ? 'Von der Person abgebrochen.'
+            : 'Die Person hat diesen Schritt abgelehnt. Mach ohne ihn weiter oder frag kurz nach, was sie stattdessen möchte.' }
+          : call.function.name === 'goal_done'
+          ? this.finishGoal(call.function.arguments)
+          : call.function.name === 'frage_stellen'
+          ? await this.askQuestion(call, signal)
+          : await runTool(this.terminal, call.function.name, call.function.arguments, {
+            signal,
+            onProgress: (output) => this.event({ type: 'tool-progress', id: call.id, output: clip(output, 4000) }),
+            github: this.github,
+            githubTrust: this.githubTrust,
+            visual: this.visual,
+            servers: this.servers,
+            web: this.web,
+            images: flux ? this.images : null,
+            chatMemory: memory,
+            onLive: (data) => this.event({ type: 'live', id: call.id, ...data }),
+            canSee,
+            chat: this.chat.id,
+            chatTitle: this.chat.title,
+            knowledge: this.knowledge,
+            folder: this.getFolder(),
+            confirm: this.confirm,
+          });
+      } catch (err) {
+        result = { ok: false, summary: 'Fehler in der App', output: `Fehler in der App: ${err?.message || err}` };
+      }
       const images = result.images || [];
       if (result.ok !== false && call.function.name === 'write_file') {
         try { this.madeThisTurn.add(normRel(JSON.parse(call.function.arguments || '{}').path)); } catch { /* ohne Pfad */ }
@@ -921,7 +969,7 @@ class Agent extends EventEmitter {
     const later = this.chat.messages.slice(this.chat.messages.indexOf(message) + 1).filter((m) => m.role === 'user' && m.snapshot && !m.undone);
     const warn = later.length ? `Auch die Änderungen ${later.length === 1 ? 'des Auftrags' : `der ${later.length} Aufträge`} danach gehen dabei verloren.`
       : 'Auch spätere Änderungen an diesen Dateien gehen dabei verloren.';
-    if (!(await this.confirm('Ordner auf den Stand vor diesem Auftrag zurücksetzen?', `${detail}\n\n${warn}`))) {
+    if (!(await this.confirm('Ordner auf den Stand vor diesem Auftrag zurücksetzen?', `${detail}\n\n${warn}${this.siblingWarning()}`))) {
       return { ok: false, cancelled: true };
     }
     const r = await snapshots.restore(id);
@@ -935,6 +983,13 @@ class Agent extends EventEmitter {
     this.save();
     this.event({ type: 'undo', snapshot: id, text });
     return { ok: true, text };
+  }
+
+  // Zusatz für die Rückfrage vor dem Zurücksetzen, wenn ein anderer Chat gerade im selben Ordner arbeitet
+  siblingWarning() {
+    const others = this.getSiblings();
+    return others.length ? `\n\nAchtung: Gerade arbeitet auch ${others.map((t) => `«${clip(t, 60)}»`).join(', ')} in diesem Ordner. `
+      + 'Was dieser Chat geändert hat, wird ebenfalls zurückgesetzt.' : '';
   }
 
   // Werkzeug goal_done: Ziel als erreicht markieren

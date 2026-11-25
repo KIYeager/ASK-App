@@ -112,3 +112,49 @@ test('frage_stellen: Stoppen beendet die Frage ohne Antwort', async () => {
   assert.strictEqual(events.find((e) => e.type === 'tool-end').summary, 'nicht beantwortet');
   assert.strictEqual(agent.questions.size, 0);
 });
+
+test('Argumente «null» bringen den Chat nicht durcheinander: jeder Aufruf bekommt ein Ergebnis', async () => {
+  const ask = fakeAsk([{ calls: [{ id: 'n', name: 'run_command', arguments: 'null' }, { id: 'q', name: 'frage_stellen', arguments: '[1]' }] }]);
+  const { agent } = makeAgent(ask);
+  await agent.send('Los');
+  const tools = ask.requests[1].messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id);
+  assert.deepStrictEqual(tools, ['n', 'q']);
+  const calls = ask.requests[1].messages.find((m) => m.tool_calls).tool_calls.map((c) => c.function.arguments);
+  assert.deepStrictEqual(calls, ['{}', '{}']);
+});
+
+test('Gleicher Aufruf mit neuer Ausgabe ist keine Schleife, gleicher Aufruf mit gleichem Ergebnis schon', () => {
+  const { loopReason } = require('../src/main/agent');
+  const turn = (outputs) => [{ role: 'user', content: 'x' }, ...outputs.flatMap((o, i) => [
+    { role: 'assistant', tool_calls: [{ id: `c${i}`, function: { name: 'command_status', arguments: '{"id":"1"}' } }] },
+    { role: 'tool', tool_call_id: `c${i}`, content: o }])];
+  assert.strictEqual(loopReason(turn(['a', 'ab', 'abc'])), '');
+  assert.match(loopReason(turn(['a', 'a', 'a'])), /denselben Schritt/);
+});
+
+test('Während «Eingabe ändern» startet kein Auftrag und kein zweites Zurücknehmen', async () => {
+  const ask = fakeAsk([{ content: 'Ok.' }]);
+  const { agent } = makeAgent(ask);
+  await agent.send('Erste Eingabe');
+  let release;
+  agent.chat.messages.find((m) => m.role === 'user').snapshot = 's1';
+  agent.getSnapshots = () => ({ diff: async () => ({ changed: ['a.txt'], added: [], removed: [] }), restore: async () => ({ failed: [] }) });
+  agent.confirm = () => new Promise((r) => { release = r; });
+  const first = agent.rewind();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(agent.undoing, true);
+  assert.strictEqual((await agent.rewind()).ok, false);
+  await agent.send('Dazwischen');
+  assert.strictEqual(ask.requests.length, 1, 'kein neuer Auftrag während des Zurücknehmens');
+  release(true);
+  assert.strictEqual((await first).ok, true);
+  assert.strictEqual(agent.undoing, false);
+});
+
+test('Arbeitet ein anderer Chat im selben Ordner, warnt die App', async () => {
+  const ask = fakeAsk([{ content: 'Ok.' }]);
+  const { agent, events } = makeAgent(ask);
+  agent.getSiblings = () => ['Bericht schreiben'];
+  await agent.send('Los');
+  assert.ok(events.some((e) => e.type === 'notice' && /«Bericht schreiben»/.test(e.text)));
+});

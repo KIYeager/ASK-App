@@ -21,7 +21,8 @@ class SseParser {
       this.buffer = this.buffer.slice(i + 1);
       if (!line.startsWith('data:')) continue;
       const data = line.slice(5).trim();
-      if (!data || data === '[DONE]') continue;
+      if (data === '[DONE]') { this.done = true; continue; }
+      if (!data) continue;
       try {
         this.onEvent(JSON.parse(data));
       } catch {
@@ -96,8 +97,11 @@ class Completion {
   }
 
   add(chunk) {
+    if (!chunk || typeof chunk !== 'object') return;
     if (chunk.error) {
-      this.error = chunk.error.message || chunk.error.detail || JSON.stringify(chunk.error);
+      const e = chunk.error;
+      this.error = typeof e === 'string' ? e : e.message || e.detail || JSON.stringify(e);
+      this.errorCode = Number(e.code ?? e.status ?? e.status_code ?? chunk.status_code) || 0;
       return;
     }
     if (typeof chunk.detail === 'string') {
@@ -119,9 +123,9 @@ class Completion {
       this.onDelta('reasoning', reasoning);
     }
     if (d.content) this.splitter.push(d.content);
+    const whole = !choice.delta && !!choice.message; // ganze Antwort: Aufrufe der Reihe nach
     (d.tool_calls || []).forEach((tc, n) => {
-      const index = tc.index ?? n;
-      const call = this.calls[index] || (this.calls[index] = { id: '', name: '', arguments: '' });
+      const call = this.calls[this.slotFor(tc, whole ? n : null)] ||= { id: '', name: '', arguments: '' };
       if (tc.id) call.id = tc.id;
       const name = tc.function?.name;
       if (name && call.name !== name) call.name += name;
@@ -129,6 +133,29 @@ class Completion {
       if (args) call.arguments += typeof args === 'string' ? args : JSON.stringify(args);
     });
     if (choice.finish_reason) this.finish = choice.finish_reason;
+  }
+
+  // Platz eines gestreamten Werkzeugaufrufs. Ohne «index» (manche Server) oder mit demselben index für
+  // verschiedene Aufrufe entscheidet die Kennung: eine neue Kennung ist ein neuer Aufruf, Teile ohne
+  // Kennung gehören zum letzten.
+  slotFor(tc, fixed) {
+    if (fixed !== null) return fixed;
+    const byId = tc.id ? this.calls.findIndex((c) => c && c.id === tc.id) : -1;
+    if (byId >= 0) return byId;
+    const index = Number.isInteger(tc.index) ? tc.index : null;
+    if (index !== null) {
+      this.remap ||= new Map();
+      const slot = this.remap.get(index) ?? index;
+      const at = this.calls[slot];
+      // gleicher index, aber eine andere Kennung: ein weiterer Aufruf; folgende Teile mit diesem index gehören zu ihm
+      if (at && tc.id && at.id && at.id !== tc.id) {
+        this.remap.set(index, this.calls.length);
+        return this.calls.length;
+      }
+      return slot;
+    }
+    if (!this.calls.length || (tc.id && this.calls.at(-1).id)) return this.calls.length;
+    return this.calls.length - 1;
   }
 
   end() {
@@ -238,6 +265,17 @@ function contextOf(m) {
     m?.openai?.context_length, m?.openai?.context_window, m?.openai?.max_model_len, m?.top_provider?.context_length];
   const n = candidates.map(Number).find((v) => Number.isFinite(v) && v >= 1000);
   return n ? Math.round(n) : 0;
+}
+
+// Fehler, den ASK in einer Antwort mit Status 200 meldet (im Strom oder als JSON). Ohne Statuscode zählt
+// er wie eine Ablehnung (400), damit «Chat zu lang» und die anderen Rückfallmodi greifen; Überlastung
+// wie 503, damit die App nochmals versucht.
+function inbandError(completion) {
+  const message = completion.error;
+  const code = completion.errorCode >= 400 && completion.errorCode < 600 ? completion.errorCode : 0;
+  const status = code || (/rate.?limit|too many requests/i.test(message) ? 429
+    : /overload|unavailable|temporar|try again|timeout|timed out/i.test(message) ? 503 : 400);
+  return Object.assign(new Error(`ASK: ${message}`), { status, partial: completion.end() });
 }
 
 async function errorOf(res) {
@@ -440,8 +478,21 @@ class AskSession extends EventEmitter {
 
   // Eine Antwort des Modells, gestreamt. onDelta(kind, text) für die Anzeige.
   // Bricht die Antwort ab (Stopp, Verbindung weg), trägt der Fehler unter «partial» mit, was bis dahin ankam.
+  // Was ein Modell abgelehnt hat (Tokenzahlen im Strom, Denkparameter, Stufen des Denkaufwands), merkt sich
+  // die App pro Modell: Ein Modell, das «reasoning_effort» nicht kennt, schaltet es für die anderen nicht ab.
+  fallbacks(model) {
+    this.fallbackByModel ||= new Map();
+    if (!this.fallbackByModel.has(model)) this.fallbackByModel.set(model, { noUsage: false, noThinkParams: false, effortFor: null });
+    return this.fallbackByModel.get(model);
+  }
+
+  // Für Tests: für alle Modelle zurücksetzen oder setzen
+  set noUsage(v) { for (const f of this.fallbackByModel?.values() || []) f.noUsage = !!v; }
+  set noThinkParams(v) { for (const f of this.fallbackByModel?.values() || []) f.noThinkParams = !!v; }
+
   async chat({ model, messages, tools, webSearch, thinking, signal: outer, onDelta }) {
     const completion = new Completion(onDelta);
+    const fb = this.fallbacks(model);
     // Schweigt ASK mitten in der Antwort zu lange, hängt die Verbindung: abbrechen statt ewig warten
     const stall = new AbortController();
     const signal = outer ? AbortSignal.any([outer, stall.signal]) : stall.signal;
@@ -449,9 +500,9 @@ class AskSession extends EventEmitter {
       const body = { model, messages, stream: true };
       // Websuche macht ASK auf dem Server vor der Antwort und schickt die Quellen mit.
       if (webSearch) body.features = { web_search: true };
-      if (!this.noThinkParams && THINKING_PARAMS[thinking]) {
+      if (!fb.noThinkParams && THINKING_PARAMS[thinking]) {
         Object.assign(body, THINKING_PARAMS[thinking]);
-        const effort = this.effortFor?.[body.reasoning_effort];
+        const effort = fb.effortFor?.[body.reasoning_effort];
         if (effort) body.reasoning_effort = effort;
       }
       // Tokenzahlen am Ende des Stroms; manche Server lehnen das ab, dann ohne.
@@ -459,24 +510,25 @@ class AskSession extends EventEmitter {
       if (tools && tools.length) body.tools = tools;
       return this.request('/api/chat/completions', { method: 'POST', body: JSON.stringify(body), signal });
     };
-    let res = await send(!this.noUsage);
+    let res = await send(!fb.noUsage);
     let error = res.ok ? null : await errorOf(res);
     // Lehnt der Server einen Zusatz ab, ohne ihn nochmals versuchen und ihn künftig weglassen.
     for (let retry = 0; error && res.status === 400 && retry < 3; retry++) {
-      const thinkParams = !this.noThinkParams && THINKING_PARAMS[thinking];
-      const sent = thinkParams && (this.effortFor?.[thinkParams.reasoning_effort] || thinkParams.reasoning_effort);
+      const thinkParams = !fb.noThinkParams && THINKING_PARAMS[thinking];
+      const sent = thinkParams && (fb.effortFor?.[thinkParams.reasoning_effort] || thinkParams.reasoning_effort);
       const other = thinkParams && /reasoning[ _]effort/i.test(error.message) && nearestEffort(error.message, sent);
-      if (!this.noUsage && /stream_options|include_usage/i.test(error.message)) this.noUsage = true;
-      else if (other) this.effortFor = { ...this.effortFor, [thinkParams.reasoning_effort]: other }; // erlaubte Stufe statt gar keiner
-      else if (thinkParams && /reasoning[ _]effort|chat_template_kwargs|enable_thinking|\bthink\b/i.test(error.message)) this.noThinkParams = true;
+      if (!fb.noUsage && /stream_options|include_usage/i.test(error.message)) fb.noUsage = true;
+      else if (other) fb.effortFor = { ...fb.effortFor, [thinkParams.reasoning_effort]: other }; // erlaubte Stufe statt gar keiner
+      else if (thinkParams && /reasoning[ _]effort|chat_template_kwargs|enable_thinking|\bthink\b/i.test(error.message)) fb.noThinkParams = true;
       else break;
-      res = await send(!this.noUsage);
+      res = await send(!fb.noUsage);
       error = res.ok ? null : await errorOf(res);
     }
     if (error) throw error;
     const type = res.headers.get('content-type') || '';
     if (!type.includes('text/event-stream')) {
-      completion.add(await res.json());
+      completion.add(await res.json().catch(() => null));
+      if (completion.error) throw inbandError(completion);
       return completion.end();
     }
     const parser = new SseParser((chunk) => completion.add(chunk));
@@ -499,9 +551,18 @@ class AskSession extends EventEmitter {
       clearTimeout(timer);
     }
     parser.push('\n');
-    if (completion.error) throw Object.assign(new Error(`ASK: ${completion.error}`), { partial: completion.end() });
+    if (completion.error) throw inbandError(completion);
+    // Strom zu Ende ohne [DONE] und ohne finish_reason: die Verbindung brach ab. Ein halber Werkzeugaufruf
+    // (Argumente kein gültiges JSON) darf nicht ausgeführt werden: als Verbindungsfehler neu versuchen.
+    if (!parser.done && !completion.finish) {
+      const done = completion.end();
+      const broken = done.calls.some((c) => { try { JSON.parse(c.arguments || '{}'); return false; } catch { return true; } });
+      if (broken) throw Object.assign(new Error('ASK: Die Verbindung brach mitten in einem Werkzeugaufruf ab (network).'), { status: 502, partial: done });
+      done.incomplete = true;
+      return done;
+    }
     return completion.end();
   }
 }
 
-module.exports = { sameOrigin, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS, nearestEffort };
+module.exports = { inbandError, sameOrigin, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS, nearestEffort };
