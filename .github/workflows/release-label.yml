@@ -1,0 +1,56 @@
+# Jeder PR nach main braucht genau eines der Labels «beta», «release» oder «kein-release» (ENTSCHEIDE E38).
+# Die Prüfung bleibt rot, bis eines gesetzt ist, und zeigt, welche Version beim Merge entsteht.
+name: Release-Art
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, labeled, unlabeled]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  label:
+    name: Release-Art gewählt
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write # Labels anlegen, falls es sie noch nicht gibt
+    steps:
+      - name: Labels anlegen
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh label create beta --color FBCA04 --description "Beim Merge: Beta-Version (nur mit «Beta-Versionen erhalten»)" --force
+          gh label create release --color 0E8A16 --description "Beim Merge: neue Version für alle" --force
+          gh label create kein-release --color BFD4F2 --description "Beim Merge: keine neue Version" --force
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Label und Version prüfen
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          chosen=$(echo ",$LABELS," | grep -oE ',(beta|release|kein-release),' | tr -d ',' | sort -u)
+          count=$(echo "$chosen" | grep -c . || true)
+          if [ "$count" -ne 1 ]; then
+            msg="Bitte genau eines der Labels setzen: «beta» (Beta-Version), «release» (Version für alle) oder «kein-release». Rechts beim PR unter «Labels»."
+            echo "::error::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [ "$chosen" = "kein-release" ]; then
+            echo "Beim Merge entsteht keine neue Version." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Gleiche Rechnung wie beim Merge (scripts/release.js); stimmt, solange nicht vorher ein anderer PR eine Version macht.
+          node scripts/release.js --plan "$chosen" | tee -a "$GITHUB_STEP_SUMMARY"

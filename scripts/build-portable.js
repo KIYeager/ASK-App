@@ -11,8 +11,16 @@ const { version } = require('../package.json');
 
 const repo = path.join(__dirname, '..');
 
+// Windows verlangt für die Dateiversion vier Zahlen: 0.2.3 → 0.2.3.0, Beta 0.2.3-beta.1 → 0.2.3.1
+function viVersion(v) {
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:-[a-z]+\.(\d+))?/i.exec(v);
+  if (!m) throw new Error(`Version ${v} hat nicht die Form 1.2.3 oder 1.2.3-beta.4`);
+  return `${m[1]}.${m[2]}.${m[3]}.${m[4] || 0}`;
+}
+
 async function main() {
-  await build({ targets: Platform.WINDOWS.createTarget('dir', Arch.x64), config });
+  require('./pack-python').pack(); // python-pack für die App (ENTSCHEIDE E39)
+  await build({ targets: Platform.WINDOWS.createTarget('dir', Arch.x64), config, publish: 'never' });
   const appDir = path.join(config.directories.output, 'win-unpacked');
   const outFile = path.join(config.directories.output, `ASK-${version}.exe`);
   // Eigener Ordnername pro Build: Ein neuer Build entpackt sich neu, auch bei gleicher Version.
@@ -20,6 +28,7 @@ async function main() {
   const defines = {
     BUILD_ID: buildId,
     VERSION: version,
+    VI_VERSION: viVersion(version),
     APP_DIR: appDir,
     OUT_FILE: outFile,
     SPLASH: path.join(repo, 'resources', 'splash.bmp'),
@@ -39,7 +48,11 @@ async function main() {
   console.log(`Fertig nach ${Math.round((Date.now() - started) / 1000)} s: ${outFile} (${mb} MB)`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { viVersion };

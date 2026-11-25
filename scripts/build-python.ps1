@@ -51,7 +51,9 @@ Get-ChildItem $target -Directory -Recurse -Filter __pycache__ | Remove-Item -Rec
 
 # Vorkompilieren: Mit Low Integrity kann Python keine .pyc-Dateien ins Programmverzeichnis schreiben.
 Write-Host "Kompiliere ..."
-& $python -m compileall -q -j 0 (Join-Path $target "Lib") | Out-Null
+# unchecked-hash: Python prüft die .pyc nicht gegen Zeitstempel. Nach dem Entpacken aus python.zip (ENTSCHEIDE E39)
+# stimmen die Zeitstempel nicht immer auf die Sekunde, und ohne Schreibrecht würde jeder Import neu übersetzen.
+& $python -m compileall -q -j 0 --invalidation-mode unchecked-hash (Join-Path $target "Lib") | Out-Null
 
 $files = Get-ChildItem $target -Recurse -File
 Write-Host ("Fertig: {0:N0} Dateien, {1:N0} MB in {2}" -f $files.Count, (($files | Measure-Object Length -Sum).Sum / 1MB), $target)

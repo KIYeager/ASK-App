@@ -61,14 +61,33 @@ const outputText = (json) => (json.output || []).map((o) => o.data ?? '').join('
 const WINDOWED = new Set(['start', 'winword', 'excel', 'powerpnt', 'outlook', 'msaccess', 'notepad', 'mspaint', 'explorer',
   'msedge', 'chrome', 'firefox']);
 
+// Befehlsteile, getrennt durch &, |, Klammern oder Zeilenumbruch; in Anführungszeichen trennt nichts.
+function commandParts(command) {
+  const parts = [];
+  let part = '';
+  let quoted = false;
+  for (const c of String(command)) {
+    if (c === '"') quoted = !quoted;
+    if (!quoted && /[&|()\r\n]/.test(c)) { parts.push(part); part = ''; } else part += c;
+  }
+  parts.push(part);
+  return parts;
+}
+
+// Programm eines Befehlsteils (ohne Pfad und .exe); hinter «call», «@» und «cmd /c» zählt, was dort gestartet wird.
+function programOf(part, depth = 0) {
+  let s = part.trim().replace(/^@\s*/, '').replace(/^call\s+/i, '');
+  const shell = /^(?:"[^"]*\\)?cmd(?:\.exe)?"?\s+(?:\/\S+\s+)*?\/[ck]\s*(.*)$/i.exec(s);
+  if (shell && depth < 3) {
+    s = shell[1].trim().replace(/^"(.*)"$/, '$1');
+    return commandParts(s).map((p) => programOf(p, depth + 1)).find((p) => WINDOWED.has(p)) || '';
+  }
+  const word = s.startsWith('"') ? s.slice(1).split('"')[0] : s.split(/\s/)[0];
+  return word.split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|com)$/, '');
+}
+
 function blockedCommand(command) {
-  // Erstes Wort jedes Befehlsteils (getrennt durch &, |, Klammern), in Anführungszeichen auch mit Leerzeichen
-  const programs = String(command).split(/[&|()]/).map((part) => {
-    const s = part.trim();
-    const word = s.startsWith('"') ? s.slice(1).split('"')[0] : s.split(/\s/)[0];
-    return word.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
-  });
-  if (!programs.some((p) => WINDOWED.has(p))) return '';
+  if (!commandParts(command).some((part) => WINDOWED.has(programOf(part)))) return '';
   return 'Abgelehnt: Dieser Befehl würde ein Programm mit Fenster starten (z. B. Word, Excel, Explorer oder «start»). '
     + 'Das sperrt Dateien und wartet auf Eingaben. Für eine PDF-Prüfung python .ask/skills/pruefen.py <datei> --pdf verwenden; '
     + 'sonst der Person sagen, dass sie die Datei selbst öffnen soll.';
@@ -90,9 +109,9 @@ async function runCommand(terminal, args, { signal, onProgress }) {
   let offset = data.next_offset ?? (data.output || []).length;
   const end = Date.now() + limit * 1000;
   const kill = () => request(terminal, 'DELETE', `/execute/${encodeURIComponent(id)}`).catch(() => {});
-  // Gestoppt, während der Start noch lief: der Befehl läuft schon und muss beendet werden
-  if (signal?.aborted && data.status === 'running') {
-    await kill();
+  // Stopp während des Starts: Der Befehl läuft schon, das Ereignis kommt aber nicht mehr
+  if (signal?.aborted) {
+    if (data.status === 'running') await kill();
     throw new Error('abgebrochen');
   }
   signal?.addEventListener('abort', kill, { once: true });
@@ -278,7 +297,7 @@ const TOOLS = [
     name: 'update_tasks',
     label: 'Aufgaben',
     describe: (a) => a.auftrag || '',
-    description: 'Legt die Aufgabenliste an oder aktualisiert sie. Die Person sieht sie in der Seitenleiste. Bei Aufträgen mit mehr als zwei Schritten zuerst anlegen und nach jedem Schritt aktualisieren.',
+    description: 'Legt die Aufgabenliste dieses Chats an oder aktualisiert sie. Die Person sieht sie über dem Eingabefeld. Bei Aufträgen mit mehr als zwei Schritten zuerst anlegen und nach jedem Schritt aktualisieren.',
     parameters: {
       type: 'object',
       properties: {
@@ -295,9 +314,11 @@ const TOOLS = [
       required: ['aufgaben'],
     },
     async run(terminal, args) {
-      const tasks = { auftrag: String(args.auftrag || ''), aufgaben: Array.isArray(args.aufgaben) ? args.aufgaben : [] };
-      const res = await request(terminal, 'POST', '/files/write', { path: '.ask/tasks.json', content: JSON.stringify(tasks, null, 2) });
-      if (res.status !== 200) throw fail(res);
+      // Die Liste gehört zum Chat und steht dort im Ergebnis dieses Aufrufs (früher: eine Datei für den ganzen Ordner)
+      const status = (s) => (['offen', 'in_arbeit', 'erledigt'].includes(s) ? s : 'offen');
+      const tasks = { auftrag: String(args.auftrag || ''),
+        aufgaben: (Array.isArray(args.aufgaben) ? args.aufgaben : []).filter((t) => t && String(t.titel || '').trim())
+          .slice(0, 100).map((t) => ({ titel: String(t.titel).trim().slice(0, 300), status: status(t.status) })) };
       const done = tasks.aufgaben.filter((t) => t.status === 'erledigt').length;
       return { ok: true, output: 'Aufgabenliste gespeichert.', tasks: tasks.aufgaben, summary: `${done} von ${tasks.aufgaben.length} erledigt` };
     },
@@ -345,8 +366,7 @@ TOOLS.push(
     parameters: { type: 'object', properties: { repo: { type: 'string', description: 'besitzer/name oder GitHub-Adresse' } }, required: ['repo'] },
     run: githubTool(async (gh, folder, a) => {
       const r = await gh.clone(folder, a.repo);
-      const output = `Geholt von ${r.repo}: ${r.written.length} Dateien.${r.conflicts.length ? ` Nicht überschrieben, weil hier schon anders vorhanden: ${list(r.conflicts)}.` : ''}`
-        + `${r.skipped?.length ? ` Übersprungen (Name unter Windows nicht möglich oder gesperrt): ${list(r.skipped)}.` : ''}`;
+      const output = `Geholt von ${r.repo}: ${r.written.length} Dateien.${r.conflicts.length ? ` Nicht überschrieben, weil hier schon anders vorhanden: ${list(r.conflicts)}.` : ''}`;
       return { ok: true, output, summary: `${r.written.length} Dateien von ${r.repo}${r.conflicts.length ? ` · ${r.conflicts.length} Konflikte` : ''}` };
     }),
   },
@@ -359,8 +379,7 @@ TOOLS.push(
     run: githubTool(async (gh, folder) => {
       const r = await gh.pull(folder);
       const output = [`Geholt: ${list(r.written)}`, `Gelöscht (auf GitHub entfernt): ${list(r.removed)}`,
-        r.conflicts.length ? `Konflikte (hier und auf GitHub geändert, nichts überschrieben): ${list(r.conflicts)}. Die Person entscheiden lassen.` : 'Keine Konflikte.',
-        r.skipped?.length ? `Übersprungen (Name unter Windows nicht möglich oder gesperrt): ${list(r.skipped)}.` : ''].filter(Boolean).join('\n');
+        r.conflicts.length ? `Konflikte (hier und auf GitHub geändert, nichts überschrieben): ${list(r.conflicts)}. Die Person entscheiden lassen, welche Fassung gilt.` : 'Keine Konflikte.'].join('\n');
       return { ok: true, output, summary: `${r.written.length} geholt${r.removed.length ? `, ${r.removed.length} gelöscht` : ''}${r.conflicts.length ? ` · ${r.conflicts.length} Konflikte` : ''}` };
     }),
   },
@@ -368,21 +387,41 @@ TOOLS.push(
     name: 'github_push',
     label: 'GitHub',
     describe: (a) => `hochladen «${a.nachricht || ''}»`,
-    description: 'Lädt die Änderungen im Arbeitsordner als Commit auf das verbundene GitHub-Repository hoch (ohne .ask). Die Person bestätigt vorher, ausser sie hat das für dieses Repository abgeschaltet.',
-    parameters: { type: 'object', properties: { nachricht: { type: 'string', description: 'Kurze Commit-Nachricht, was sich geändert hat' } }, required: ['nachricht'] },
+    description: 'Lädt die Änderungen im Arbeitsordner als Commit auf das verbundene GitHub-Repository hoch (ohne .ask und ohne das, was .gitignore ausschliesst). '
+      + 'Die Person bestätigt vorher, ausser sie hat das für dieses Repository abgeschaltet.',
+    parameters: {
+      type: 'object',
+      properties: {
+        nachricht: { type: 'string', description: 'Kurze Commit-Nachricht, was sich geändert hat' },
+        ueberschreiben: { type: 'boolean', description: 'Nur nach einem gemeldeten Konflikt und wenn die Person es will: Die Fassung hier ersetzt die auf GitHub.' },
+      },
+      required: ['nachricht'],
+    },
     run: githubTool(async (gh, folder, a, ctx) => {
       const s = await gh.status(folder);
       if (!s.linked) return { ok: false, output: 'Der Ordner ist mit keinem Repository verbunden (github_create oder github_clone).', summary: 'kein Repository' };
       const changes = [...s.changed, ...s.added, ...s.deleted];
       if (changes.length === 0) return { ok: true, output: 'Nichts hochzuladen: keine Änderungen seit dem letzten Abgleich.', summary: 'nichts zu tun' };
-      // Rückfrage, ausser die Person hat für dieses Repository «nicht mehr fragen» gewählt
-      if (!ctx.githubTrust?.has(s.repo)) {
+      const clash = s.conflicts || [];
+      const overwrite = a.ueberschreiben === true && clash.length > 0;
+      if (clash.length && !overwrite) {
+        return { ok: false, summary: `${clash.length} ${clash.length === 1 ? 'Konflikt' : 'Konflikte'}`,
+          output: `Nicht hochgeladen. Hier und auf GitHub verschieden geändert: ${list(clash)}. Hochladen würde die Fassung auf GitHub ersetzen. `
+            + 'Frag die Person, welche Fassung gelten soll. GitHub gewinnt: die Datei hier löschen und github_pull. Hier gewinnt: github_push mit ueberschreiben: true.' };
+      }
+      // Überschreiben auf GitHub bestätigt die Person immer, auch wenn sie sonst nicht mehr gefragt werden will
+      if (overwrite) {
+        if (!(await ctx.confirm(`${clash.length} ${clash.length === 1 ? 'Datei' : 'Dateien'} auf GitHub mit der Fassung von hier ersetzen?`,
+          `Repository: ${s.repo}\nNachricht: ${a.nachricht}\n\nAuf GitHub inzwischen geändert:\n${list(clash, 20)}\n\nDie Änderungen auf GitHub an diesen Dateien gehen verloren (im Verlauf von GitHub bleiben sie).`))) {
+          return { ok: false, output: 'Die Person hat das Überschreiben abgelehnt.', summary: 'abgelehnt' };
+        }
+      } else if (!ctx.githubTrust?.has(s.repo)) {
         const answer = await ctx.confirm(`${changes.length} Änderungen auf GitHub hochladen?`, `Repository: ${s.repo}\nNachricht: ${a.nachricht}\n\n${list(changes, 20)}`,
           { checkbox: 'Für dieses Repository nicht mehr fragen' });
         if (!(answer?.ok ?? answer)) return { ok: false, output: 'Die Person hat das Hochladen abgelehnt.', summary: 'abgelehnt' };
         if (answer?.checked) ctx.githubTrust?.add(s.repo);
       }
-      const r = await gh.push(folder, a.nachricht);
+      const r = await gh.push(folder, a.nachricht, { overwrite });
       return { ok: true, output: `Hochgeladen: ${r.uploaded} Dateien, ${r.deleted.length} gelöscht. ${r.url}`, summary: `${r.uploaded} hochgeladen${r.deleted.length ? `, ${r.deleted.length} gelöscht` : ''} · ${s.repo}` };
     }),
   },

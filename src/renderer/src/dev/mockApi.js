@@ -17,8 +17,9 @@ let state = {
   terminal: { state: 'läuft', folder: FOLDER, lowIntegrity: true }, ask: { state: 'angemeldet', user: 'Lea Muster' },
   models: [{ id: 'qwen3-coder', name: 'Qwen3 Coder' }, { id: 'gpt-oss', name: 'GPT-OSS 120B' }], model: 'qwen3-coder',
   webSearch: false, chatMemory: false, thinking: 'mittel', webSearchAvailable: true, approvals: 'heikel', theme: 'system',
-  version: '0.2.0', update: { state: 'bereit', available: '0.2.1', progress: 100 },
-  chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null },
+  version: '0.2.3', update: { state: params.get('update') || 'verfügbar', current: '0.2.3', version: '0.2.4', percent: 42, countdown: 7, beta: false, enabled: true, portable: false, postponed: false },
+  prefs: { verbose: false, todoCollapsed: true },
+  chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null, pinned: false, context: { tokens: 18400, estimated: false, limit: 131072 } },
 };
 if (params.get('leer')) state.chat = { id: 'neu1', title: '', running: false, goal: null };
 if (params.get('erst')) state = { ...state, folder: '', chat: { id: 'neu1', title: '', running: false } };
@@ -107,7 +108,12 @@ export function install() {
     forgetFolder: async () => true, folderMenu: async () => {}, showFolder: async () => {}, projectMenu: async (f) => emit('project:rename', f),
     projectUpdate: async (folder, patch) => { const p = projects.find((x) => x.folder === folder); if (p && patch.name) p.name = patch.name; return true; },
     setSettings: async (v) => { state = { ...state, ...v }; push(); },
-    checkUpdate: async () => state.update, installUpdate: async () => true, downloadUpdate: async () => {},
+    updateAction: async () => {}, updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
+    setPrefs: async (v) => { state = { ...state, prefs: { ...state.prefs, ...v } }; push(); },
+    chatRewind: async () => ({ ok: true, text: 'Räum den Ordner auf', attachments: [] }),
+    chatRename: async (_f, id, title) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.title = title; return true; },
+    chatPin: async (_f, id, on) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.pinned = on; return true; },
+    chatSearch: async (q) => (/proxmox|budget/i.test(q) ? [{ folder: FOLDER, name: 'Haushaltsbudget', id: 'c2', title: 'Budgetplan 2027', updated: Date.now(), snippets: ['Person: Budget für 2027 aufstellen …'] }] : []),
     listDir: async (rel) => ({ ok: true, entries: tree[rel] || [] }),
     restartTerminal: async () => {}, terminalLogs: async () => 'open-terminal läuft auf 127.0.0.1', acceptWarning: async () => {},
     setAskUrl: async () => ({ ok: true }), connectAsk: async () => state.ask, logout: async () => {}, models: async () => state.models,

@@ -50,11 +50,18 @@ function readSyncRoots() {
   return [...new Set(roots)];
 }
 
+// Die Abfrage der Registry startet dreimal reg.exe und hält die Oberfläche kurz an: eine Minute merken
+let syncCache = { at: 0, roots: [] };
+function cachedSyncRoots() {
+  if (Date.now() - syncCache.at > 60000) syncCache = { at: Date.now(), roots: readSyncRoots() };
+  return syncCache.roots;
+}
+
 function defaultContext() {
   const env = process.env;
   return {
     env,
-    syncRoots: readSyncRoots(),
+    syncRoots: cachedSyncRoots(),
     realpath: (p) => fs.realpathSync.native(p),
     stat: (p) => fs.statSync(p),
   };

@@ -201,32 +201,105 @@ Schreibt die Person im Chat, während das Modell im Browser-Bereich arbeitet, sp
 
 Die App gibt den Fokus jetzt nach dem Laden, nach jedem Klick (nach 30 ms) und nach jeder Aktion an die Oberfläche zurück, sofern der Bereich ihn hat. Ausnahme: Die Person klickt während des Aufrufs selbst in den Browser; dann bleibt er dort. Ob der Bereich schon vor dem Aufruf den Fokus hatte, zählt nicht, denn auch Einblenden und frühere Aufrufe holen ihn dorthin, ohne dass die Person dort ist. Tasten (`sendInputEvent`) und Text (`insertText`) erreichen die Seite auch ohne Fokus, auch in ein zuvor angeklicktes Feld.
 
-## E33 Rückfrage vor heiklen Schritten
+## E33 Was das Modell schreiben kann, ist für die App nicht vertrauenswürdig
+
+Das Terminal läuft mit niedriger Integritätsstufe, die App selbst mit den normalen Rechten der Person. Alles, was die App aus dem Arbeitsordner liest und danach mit ihren Rechten ausführt, ist darum ein Weg aus dem Schutz hinaus, sobald das Modell (zum Beispiel nach einer manipulierten Webseite oder Datei) es darauf anlegt. Eine Durchsicht am 25.11.2026 fand drei solche Wege; alle sind geschlossen:
+
+- **Rückgängig.** Die Liste der gesicherten Dateien lag in `.ask/sicherung`. Ein Eintrag wie `..\..\AppData\…\Startup\x.bat` liess die App beim Zurücksetzen ausserhalb des Ordners schreiben. Sicherung und GitHub-Verbindung liegen jetzt unter `%LOCALAPPDATA%\ASK-Desktop\projekte\<Kennung>` (nicht im Laufzeitordner des Terminals, der ebenfalls beschreibbar ist); vorhandene Daten aus `.ask` übernimmt die App einmal. Zusätzlich prüft sie jeden Stand beim Lesen: nur relative Pfade ohne `..`, Laufwerk oder Datenstrom, nur echte Prüfsummen, und kein Schreiben über eine Verknüpfung aus dem Ordner hinaus (`src/main/safe.js`).
+- **Doppelklick.** «Öffnen» startete jede Datei im zugehörigen Programm, auch eine vom Modell angelegte `Bericht.bat`. Ohne Rückfrage öffnet die App jetzt nur noch Dokumente, Bilder, Medien und Text; bei allem anderen fragt sie nach.
+- **Office-Umwandlung.** Die Prüfung auf externe Verweise suchte mit Mustern im XML und liess sich mit einfachen Anführungszeichen, einem Ziel auf `/hyperlink` oder klein geschriebenen Feldnamen umgehen; Word hätte dann Inhalte von fremden Rechnern geholt und dabei Anmeldedaten mitgeschickt. Die Datei wird jetzt in der App gelesen (`src/main/ooxml.js`): Verweise nach ihrem Typ, Felder nach dem ersten Wort der Anweisung, auch wenn Word sie auf mehrere Stücke verteilt, in allen Teilen des Dokuments. Was sich nicht lesen lässt, gilt als abgelehnt. Die alte Prüfung im PowerShell-Skript bleibt als zweite Stufe.
+
+Dazu gehört der Abgleich mit GitHub: Repository und Branch aus der gespeicherten Verbindung gehen in Adressen der GitHub-API mit dem Token der Person und werden darum geprüft; Pfade aus einem Repository, die aus dem Ordner hinausführen, legt die App nicht an. `.gitignore` gilt beim Hochladen (was schon auf GitHub liegt, bleibt dabei, wie bei git), und eine Datei, die hier und auf GitHub verschieden geändert wurde, ersetzt das Hochladen nur nach einer eigenen Rückfrage.
+
+Nicht geschlossen: Die Kennzeichnung «Low» bleibt an jedem Ordner, der einmal Arbeitsordner war (README, Bekannte Grenzen).
+
+## E34 Enter während eines Auftrags reiht ein
+
+Bisher stoppte Enter einen laufenden Auftrag; wer eine Folgefrage tippte und Enter drückte, brach die Arbeit ab und schickte nichts. Jetzt reiht Enter eine Nachricht ein, die nach dem Auftrag von selbst hinausgeht. Gestoppt wird nur mit Esc oder ■; dann, nach einem Fehler und beim Wechsel des Chats steht die wartende Nachricht wieder im Eingabefeld, damit nichts ungewollt abgeschickt wird.
+
+Ordnerwechsel während eines Auftrags lehnt die App ab: Der laufende Auftrag schrieb seinen Chat sonst in den neuen Ordner. Mehrere Starts des Terminals kurz hintereinander laufen nacheinander, und nur der letzte startet wirklich; eine einzelne verpasste Probe gilt nicht mehr als Ausfall.
+
+## E35 Langer Verlauf
+
+Die App weiss nicht, wie gross das Kontextfenster des Modells in ASK ist. Sie schickt darum ältere Arbeitsschritte von Anfang an gekürzt mit (Ergebnisse und lange Argumente, etwa den Inhalt einer geschriebenen Datei; die Datei liegt ja im Ordner) und kürzt stärker, sobald ASK meldet, dass der Verlauf zu lang ist. Reicht auch das nicht, sagt sie, dass ein neuer Chat nötig ist. Der gespeicherte Chat bleibt immer vollständig. Eine Zusammenfassung des Verlaufs durch das Modell gibt es nicht.
+
+## E36 Eingabe ändern, Chat-Menü, Kontextanzeige, Einstellungen, Tastatur
+
+- **Eingabe ändern oder neu senden** gibt es nur für die letzte Eingabe. Sie nimmt die Eingabe und alles danach aus dem Chat und setzt den Ordner nach Rückfrage mit derselben Sicherung zurück wie «Rückgängig» (E24); lehnt die Person das Zurücksetzen ab, bleibt auch der Chat, wie er ist. So kann der Chat nie etwas anderes behaupten, als im Ordner liegt.
+- **Chat-Menü**: Umbenennen und Anheften stehen in der Chat-Datei selbst (`title`, `pinned`), damit sie mit dem Ordner mitgehen. Die Suche im Inhalt läuft über alle Ordner der Liste, mit derselben Suche, die das Modell mit `chat_search` benutzt (E28).
+- **Kontextanzeige**: Die Grösse des Kontextfensters kennt die App nur, wenn ASK sie zum Modell angibt oder sie einmal in einer Fehlermeldung genannt hat (dann merkt sich die App die Zahl pro Modell). Sonst zeigt sie nur die Tokenzahl, ohne Prozent.
+- **Aufgabenliste**: Sie gehörte in der Oberfläche schon zum Chat (aus dessen Arbeitsschritten). Die Datei `.ask/tasks.json` für den ganzen Ordner las niemand mehr; das Werkzeug schreibt sie nicht mehr.
+- **Tastatur**: Was sich anklicken lässt, ist mit Tab erreichbar; Dialoge halten den Fokus und geben ihn beim Schliessen zurück. Die gedämpfte Schrift ist heller (Kontrast etwa 4.7:1 statt 3:1).
+
+## E37 Updates über ein öffentliches Release-Repository
+
+Neue Versionen kamen bisher nur als Datei, die jemand auf dem eigenen Windows-Rechner bauen (`setup.ps1`, `npm run dist`) und verteilen musste. Neu baut der Workflow `.github/workflows/release.yml` bei jedem Tag `v<Version>` auf `windows-latest` und veröffentlicht in einem eigenen, öffentlichen Repository `KIYeager/ASK-Releases`; die App aktualisiert sich mit electron-updater.
+
+Warum ein zweites Repository: ASK-App ist privat. electron-updater könnte private Releases nur mit einem Token in der App lesen, und ein Token in jeder Kopie der App wäre öffentlich. Im öffentlichen Repository liegen nur die fertigen Dateien. Gefunden wird die neueste Version über `github.com/<repo>/releases.atom` und `releases/latest`, nicht über die API von GitHub; die API erlaubt ohne Token nur 60 Anfragen pro Stunde und Adresse, und im Schulnetz teilen sich viele Laptops eine Adresse.
+
+Die installierte App fragt vor dem Herunterladen und vor dem Neustart (Wunsch: die Lernenden entscheiden), nie während eines Auftrags. «Beim Beenden» installiert beim nächsten Schliessen. Vor dem Neustart beendet die App das Terminal, damit keine Python-Prozesse Dateien im Programmordner sperren. Die einzelne EXE (E18) prüft mit derselben Quelle, zeigt aber nur einen Link: Sie müsste ihren eigenen Starter ersetzen, und dafür gibt es in electron-updater nichts.
+
+Beta: Tags wie `v0.3.0-beta.1` werden Vorabversionen. Der Schalter «Beta-Versionen erhalten» setzt `allowPrerelease`. Jedes Release hat nur `latest.yml`; electron-updater sucht bei einer Vorabversion zuerst `beta.yml` und nimmt dann `latest.yml` desselben Releases. Wer den Schalter wieder ausschaltet, behält die Beta, bis eine grössere normale Version kommt (kein Zurückstufen).
+
+Die Angabe des Repositorys steht einmal in `resources/app-config.json` (`updates`); electron-builder schreibt daraus `app-update.yml` in die installierte App, die einzelne EXE setzt sie zur Laufzeit. electron-builder lädt selbst nichts hoch (`--publish never`), das macht `gh release create` im Workflow mit dem Secret `RELEASES_TOKEN` (Fine-grained Token nur für ASK-Releases). Installer und EXE bleiben unsigniert; electron-updater prüft die Signatur nur, wenn `publisherName` gesetzt ist, und die Prüfsumme aus `latest.yml` (SHA-512) schützt vor beschädigten Downloads, nicht vor einem fremden Release im Repository.
+
+## E38 Neue Version beim Merge, Beta oder Vollversion per Label
+
+Eine neue Version soll ohne eigenen Befehl entstehen, und bei jeder soll man bewusst wählen, ob sie Beta oder für alle ist. Darum hat jeder PR nach `main` genau eines der Labels `beta`, `release` oder `kein-release`; die Prüfung «Release-Art gewählt» (`release-label.yml`) ist rot, bis eines gesetzt ist, und zeigt die Version, die beim Merge entsteht. Ein Label statt eines Ankreuzfelds, weil es sich zuverlässig auslesen lässt und auch nach dem Merge am PR sichtbar bleibt; `kein-release`, damit Doku- und Test-PRs nicht jedes Mal eine Version an alle schicken.
+
+Beim Merge setzt der Job «version» in `release.yml` die nächste Version (`scripts/release.js --auto`), macht Commit und Tag auf `main` (`git push --atomic`, mit dem `GITHUB_TOKEN`) und ruft danach im selben Lauf den Bau auf. Im selben Lauf, weil ein Tag, den der `GITHUB_TOKEN` setzt, keine weiteren Workflows auslöst. Merges kurz nacheinander warten aufeinander (`concurrency`), damit jede Version auf dem Commit der vorherigen aufbaut.
+
+Nummern: Eine Beta zählt auf die nächste Vollversion hin (0.2.0 → 0.2.1-beta.1 → 0.2.1-beta.2 → mit `release` 0.2.1). Eine eigene Nummer steht als Zeile `Version: 0.3.0` im PR-Text, damit man dafür nicht pro Version ein Label anlegen muss. Den Text für den Update-Dialog nimmt die App aus dem Tag: PR-Titel oder die Zeile `Release-Text:`. `npm run release` von Hand bleibt für Arbeit direkt auf `main`.
+
+Voraussetzung: Workflows dürfen auf `main` schreiben (Einstellung «Read and write permissions», bei geschütztem `main` eine Ausnahme für GitHub Actions).
+
+Dabei behoben: v0.2.0 scheiterte beim Veröffentlichen mit `no matches found for '-'` von `gh release create`. Die Argumente gingen als `@flags` an gh, und `$flags` war nach `if` nur ein Text statt einer Liste. Vermutlich hat PowerShell den Text beim Splatting nicht als Argument übergeben; nachgestellt ist das nicht. Jetzt bekommt gh eine ausdrückliche Liste `[string[]]`, und der Workflow schreibt den Aufruf ins Log.
+
+## E39 Python als ein Archiv, einmal entpackt
+
+Das erste echte Update (0.2.1 auf 0.2.2) dauerte über 3 Minuten, ohne dass man etwas sah: Der Installer lief still, entfernte zuerst die alte Version und schrieb dann alles neu. Wer in dieser Zeit auf die Verknüpfung klickte, bekam «geändert oder verschoben», und Windows bot an, sie zu löschen. Der Installer legt bei Updates und bei einer Installation über eine bestehende keine fehlende Verknüpfung neu an; sie blieb weg.
+
+Von den 11'990 Dateien des Installers gehörten 11'951 zum mitgelieferten Python, der Rest von ASK sind 39 Dateien. Jede einzelne Datei kostet beim Löschen und Schreiben Zeit, dazu prüft der Virenscanner jede. Darum liegt Python jetzt als ein Archiv in der App (`resources\python-pack\python.zip`, gepackt von `scripts/pack-python.js` mit `tar.exe`), und die App entpackt es vor dem ersten Terminal-Start nach `%LOCALAPPDATA%\ASK-Desktop\python\<id>` (`src/main/python.js`): mit `tar.exe` von Windows (bsdtar, ab Windows 10 1803 vorhanden), zuerst nach `<id>.neu`, erst danach umbenannt, mit Fortschritt in der Statuszeile. Die `id` hängt nur von `build-python.ps1` und `requirements.txt` ab; ändert sich Python nicht, entpackt ein Update nichts. Ältere Fassungen räumt die App weg, die Deinstallation (nicht ein Update) entfernt den Ordner (`scripts/installer.nsh`).
+
+Damit die vorkompilierten `.pyc` nach dem Entpacken gültig bleiben, entstehen sie mit `--invalidation-mode unchecked-hash`: Python vergleicht sie nicht mit den Zeitstempeln der Quellen (ein ZIP speichert diese nicht immer sekundengenau), und ohne Schreibrecht (Low Integrity) würde sonst jeder Import neu übersetzen.
+
+Sicherheit: Der Starter des Terminals läuft mit normalen Rechten aus diesem Ordner. Er liegt neben `laufzeit`, nicht darin, und bekommt keine Low-Kennzeichnung; Prozesse mit niedriger Integritätsstufe können ihn lesen, aber nicht ändern (wie den Stand der einzelnen EXE unter `ASK-Desktop\app`, E18).
+
+Weiter: Beim Neustart für ein Update läuft der Installer nicht mehr still, sondern zeigt sein Fortschrittsfenster und startet ASK danach (`quitAndInstall(false, true)`); der Dialog sagt vorher, dass ASK sich schliesst und von selbst wiederkommt. Fehlt die Verknüpfung im Startmenü, legt die installierte App sie beim Start mit `shell.writeShortcutLink` wieder an.
+
+Der Wechsel selbst ist noch einmal langsam: Das Update auf die erste Version mit Archiv entfernt die alten 12'000 Dateien, und der erste Start entpackt Python. Ab dann schreibt ein Update rund 40 Dateien.
+
+## E40 Ein Klick, dann Balken und Countdown
+
+Beim Test von 0.2.3-beta.2 war nach «Jetzt aktualisieren» nicht zu sehen, dass etwas geschieht: Den Download (rund 210 MB) zeigte nur ein kleiner Eintrag unten in der Statuszeile, der bei schmalem Fenster abgeschnitten wird, und erst nach dem Download kam die zweite Frage «Jetzt neu starten?». Wer nicht so lange wartet, schliesst ASK oder klickt woanders.
+
+Jetzt gibt es nur noch die eine Frage vor dem Download. Danach zeigt ein Balken oben in der App den Download in Prozent (dazu die Taskleiste), mit dem Hinweis, dass man weiterarbeiten kann. Ist das Update geladen, zählt der Balken 10 Sekunden herunter und startet dann neu (Installer mit Fortschrittsfenster, E39); «Jetzt neu starten» und «Später» stehen im Balken. «Später» installiert beim Schliessen von ASK und startet nicht mehr von selbst. Startet während des Countdowns ein Auftrag, hält die App an und zählt nach dem Auftrag neu. Ein Neustart mitten in einem Auftrag ist damit weiter ausgeschlossen, und es braucht keinen zweiten Dialog.
+
+Dass beim Test nach «Jetzt neu starten» kein Fortschrittsfenster kam, lag an der installierten 0.2.2: Das Update führt immer die alte Version aus, und die installierte noch still. Das Fenster von E39 zeigt erst ein Update aus 0.2.3-beta.2 heraus.
+
+
+## E41 Rückfrage vor heiklen Schritten
 
 Bisher stand nur im Systemprompt, dass das Modell vor dem Löschen fragen soll. Jetzt prüft die App jeden Werkzeugaufruf, bevor sie ihn ausführt (`src/main/approvals.js`). Als heikel gelten Befehle, die löschen (`del`, `erase`, `rd`, `rmdir`, `rm`, `Remove-Item`, `format`, in Einzeilern `os.remove`, `shutil.rmtree`, `.unlink()` usw.), Befehle mit Pfaden ausserhalb des Ordners (Laufwerk, `..\`, UNC, `%USERPROFILE%` und ähnliche) und `write_file` auf eine vorhandene Datei, die das Modell nicht im selben Auftrag selbst geschrieben hat. Die Arbeitsschleife hält an, die Oberfläche zeigt die Rückfrage im Chat (nicht als Fenster, damit die Person sieht, worum es geht), die Antwort kommt über `chat:approve` zurück. «Immer in diesem Chat» gilt für diese Art Schritt bis zum nächsten Chat. Abgelehnt bekommt das Modell als Ergebnis, dass die Person den Schritt abgelehnt hat. Stoppen gilt als Nein.
 
 Stufen in den Einstellungen: «Nie», «Heikle Schritte» (Standard) und «Immer» (zusätzlich vor jedem Befehl und jeder Änderung an vorhandenen Dateien). Bewusst nicht erkannt wird, was ein Skript intern tut: Ein `python aufraeumen.py`, das Dateien löscht, läuft ohne Rückfrage. Das liesse sich nur mit einer Sperre im Terminal lösen; die Sicherung mit «Rückgängig» (E24) deckt den Fall ab.
 
-## E34 Updates über einen eigenen Server
+## E42 Neue Oberfläche mit React und Vite, Hülle bleibt Electron
 
-Bisher gab es keine Updates; die einzelne EXE entpackte sich nur neu, wenn man selbst eine neuere startete. Die App nutzt jetzt `electron-updater` mit dem Anbieter «generic»: Die Adresse steht als `updateUrl` in `resources/app-config.json`, `npm run dist` erzeugt dann `latest.yml`, und die Dateien kommen auf einen einfachen Webserver (z. B. der Schule). Ein GitHub-Release ginge auch, braucht für ein privates Repository aber ein Token in der App; das wollen wir nicht. Die installierte App prüft 15 s nach dem Start und danach alle 4 Stunden, lädt im Hintergrund und bietet «Neu starten» an; installiert wird sonst beim nächsten Beenden. Die einzelne EXE kann sich nicht selbst ersetzen: Sie liest nur `latest.yml` und zeigt einen Hinweis mit Link auf die neue EXE. Ohne `updateUrl`, ohne https oder im Entwicklungsmodus ist die Prüfung aus; die Version steht trotzdem in den Einstellungen. Unsignierte Installer lösen auch beim Update SmartScreen aus, darum lohnt sich die Code-Signatur (README, offene Punkte).
-
-## E35 Neue Oberfläche mit React und Vite, Hülle bleibt Electron
-
-Die Oberfläche war eine einzelne `app.js` mit 1’664 Zeilen, die das DOM von Hand baute. Sie ist jetzt mit React gebaut (Vite, Ausgabe nach `src/renderer/dist`, nur das kommt in die App). Der Chat ist ein reines Datenmodell (`src/renderer/src/lib/chatModel.mjs`): gespeicherte Chats und Live-Ereignisse ergeben dieselben Einträge, gruppiert in Aufträge; das Modell hat eigene Tests. Text wird während des Streamens alle 80 ms gesammelt angewendet. Die Schnittstelle zum Hauptprozess (`window.ask`, `src/preload/shell.js`) ist gleich geblieben und nur erweitert. Für die Entwicklung im Browser gibt es eine Attrappe mit Beispieldaten.
+Die Oberfläche war eine einzelne `app.js` mit 1’664 Zeilen, die das DOM von Hand baute. Sie ist jetzt mit React gebaut (Vite, Ausgabe nach `src/renderer/dist`, nur das kommt in die App). Der Chat ist ein reines Datenmodell (`src/renderer/src/lib/chatModel.mjs`): gespeicherte Chats und Live-Ereignisse ergeben dieselben Einträge, gruppiert in Aufträge; das Modell hat eigene Tests. Text wird während des Streamens alle 80 ms gesammelt angewendet. Die Schnittstelle zum Hauptprozess (`window.ask`, `src/preload/shell.js`) ist gleich geblieben und nur erweitert. Was parallel in der alten Oberfläche dazukam (E34 Warteschlange, E36 Bearbeiten, Chat-Menü, Kontext und Einstellungen, E40 Update-Balken), ist übernommen. Für die Entwicklung im Browser gibt es eine Attrappe mit Beispieldaten.
 
 Gestaltung nach Variante E aus dem Redesign: freundlicher Chat mit Sprechblasen und einklappbarer Karte für die Arbeitsschritte, rechts ein Arbeitsbereich mit Dateien, Vorschau und Browser, Akzent TF Blau, Hell und Dunkel. Modell, Denkaufwand und Websuche stehen im Eingabefeld. Zusatzinfos (Kopieren, Token-Zeile, Gedanken) erscheinen erst beim Darüberfahren bzw. mit Ctrl+O, damit der Chat ruhig bleibt.
 
 Geprüft wurde auch ein Wechsel zu Tauri 2, Electrobun oder Wails. Dagegen sprach: Der Hauptprozess (rund 5’100 Zeilen Node.js) müsste in Rust oder Go neu geschrieben werden (bei Electrobun mindestens alle Electron-Schnittstellen ersetzt), mehrere Webansichten in einem Fenster brauchen bei Tauri auch in 2.11 das Feature `unstable`, und Bildschirmfotos und Fernsteuerung des Browser-Bereichs gingen nur über eigene WebView2-Anbindungen. Der Platzgewinn (rund 85 MB) ist klein neben den 290 MB Python. Siehe auch E9.
 
-## E36 Projekte
+## E43 Projekte
 
 Die linke Leiste gruppierte Chats nach den zuletzt verwendeten Ordnern (höchstens 8). Jetzt gibt es Projekte: Ein Projekt ist genau ein Arbeitsordner mit Namen und Farbe, gespeichert in den Einstellungen (`projects`). Ein neues Projekt bekommt einen Ordner `ASK-Projekte\<Name>` (Zeichen, die Windows nicht erlaubt, werden ersetzt; Gerätenamen wie `CON` bekommen einen Zusatz). Ein vorhandener Ordner wird beim Öffnen zum Projekt. Aus der Liste entfernen löscht nichts. Bestehende Einstellungen werden beim ersten Start übernommen (jeder Ordner aus `recent` wird ein Projekt). Chats zwischen Projekten verschieben geht bewusst nicht: Anhänge, Skripte und Sicherung eines Chats liegen im Ordner des Projekts.
 
-## E37 Das Modell kann fragen
+## E44 Das Modell kann fragen
 
 Fehlte dem Modell eine Angabe, schrieb es eine Frage als Antwort und der Auftrag war zu Ende; im Ziel-Modus stiess die App es dann wieder an. Jetzt hat es das Werkzeug `frage_stellen` (Frage, 2 bis 6 Antworten zum Anklicken, optional mehrere wählbar), wie AskUserQuestion in Claude Code. Die Arbeitsschleife wartet auf die Antwort, die als Werkzeugergebnis zurückgeht; der Auftrag läuft danach weiter, ohne neue Eingabe und ohne neue Sicherung. Im Chat steht die Frage als Karte, beantwortet wandert sie in die Arbeitsschritte. Eine Eingabe im normalen Eingabefeld gilt als Antwort. Der Systemprompt sagt, wann fragen (wirklich fehlende Angaben, Konflikte, gesperrte Dateien) und wann nicht (was sich mit den Werkzeugen selbst herausfinden lässt). In automatischen Tests beantwortet die App Fragen mit der ersten Antwort und erlaubt Rückfragen.
 
-## E38 Fehler aus der Durchsicht des Hauptprozesses
+## E45 Weitere Korrekturen aus einer zweiten Durchsicht
 
-Bei der Durchsicht fanden sich unter anderem: Ordnerwechsel während eines Auftrags speicherten den laufenden Chat in den neuen Ordner (jetzt gesperrt). Ein Stopp in den ersten zwei Sekunden liess den Befehl weiterlaufen (jetzt beendet). Zwei gleichzeitige Terminal-Starts hinterliessen einen verwaisten Prozess (jetzt nacheinander). Eine einzige verpasste Antwort des Terminals galt als Ausfall für immer (jetzt erst nach drei, und es erholt sich). Rückgängig ging nach Aufträgen mit über 5000 Dateien nicht mehr und lief nicht gegen gleichzeitige Aufträge gesperrt. Chats wurden nicht atomar gespeichert. Ein 403 von ASK meldete ab, auch wenn nur ein Modell nicht freigegeben war. Pfade von GitHub konnten mit `..\` oder `.ask\` aus dem Ordner führen, und Adressen wie `http://localhost./` oder `[::ffff:127.0.0.1]` umgingen die Sperre lokaler Adressen. Ein Doppelklick auf `.bat` oder `.exe` im Ordner startete das Programm ausserhalb der Sperre (jetzt nur Explorer). Die Vorschau las grosse Textdateien ganz ein. Alle Korrekturen haben Tests (`tests/haertung.test.js`, `tests/agent.test.js` und die bestehenden).
+Eine zweite Durchsicht des Hauptprozesses fand vieles, das E33 und E34 schon behoben hatten (Ordnerwechsel während eines Auftrags, Stopp beim Start eines Befehls, gleichzeitige Terminal-Starts, verpasste Proben, atomares Speichern, 403, Pfade von GitHub, Doppelklick auf Programme). Dazu kamen: «Rückgängig» ging nach einem Auftrag mit über 5000 Dateien nicht mehr (Vergleichen und Zurücksetzen haben jetzt keine Obergrenze, nur das Sichern) und lief nicht gegen einen gleichzeitig gestarteten Auftrag gesperrt. Neue Chats setzen den Textmodus und «keine Bilder» zurück, ebenso ein Modellwechsel. `localhost.` mit Punkt am Ende galt nicht als lokale Adresse, und bei Flux-Bildern wurde das Ziel einer Weiterleitung nicht geprüft. Eine hier gelöschte Datei, die auf GitHub unverändert ist, kommt beim Holen nicht zurück. Angehängte Dateien mit Gerätenamen wie `nul.txt` bekommen einen anderen Namen. Die Vorschau liest von grossen Textdateien nur den Anfang. `$` in Ordnernamen verfälschte den Systemprompt. Tests: `tests/haertung.test.js`, `tests/rueckfrage.test.js`.

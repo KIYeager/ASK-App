@@ -21,13 +21,24 @@ function Attachments({ list, ctx }) {
   );
 }
 
-function UserMessage({ entry, ctx }) {
+function UserMessage({ entry, ctx, editable }) {
   return (
     <div className="msg user">
       <div className="bubble">
         {entry.text ? <div className="text">{entry.text}</div> : null}
         <Attachments list={entry.attachments} ctx={ctx} />
       </div>
+      {editable ? (
+        // Nur die letzte Eingabe, nur ohne laufenden Auftrag (ENTSCHEIDE E36)
+        <div className="user-actions">
+          <button type="button" className="ghost-btn user-edit" title="Die Nachricht zurücknehmen und im Eingabefeld ändern" onClick={() => ctx.editLast(false)}>
+            <Icon name="pen" size={13} /> Bearbeiten
+          </button>
+          <button type="button" className="ghost-btn user-resend" title="Die Nachricht zurücknehmen und gleich nochmals senden" disabled={!!ctx.blocker} onClick={() => ctx.editLast(true)}>
+            <Icon name="reload" size={13} /> Neu senden
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -334,7 +345,7 @@ export const Turn = memo(function Turn({ turn, ctx, last }) {
   const streaming = turn.running && last && turn.answer && !turn.answer.done;
   return (
     <section className="turn">
-      {turn.user ? <UserMessage entry={turn.user} ctx={ctx} /> : null}
+      {turn.user ? <UserMessage entry={turn.user} ctx={ctx} editable={last && !ctx.running} /> : null}
       {turn.steps.length ? <WorkCard turn={turn} ctx={ctx} /> : null}
       {turn.running && !turn.steps.length && !turn.answer ? (
         <div className="work running"><div className="work-head"><span className="state run"><span className="spin" aria-hidden="true" /></span><span className="title">{ctx.activity}</span></div></div>

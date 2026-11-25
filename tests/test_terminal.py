@@ -33,7 +33,8 @@ class TerminalTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.base = tempfile.mkdtemp(prefix="ask-test-")
-        cls.workdir = os.path.join(cls.base, "Arbeitsordner")
+        # Umlaut im Pfad und Einstellungen als UTF-8, genau wie die App sie schickt (JSON.stringify)
+        cls.workdir = os.path.join(cls.base, "Arbeitsordner Prüfung")
         cls.outside = os.path.join(cls.base, "ausserhalb")
         cls.runtime = os.path.join(cls.base, "laufzeit")
         os.makedirs(cls.workdir)
@@ -45,12 +46,12 @@ class TerminalTest(unittest.TestCase):
         cls.key = secrets.token_urlsafe(32)
         cls.port = free_port()
         cls.events = []
-        cls.proc = subprocess.Popen([sys.executable, "-E", "-s", "-B", LAUNCHER], stdin=subprocess.PIPE,
+        cls.proc = subprocess.Popen([sys.executable, "-E", "-s", "-B", "-X", "utf8", LAUNCHER], stdin=subprocess.PIPE,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         cfg = {"key": cls.key, "port": cls.port, "workdir": cls.workdir, "origin": ORIGIN,
                "runtime": cls.runtime, "system_prompt": "Testprompt für {ordner}",
                "execute_description": "Windows, cmd.exe"}
-        cls.proc.stdin.write((json.dumps(cfg) + "\n").encode())
+        cls.proc.stdin.write((json.dumps(cfg, ensure_ascii=False) + "\n").encode("utf-8"))
         cls.proc.stdin.flush()
         threading.Thread(target=cls._read_events, daemon=True).start()
         deadline = time.time() + 40

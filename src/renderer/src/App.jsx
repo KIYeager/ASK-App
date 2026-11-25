@@ -9,6 +9,32 @@ import { Turn } from './components/Chat.jsx';
 import { applyEvent, buildTurns, emptyChat, fromTranscript, lastTasks } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
 
+// Balken oben während eines Updates: Download, Countdown, «Jetzt neu starten», «Später» (ENTSCHEIDE E40)
+function UpdateBar({ u }) {
+  const st = u?.state || '';
+  if (!['lädt', 'neustart', 'geladen', 'installiert'].includes(st)) return null;
+  const name = `ASK ${u.version}${/-/.test(u.version) ? ' (Beta)' : ''}`;
+  let text = '';
+  let fill = null;
+  let now = true;
+  let later = false;
+  if (st === 'lädt') { text = `Update auf ${name} wird geladen … ${u.percent} %. Du kannst weiterarbeiten.`; fill = u.percent; now = false; }
+  else if (st === 'neustart') { text = `${name} ist geladen. ASK startet in ${u.countdown} s neu.`; fill = Math.round(((10 - u.countdown) / 10) * 100); later = true; }
+  else if (st === 'installiert') { text = `ASK schliesst sich und installiert ${name}. Gleich ist ASK wieder da.`; now = false; }
+  else if (u.postponed) text = `${name} ist geladen und installiert sich, wenn du ASK schliesst.`;
+  else text = `${name} ist geladen. ASK startet neu, sobald der Auftrag fertig ist.`;
+  return (
+    <div id="update-bar" className="update-bar" role="status">
+      <Icon name="down" size={15} />
+      <span id="update-bar-text" className="ell">{text}</span>
+      {fill !== null ? <span id="update-bar-track" className="update-track"><span id="update-bar-fill" style={{ width: `${fill}%` }} /></span> : null}
+      <span className="spacer" />
+      {now ? <button id="update-bar-now" type="button" className="btn small primary" onClick={() => api().updateAction()}>Jetzt neu starten</button> : null}
+      {later ? <button id="update-bar-later" type="button" className="btn small" onClick={() => api().updateLater()}>Später</button> : null}
+    </div>
+  );
+}
+
 function reducer(model, action) {
   if (action.type === 'load') return fromTranscript(action.items, action.running);
   if (action.type === 'events') return action.evs.reduce(applyEvent, model);
@@ -182,11 +208,22 @@ export default function App() {
       composer.current?.focus();
     })();
     return () => offs.forEach((off) => typeof off === 'function' && off());
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (running) { setRunStarted((t) => t || Date.now()); setAct('Denkt nach …'); } else setRunStarted(0);
   }, [running]);
+
+  // Ausführliche Ansicht aus den gespeicherten Einstellungen (einmal beim Start)
+  const prefsLoaded = useRef(false);
+  useEffect(() => {
+    if (!state?.prefs || prefsLoaded.current) return;
+    prefsLoaded.current = true;
+    setVerbose(!!state.prefs.verbose);
+  }, [state?.prefs]);
+
+  // Anderer Chat: eine wartende Nachricht kommt zurück ins Eingabefeld, statt im falschen Chat loszugehen
+  useEffect(() => { composer.current?.restoreQueued(); }, [chatId]);
 
   // Tabs: zuletzt geöffnete Chats dieser Sitzung
   useEffect(() => {
@@ -264,18 +301,37 @@ export default function App() {
     if (!stateRef.current?.sidebarOpen) api().setSidebar(true);
   }, [allFiles]);
 
-  const send = async (text, fileList) => {
+  const send = async (text, fileList, kept = []) => {
     runningRef.current = true;
     setRunning(true);
     setRunStarted(Date.now());
-    const res = await api().chatSend(text, fileList.map(({ name, type, data }) => ({ name, type, data })));
+    let res;
+    try {
+      res = await api().chatSend(text, fileList.map(({ name, type, data }) => ({ name, type, data })), kept);
+    } catch (err) {
+      res = { ok: false, reason: err?.message || String(err) };
+    }
     if (res && res.ok === false) {
       runningRef.current = false;
       setRunning(false);
-      dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] });
+      dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason || 'Senden fehlgeschlagen.' }] });
     }
     return res;
   };
+
+  // Letzte Eingabe zurücknehmen: ändern (zurück ins Eingabefeld) oder gleich neu senden (ENTSCHEIDE E36)
+  const editLast = async (resend) => {
+    if (runningRef.current) return;
+    const res = await api().chatRewind();
+    if (!res || res.cancelled) return;
+    if (!res.ok) { setDialog({ name: 'terminal', text: res.reason || 'Die Nachricht lässt sich nicht zurücknehmen.' }); return; }
+    await loadTranscript();
+    if (res.failed?.length) notice(`Nicht zurückgesetzt: ${res.failed.map((f) => baseName(f?.path || f)).join(', ')}`);
+    if (resend && !blocker) { await send(res.text || '', [], res.attachments || []); return; }
+    composer.current?.restore({ text: res.text || '', kept: res.attachments || [] });
+  };
+
+  const setVerboseSaved = (on) => { setVerbose(on); api().setPrefs?.({ verbose: on }); };
 
   const notice = (text) => dispatch({ type: 'events', evs: [{ type: 'notice', text }] });
 
@@ -323,6 +379,8 @@ export default function App() {
     { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api().setWebSearch(!state.webSearch); } },
     { cmd: '/chats', text: 'Frühere Chats für das Modell ein- oder ausschalten', run: () => api().setChatMemory(!state.chatMemory) },
     { cmd: '/einstellungen', text: 'Einstellungen: Darstellung, Rückfragen, Version', run: () => setDialog({ name: 'settings' }) },
+    { cmd: '/update', text: 'Nach einer neuen Version von ASK suchen', run: () => api().updateAction() },
+    { cmd: '/beta', text: 'Beta-Versionen erhalten ein- oder ausschalten', run: () => api().setBetaUpdates(!state.update?.beta, true) },
     { cmd: '/neustart', text: 'Terminal neu starten', run: () => api().restartTerminal() },
     { cmd: '/abmelden', text: 'Bei ASK abmelden', run: () => api().logout() },
   ];
@@ -333,12 +391,12 @@ export default function App() {
     const onKey = (e) => {
       const k = e.key.toLowerCase();
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 't') { e.preventDefault(); composer.current?.toggleTodo(); }
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'o') { e.preventDefault(); setVerbose((v) => !v); }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'o') { e.preventDefault(); setVerboseSaved(!verbose); }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'n') { e.preventDefault(); newChat(); }
       if (e.key === 'Escape') {
         if (dialog) { setDialog(null); return; }
         if (browserBig) { setBrowserBig(false); return; }
-        if (runningRef.current && !document.querySelector('.popover')) api().chatStop();
+        if (runningRef.current && !document.querySelector('.popover')) composer.current?.stop();
       }
     };
     document.addEventListener('keydown', onKey);
@@ -425,7 +483,8 @@ export default function App() {
   if (!state) return <div className="boot"><img src="./tf-mark.png" alt="" className="logo-mark" /> ASK startet …</div>;
 
   const ctx = {
-    verbose, running, activity,
+    verbose, running, activity, blocker,
+    editLast,
     isFile: (t) => !!findFile(t),
     openFile,
     openFileByName: (t) => { const f = findFile(t); if (f) openFile(f.path); },
@@ -473,6 +532,7 @@ export default function App() {
           onClick={() => api().setSidebar(!rightOpen)}><Icon name="panel" size={17} /></button>
       </header>
 
+      <UpdateBar u={state.update} />
       <main className="layout" style={{ gridTemplateColumns: cols.join(' ') }}>
         {leftOpen ? (
           <Sidebar groups={groups} chatId={chatId} running={running} query={query} setQuery={setQuery}
@@ -482,7 +542,8 @@ export default function App() {
             onNewProject={() => setDialog({ name: 'project' })} onProjectMenu={(folder) => api().projectMenu(folder)}
             onNewInProject={(folder) => newChat(folder)} state={state}
             onSettings={() => setDialog({ name: 'settings' })} onStatus={(name) => setDialog({ name })}
-            update={state.update} onUpdate={() => (state.update?.state === 'bereit' ? api().installUpdate() : state.update?.state === 'verfuegbar' ? api().downloadUpdate() : null)} />
+            update={state.update} onUpdate={() => api().updateAction()}
+            onRefresh={loadChats} />
         ) : <span />}
         {leftOpen ? <div className="resizer" data-panel="chatbar" role="separator" aria-orientation="vertical" tabIndex={0} aria-label="Breite der Projekte"
           title="Ziehen: Breite ändern · Doppelklick: Standardbreite" onPointerDown={startResize('chatbar')} onDoubleClick={resetWidth('chatbar')} onKeyDown={keyResize('chatbar')} /> : <span />}
@@ -524,11 +585,12 @@ export default function App() {
           {/* auch während der Anmeldung da (unter der Anmeldeseite), mit Hinweis im Platzhalter */}
           {(
             <Composer ref={composer} state={state} running={running} block={blocker} goal={state.chat?.goal} tasks={tasks} tasksLive={tasksLive}
+              context={state.chat?.context} todoCollapsed={state.prefs?.todoCollapsed ?? true}
               activity={(tasksLive && tasks?.find((t) => t.status === 'in_arbeit')?.titel) ? `${tasks.find((t) => t.status === 'in_arbeit').titel} · ${activity}` : activity}
               runStarted={runStarted} commands={commands} pendingQuestion={pendingQuestion} pendingApproval={pendingApproval}
               onSend={send} onStop={() => api().chatStop()} onAnswer={(id, t) => api().chatAnswer(id, t)} onGoal={handleGoal}
               onGoalClear={() => api().chatGoal('')} setModel={(id) => api().setModel(id)} setThinking={(l) => api().setThinking(l)}
-              setWeb={(on) => api().setWebSearch(on)} setMemory={(on) => api().setChatMemory(on)} notice={notice} />
+              setWeb={(on) => api().setWebSearch(on)} notice={notice} />
           )}
           {!turns.length && !needsLogin ? (
             // Leerer Chat: Eingabe in der Mitte, Vorschläge darunter (wie in Claude)
@@ -552,7 +614,7 @@ export default function App() {
         ) : <span />}
       </main>
 
-      <Dialogs state={state} dialog={dialog} setDialog={setDialog} selected={selected} startError={startError} />
+      <Dialogs state={state} dialog={dialog} setDialog={setDialog} selected={selected} startError={startError} onVerbose={setVerboseSaved} />
     </div>
   );
 }

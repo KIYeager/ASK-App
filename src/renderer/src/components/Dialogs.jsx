@@ -180,13 +180,12 @@ function GithubDialog({ onClose }) {
 }
 
 const UPDATE_TEXT = {
-  aus: 'Automatische Updates sind in dieser Version nicht eingerichtet.',
-  'bereit-zu-pruefen': 'Wird beim Start geprüft.',
-  pruefen: 'Sucht nach Updates …',
+  sucht: 'Sucht nach Updates …',
   aktuell: 'Du hast die neueste Version.',
-  laedt: 'Lädt das Update …',
-  bereit: 'Das Update ist bereit.',
-  verfuegbar: 'Eine neue Version ist verfügbar.',
+  verfügbar: 'Eine neue Version ist da.',
+  lädt: 'Das Update wird geladen …',
+  geladen: 'Das Update ist geladen.',
+  neustart: 'ASK startet gleich neu.',
   fehler: 'Prüfen nicht möglich.',
 };
 
@@ -200,7 +199,7 @@ function Segmented({ value, options, onChange, name }) {
   );
 }
 
-function SettingsDialog({ state, onClose, onGithub }) {
+function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal }) {
   const u = state.update || {};
   return (
     <Dialog id="dlg-settings" title="Einstellungen" onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Fertig</button>}>
@@ -229,11 +228,24 @@ function SettingsDialog({ state, onClose, onGithub }) {
         <button type="button" className="btn" onClick={onGithub}><Icon name="github" size={15} /> GitHub …</button>
       </div>
       <div className="setting">
+        <div><div className="s-title">Ansicht</div><div className="s-text">Gedanken und alle Details zeigen (Ctrl+O), Aufgabenliste nach dem Auftrag einklappen.</div></div>
+        <div className="checks">
+          <label className="check"><input type="checkbox" id="pref-verbose" checked={!!state.prefs?.verbose} onChange={(e) => onVerbose(e.target.checked)} /> Details</label>
+          <label className="check"><input type="checkbox" id="pref-todo" checked={state.prefs?.todoCollapsed ?? true} onChange={(e) => api().setPrefs({ todoCollapsed: e.target.checked })} /> Einklappen</label>
+        </div>
+      </div>
+      <div className="setting">
         <div><div className="s-title">Version {state.version}</div>
-          <div className="s-text">{UPDATE_TEXT[u.state] || ''}{u.state === 'fehler' && u.message ? ` ${u.message}` : ''}{u.available && ['laedt', 'bereit', 'verfuegbar'].includes(u.state) ? ` Neue Version: ${u.available}${u.state === 'laedt' ? ` (${u.progress || 0} %)` : ''}.` : ''}</div></div>
-        {u.state === 'bereit' ? <button type="button" className="btn primary" onClick={() => api().installUpdate()}>Neu starten und installieren</button>
-          : u.state === 'verfuegbar' ? <button type="button" className="btn primary" onClick={() => api().downloadUpdate()}>Herunterladen</button>
-          : u.state !== 'aus' ? <button type="button" className="btn" disabled={u.state === 'pruefen' || u.state === 'laedt'} onClick={() => api().checkUpdate()}>Jetzt prüfen</button> : null}
+          <div className="s-text">{UPDATE_TEXT[u.state] || (u.enabled ? '' : 'Updates gibt es nur in der installierten App.')}{u.state === 'fehler' && u.error ? ` ${u.error}` : ''}</div>
+          <label className="check small"><input type="checkbox" id="pref-beta" checked={!!u.beta} onChange={(e) => api().setBetaUpdates(e.target.checked, false)} /> Beta-Versionen erhalten</label></div>
+        {u.enabled ? <button type="button" id="settings-update" className="btn" onClick={() => api().updateAction()}>Nach Updates suchen</button> : null}
+      </div>
+      <div className="setting">
+        <div><div className="s-title">Mehr</div><div className="s-text">Meldungen des Terminals, Anmeldungen im Browser der App.</div></div>
+        <div className="checks">
+          <button type="button" className="btn small" onClick={onTerminal}>Terminal …</button>
+          <button type="button" className="btn small" onClick={() => api().browserClear()}>Browser-Anmeldungen löschen</button>
+        </div>
       </div>
     </Dialog>
   );
@@ -256,7 +268,7 @@ export function activeDialog(state, dialog) {
   return dialog?.name || null;
 }
 
-export default function Dialogs({ state, dialog, setDialog, selected, startError }) {
+export default function Dialogs({ state, dialog, setDialog, selected, startError, onVerbose }) {
   const name = activeDialog(state, dialog);
   if (!name) return null;
   const close = () => setDialog(null);
@@ -269,7 +281,8 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
       {name === 'ask' ? <AskDialog state={state} onClose={close} /> : null}
       {name === 'terminal' ? <TerminalDialog state={state} text={dialog.text} onClose={close} /> : null}
       {name === 'github' ? <GithubDialog onClose={close} /> : null}
-      {name === 'settings' ? <SettingsDialog state={state} onClose={close} onGithub={() => setDialog({ name: 'github' })} /> : null}
+      {name === 'settings' ? <SettingsDialog state={state} onClose={close} onGithub={() => setDialog({ name: 'github' })} onVerbose={onVerbose}
+        onTerminal={() => setDialog({ name: 'terminal' })} /> : null}
       {name === 'preview' ? <BigPreview entry={selected} onClose={close} /> : null}
     </div>
   );

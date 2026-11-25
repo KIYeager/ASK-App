@@ -3,7 +3,8 @@
 // Das Modell läuft mit Low Integrity und kann Office nicht selbst steuern. Es legt deshalb einen
 // Auftrag in .ask/auftraege/ ab; die App (normale Stufe) prüft die Datei und wandelt sie um.
 // Abgelehnt werden Dateien mit Makros, ActiveX, OLE-Objekten, externen Verweisen oder
-// verknüpften Feldern. Office öffnet die Datei schreibgeschützt mit deaktivierten Makros.
+// verknüpften Feldern: zuerst hier in der App (ooxml.js, liest das XML wirklich), danach nochmals
+// grob im PowerShell-Skript. Office öffnet die Datei schreibgeschützt mit deaktivierten Makros.
 // Office bekommt immer eine Kopie im Temp-Ordner: Hängt oder stürzt es ab, bleibt die Datei im
 // Arbeitsordner nicht gesperrt. Aus der Kopie wird ein Verweis auf eine externe Word-Vorlage
 // entfernt (sonst sucht Word sie im Netz, hängt oder schickt Anmeldedaten an fremde Rechner).
@@ -12,6 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const { checkOoxml } = require('./ooxml');
 
 const TIMEOUT_MS = 120000;
 const EXTENSIONS = new Set(['.docx', '.xlsx', '.pptx']);
@@ -145,24 +147,28 @@ function runConversion(source, target) {
 }
 
 // Office verliert manchmal die Verbindung (RPC_E_DISCONNECTED); dann einmal mit neuer Instanz versuchen.
-const DISCONNECTED = /RPC|getrennt|disconnected|0x80010108|0x800706BA|0x800706BE/i;
+const DISCONNECTED = /RPC_E_|RPC-Server|getrennt|disconnected|0x80010108|0x800706BA|0x800706BE/i;
 
 // Umwandlung einer Kopie im Temp-Ordner; das Original im Arbeitsordner öffnet Office nie.
 async function convertCopy(source, target) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `ask-pdf-${crypto.randomBytes(3).toString('hex')}-`));
   try {
     const copy = path.join(dir, path.basename(source));
-    fs.copyFileSync(source, copy);
+    // Geprüft wird genau der Inhalt, den Office danach öffnet (nicht die Datei im Ordner, die sich ändern kann)
+    const data = fs.readFileSync(source);
+    const rejected = checkOoxml(data);
+    if (rejected) return { fehler: rejected };
+    fs.writeFileSync(copy, data);
     let res = await runConversion(copy, target);
     if (res.fehler && DISCONNECTED.test(res.fehler)) {
-      fs.copyFileSync(source, copy);
+      fs.writeFileSync(copy, data);
       res = await runConversion(copy, target);
     }
     return res;
   } catch (err) {
     return { fehler: `Datei konnte nicht kopiert werden: ${err.message}` };
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); } catch { /* Office hält die Kopie noch: Windows räumt den Temp-Ordner auf */ }
   }
 }
 

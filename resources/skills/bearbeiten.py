@@ -55,12 +55,14 @@ def _word_absaetze(doc):
 
 def word_ersetzen(doc, alt, neu):
     """Ersetzt Text im ganzen Dokument und behält fett, kursiv, Farbe usw. Liefert die Anzahl Stellen."""
+    # Die Elemente selbst merken, nicht id(): python-docx legt die Hüllen laufend neu an, und Python
+    # vergibt die Adresse einer freigegebenen Hülle gleich wieder. Dann gälten andere Absätze als «gesehen».
     gesehen = set()
     anzahl = 0
     for p in _word_absaetze(doc):
-        if id(p._p) in gesehen:
+        if p._p in gesehen:
             continue
-        gesehen.add(id(p._p))
+        gesehen.add(p._p)
         if alt in p.text:
             anzahl += _ersetze_in_runs(p.runs, alt, neu)
     return anzahl

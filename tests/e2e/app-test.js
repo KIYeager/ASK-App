@@ -754,8 +754,9 @@ async function undoFlow(ctx, check, shell, shoot) {
       && [...document.querySelectorAll('.msg.notice')].some((n) => n.textContent.includes('Rückgängig gemacht: 2 Dateien')); })()`));
   const note = agent.chat.messages.find((m) => m.note === 'undo');
   check('Das Modell erfährt es im Verlauf', note?.role === 'user' && note.content.includes('rückgängig gemacht'), JSON.stringify(note));
-  const stands = fs.readdirSync(path.join(folder, '.ask', 'sicherung', 'staende')).length;
-  check('Sicherung in .ask/sicherung (ein Stand pro Auftrag, einer vor Rückgängig)', stands >= 3, String(stands));
+  const projectData = require('../../src/main/paths').projectDataDir(agent.getFolder());
+  const stands = fs.readdirSync(path.join(projectData, 'sicherung', 'staende')).length;
+  check('Sicherung ausserhalb des Arbeitsordners (ein Stand pro Auftrag, einer vor Rückgängig)', stands >= 3 && !fs.existsSync(path.join(folder, '.ask', 'sicherung')), String(stands));
 }
 
 // GitHub: verbinden über /github, Projekt anlegen, hochladen, holen (gegen den Nachbau in mock-github.js)
@@ -789,7 +790,7 @@ async function githubFlow(ctx, check, shell, shoot) {
   const readme = await onGitHub('ausgabe/bericht.txt');
   check('Projekt auf GitHub angelegt und hochgeladen', readme.text === fs.readFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'utf8'), JSON.stringify(readme));
   check('.ask nicht hochgeladen', (await onGitHub('.ask/tasks.json')).text === null);
-  check('Ordner mit dem Repository verbunden', JSON.parse(fs.readFileSync(path.join(folder, '.ask', 'github.json'), 'utf8')).repo === 'lea-test/testprojekt');
+  check('Ordner mit dem Repository verbunden', JSON.parse(fs.readFileSync(path.join(require('../../src/main/paths').projectDataDir(agent.getFolder()), 'github.json'), 'utf8')).repo === 'lea-test/testprojekt');
 
   fs.writeFileSync(path.join(folder, 'ausgabe', 'bericht.txt'), 'Inhalt des Berichts, ergänzt');
   process.env.ASK_TEST_REMEMBER = '1'; // Häkchen «Für dieses Repository nicht mehr fragen»

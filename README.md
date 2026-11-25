@@ -4,7 +4,7 @@ ASK Desktop ist eine Windows-App für die Lernenden der TF Bern. Sie ist eine ei
 
 Technisch meldet man sich einmal auf der ASK-Seite an (auch über das Microsoft-Konto); danach liest die App das Login-Token und spricht das Modell direkt über die Schnittstelle von ASK an (`/api/chat/completions`, gestreamt, mit Werkzeugliste). Die Werkzeuge führt die App selbst aus, über [open-terminal](https://github.com/open-webui/open-terminal), das lokal auf `127.0.0.1` mit niedriger Integritätsstufe läuft. ASK sieht nur Text; der ASK-Server erreicht den Laptop nie, und ASK braucht keine Freigabe für Tool-Server (ENTSCHEIDE E19).
 
-Weitere Dokumente: [Machbarkeit](docs/MACHBARKEIT.md), [Entscheide](docs/ENTSCHEIDE.md), [Testprotokoll](docs/TESTPROTOKOLL.md).
+Neue Version veröffentlichen: siehe [unten](#neue-version-veröffentlichen). Weitere Dokumente: [Machbarkeit](docs/MACHBARKEIT.md), [Entscheide](docs/ENTSCHEIDE.md), [Testprotokoll](docs/TESTPROTOKOLL.md).
 
 ## Aufbau
 
@@ -52,19 +52,112 @@ npm run dist
 npm run dist:portable
 ```
 
-`npm start` baut die Oberfläche mit Vite (`npm run build:ui`, nach `src/renderer/dist`) und startet die App aus den Quellen. `npm run dist` baut den Installer `ASK-Setup-<Version>.exe` im Unterordner `dist` des Build-Ordners, `npm run dist:portable` die einzelne EXE `ASK-<Version>.exe` ohne Installation. Nur das Python neu bauen: `npm run build:python`. Icon und Startbild entstehen mit `scripts/make-icon.py`.
+`npm start` baut die Oberfläche mit Vite (`npm run build:ui`, nach `src/renderer/dist`) und startet die App aus den Quellen. `npm run dist` baut den Installer `ASK-Setup-<Version>.exe` im Unterordner `dist` des Build-Ordners, `npm run dist:portable` die einzelne EXE `ASK-<Version>.exe` ohne Installation. Nur das Python neu bauen: `npm run build:python`; `npm run dist` packt es danach mit `scripts/pack-python.js` in `python-pack\python.zip` (ENTSCHEIDE E39). Icon und Startbild entstehen mit `scripts/make-icon.py`.
 
 Oberfläche entwickeln: `npm run dev:ui` öffnet sie im Browser mit Beispieldaten (`src/renderer/src/dev/mockApi.js`, ohne Electron, mit einem vorgespielten Auftrag samt Frage und Rückfrage). In der App mit Neuladen bei jeder Änderung: `npm run dev:ui` und in einem zweiten Fenster `$env:ASK_DEV_UI = "http://localhost:5173"; npx electron .`.
 
-Updates: Mit `"updateUrl": "https://…"` in `resources/app-config.json` erzeugt `npm run dist` zusätzlich `latest.yml`. Diese Datei und `ASK-Setup-<Version>.exe` (bzw. `ASK-<Version>.exe`) auf diesen Server legen; die installierte App lädt neue Versionen im Hintergrund und bietet «Neu starten» an, die einzelne EXE zeigt einen Hinweis mit Link (ENTSCHEIDE E34). Ohne `updateUrl` ist die Prüfung aus.
+Tests: siehe [Testprotokoll](docs/TESTPROTOKOLL.md), Abschnitt «Tests wiederholen». Bei jedem Pull Request laufen auf GitHub (`.github/workflows/ci.yml`) ESLint und die Unit-Tests auf Linux, Ruff und die Python-Tests ohne Windows, und auf Windows die Tests des Terminals (in einem Ordner mit Umlaut) und der Skills. Lokal: `npm run lint`, `npm test`.
 
-Tests: siehe [Testprotokoll](docs/TESTPROTOKOLL.md), Abschnitt «Tests wiederholen».
+Lokal bauen braucht es nur noch zum Ausprobieren. Veröffentlichte Versionen baut GitHub (nächster Abschnitt).
+
+## Neue Version veröffentlichen
+
+Neue Versionen baut GitHub, nicht der eigene Rechner. Normalerweise entsteht eine neue Version beim Merge eines Pull Requests; dazu wählt man mit einem Label, ob es eine Beta, eine Version für alle oder keine neue Version wird. GitHub baut auf einem Windows-Rechner Installer und EXE und stellt sie in das öffentliche Repository [KIYeager/ASK-Releases](https://github.com/KIYeager/ASK-Releases). Alle installierten Apps bieten das Update danach von selbst an (ENTSCHEIDE E37, E38). Der Code in ASK-App bleibt privat; ASK-Releases enthält nur die fertigen Dateien, und die App holt sie ohne Token.
+
+### Einmal einrichten
+
+Nur vor dem allerersten Release nötig.
+
+1. **Release-Repository anlegen.** Auf GitHub «New repository», Owner `KIYeager`, Name `ASK-Releases`, **Public**, Häkchen bei «Add a README file» (ein leeres Repository nimmt keine Releases an). Danach den Inhalt von [docs/ASK-Releases-README.md](docs/ASK-Releases-README.md) als README einfügen: Er erklärt den Lernenden, was sie herunterladen sollen.
+2. **Token anlegen.** GitHub, Profilbild, Settings, Developer settings, Personal access tokens, Fine-grained tokens, «Generate new token»:
+   - Resource owner: `KIYeager`
+   - Repository access: «Only select repositories», nur `ASK-Releases`
+   - Permissions, Repository permissions: «Contents: Read and write»
+   - Expiration: nach Wunsch. Läuft das Token ab, scheitert das nächste Release beim Veröffentlichen, dann ein neues anlegen und Schritt 3 wiederholen.
+3. **Token in ASK-App eintragen.** Im Repository ASK-App: Settings, Secrets and variables, Actions, «New repository secret». Name `RELEASES_TOKEN`, Wert das Token aus Schritt 2.
+4. **Workflows dürfen schreiben.** Im Repository ASK-App: Settings, Actions, General, ganz unten «Workflow permissions»: «Read and write permissions» wählen und speichern. Beim Merge macht der Workflow den Commit «Version …» und den Tag auf `main`. Ist `main` geschützt (Settings, Branches oder Rules), dort «GitHub Actions» als Ausnahme erlauben, sonst scheitert der Schritt «Version setzen».
+5. **Optional: Merge erst mit gewählter Release-Art.** In einer Regel für `main` (Settings, Rules oder Branches) die Prüfung «Release-Art gewählt» als erforderlich eintragen. Ohne das ist sie nur rot, ein Merge geht trotzdem.
+
+### Vom Pull Request zur neuen Version
+
+1. **PR öffnen** nach `main`, wie gewohnt. Die Vorlage erinnert an die Wahl.
+2. **Release-Art wählen:** rechts beim PR unter «Labels» genau eines setzen:
+
+   | Label | Beim Merge |
+   |---|---|
+   | `beta` | Beta-Version, nur für «Beta-Versionen erhalten» |
+   | `release` | neue Version für alle |
+   | `kein-release` | keine neue Version (z. B. nur Doku oder Tests) |
+
+   Die Prüfung «Release-Art gewählt» bleibt rot, bis genau eines gesetzt ist. Ist sie grün, steht in ihren Details, welche Version beim Merge entsteht («Beim Merge wird daraus ASK 0.2.1-beta.1»).
+3. **Versionsnummer:** Ohne Angabe zählt sie automatisch hoch:
+
+   | Aktuell | `beta` | `release` |
+   |---|---|---|
+   | `0.2.0` | `0.2.1-beta.1` | `0.2.1` |
+   | `0.2.1-beta.1` | `0.2.1-beta.2` | `0.2.1` |
+
+   Eigene Nummer, zum Beispiel für neue Funktionen: im PR-Text eine eigene Zeile `Version: 0.3.0`. Mit `release` wird daraus `0.3.0`, mit `beta` `0.3.0-beta.1` (bzw. die nächste Beta von `0.3.0`). Eine volle Beta-Nummer wie `Version: 0.3.0-beta.4` gilt so, wie sie ist. Die Nummer muss grösser sein als die aktuelle, sonst ist die Prüfung rot.
+4. **Text im Update-Dialog:** der Titel des PRs. Eigener Text für die Lernenden: im PR-Text eine Zeile `Release-Text: Die Seitenleiste lässt sich jetzt breiter ziehen`.
+5. **Mergen.** Der Workflow «Release» setzt die Version in `package.json`, macht den Commit «Version 0.2.1» und den Tag `v0.2.1` auf `main` und baut dann rund 15 bis 20 Minuten (Reiter «Actions»): npm-Pakete, Lint und Tests, Python, Installer, einzelne EXE, Veröffentlichen.
+6. **Prüfen.** In [ASK-Releases, Releases](https://github.com/KIYeager/ASK-Releases/releases) steht «ASK 0.2.1» mit sechs Dateien: `ASK-Setup-0.2.1.exe`, `ASK-Setup-0.2.1.exe.blockmap`, `latest.yml`, `ASK-0.2.1.exe` und mit festem Namen `ASK-Setup.exe` und `ASK.exe`; eine Vollversion mit «Latest», eine Beta mit «Pre-release». Installierte Apps fragen spätestens 6 Stunden später oder beim nächsten Start; sofort geht es mit «Nach Updates suchen» in den Einstellungen.
+
+Erstellt ein KI-Agent den PR (Claude Code, Codex, Copilot), fragt er nach der Release-Art und setzt das Label selbst; die Regel dafür steht in [AGENTS.md](AGENTS.md).
+
+Nach dem Merge liegt auf `main` ein Commit «Version …» mehr. Vor der nächsten Arbeit darum `git pull`.
+
+Jedes Release braucht rund 30 bis 40 der 2000 Gratis-Minuten von GitHub Actions pro Monat (Windows-Rechner zählen bei privaten Repositories doppelt).
+
+### Ohne Pull Request, von Hand
+
+Für den Fall, dass man direkt auf `main` arbeitet oder eine Version neu bauen will. Im Projektordner, auf `main`, alles committet:
+
+```powershell
+npm run release -- 0.3.0 "Was ist neu"
+```
+
+Für eine Beta `0.3.0-beta.1`. Das Skript (`scripts/release.js`) prüft, dass alles committet und die Version grösser ist, setzt sie in `package.json` und `package-lock.json`, macht Commit und Tag mit dem Text und lädt beides hoch; dann baut der Workflow wie oben. Dafür braucht es nur Node und Git, kein `npm install`.
+
+### Beta-Versionen
+
+Eine Beta erscheint in ASK-Releases als «Pre-release». Angeboten bekommt sie nur, wer «Beta-Versionen erhalten» eingeschaltet hat (Einstellungen, Ordner-Menü oder `/beta`). Alle anderen sehen sie nicht, und der Link für die Lernenden zeigt weiter auf die letzte Vollversion. Weitere PRs mit `beta` zählen hoch (`0.2.1-beta.2`); der nächste PR mit `release` macht daraus `0.2.1` für alle, auch für die Beta-Tester.
+
+### Wenn etwas schiefgeht
+
+Im Reiter «Actions» den roten Lauf öffnen; der Schritt mit dem roten Kreuz nennt den Grund.
+
+| Meldung oder Lage | Abhilfe |
+|---|---|
+| «Secret RELEASES_TOKEN fehlt» | Einmal einrichten, Schritt 3. Danach im Lauf oben rechts «Re-run jobs». |
+| Fehler beim Veröffentlichen mit `401` oder `Bad credentials` | Token abgelaufen oder ohne Recht auf ASK-Releases: neues Token (Schritt 2), Secret ersetzen (Schritt 3), «Re-run jobs». |
+| «Tag … passt nicht zu package.json» | Der Tag wurde von Hand gesetzt. Immer per PR-Label oder `npm run release`. |
+| Prüfung «Release-Art gewählt» rot | Genau eines der Labels `beta`, `release`, `kein-release` setzen; bei einer Zeile `Version:` im PR die Meldung in den Details lesen. |
+| Schritt «Version setzen» scheitert mit `403` oder «protected branch» | Einmal einrichten, Schritt 4. Danach den Lauf mit «Re-run jobs» wiederholen. |
+| PR gemergt, aber kein Lauf «Release» | Kein Label `beta` oder `release` gesetzt. Nachholen von Hand: `npm run release` auf `main`. |
+| Fehler beim Herunterladen (npm, Python, NuGet) | Meist vorübergehend: einmal «Re-run jobs». |
+| Tests oder Build scheitern wegen des Codes | Fehler beheben und als neuer PR mit Label mergen; daraus entsteht die nächste Nummer. Die gescheiterte Version wird nie veröffentlicht; ihr Tag kann bleiben. |
+| Release in ASK-Releases ist halb da (Dateien fehlen) | Das Release in ASK-Releases löschen («Delete»), dann «Re-run jobs». |
+| Eine veröffentlichte Version hat einen Fehler | Nicht löschen, sondern schnell eine korrigierte Version nachschieben (`0.2.1`). Apps gehen nie auf eine ältere Version zurück. |
+
+`npm run release` meldet selbst, wenn noch Änderungen nicht committet sind, die Version nicht grösser ist oder es den Tag schon gibt; dann wurde nichts verändert.
+
+### Ort der Releases ändern
+
+`updates` in `resources/app-config.json` anpassen (gilt für App und Build) und im Workflow `.github/workflows/release.yml` das `--repo` ändern. Bereits installierte Apps suchen am alten Ort weiter, bis sie eine Version mit der neuen Angabe haben; die letzte Version am alten Ort muss also schon die neue Angabe enthalten.
 
 ## Installation
 
-`ASK-Setup-<Version>.exe` ausführen. Die Installation läuft pro Nutzer nach `%LOCALAPPDATA%\Programs\ask-desktop`, ohne Admin-Rechte und ohne weitere Fragen, und legt Verknüpfungen im Startmenü und auf dem Desktop an. Python, Bibliotheken und Anleitungen sind dabei; die Lernenden müssen nichts installieren. Deinstallieren über Einstellungen, Apps. Einstellungen bleiben in `%APPDATA%\ASK`, Laufzeitdaten in `%LOCALAPPDATA%\ASK-Desktop`.
+Für die Lernenden gibt es einen festen Link, der immer auf die neueste Version zeigt:
+
+https://github.com/KIYeager/ASK-Releases/releases/latest/download/ASK-Setup.exe
+
+`ASK-Setup.exe` ausführen. Die Installation läuft pro Nutzer nach `%LOCALAPPDATA%\Programs\ask-desktop`, ohne Admin-Rechte und ohne weitere Fragen, und legt Verknüpfungen im Startmenü und auf dem Desktop an. Python, Bibliotheken und Anleitungen sind dabei; die Lernenden müssen nichts installieren. Python liegt in der App als ein einziges Archiv; beim ersten Start entpackt ASK es nach `%LOCALAPPDATA%\ASK-Desktop\python\<Fassung>` (unten in der Statuszeile «Python wird eingerichtet (einmalig) … 40 %», je nach Laptop und Virenscanner einige Minuten). Danach startet ASK direkt, und ein Update entpackt Python nur neu, wenn sich Python selbst geändert hat (ENTSCHEIDE E39). Fehlt die Verknüpfung im Startmenü, legt ASK sie beim Start wieder an. Deinstallieren über Einstellungen, Apps; das entpackte Python wird dabei entfernt. Einstellungen bleiben in `%APPDATA%\ASK`, Laufzeitdaten in `%LOCALAPPDATA%\ASK-Desktop`.
 
 Ohne Installation: `ASK-<Version>.exe` irgendwo ablegen und doppelklicken. Beim ersten Start entpackt die EXE die App einmal nach `%LOCALAPPDATA%\ASK-Desktop\app\<Version>-<Build>` (Startbild «ASK wird gestartet …»), danach startet sie die App direkt von dort. Eine neuere EXE entpackt sich beim ersten Start neu, die App löscht dann den älteren Stand. Es gibt keine Verknüpfungen und keinen Eintrag unter «Apps». Einstellungen und Laufzeitdaten liegen am gleichen Ort wie bei der installierten App. Installierte App und EXE laufen nicht gleichzeitig.
+
+**Updates.** Die installierte App sucht 20 Sekunden nach dem Start und danach alle 6 Stunden in ASK-Releases nach einer neueren Version. Gibt es eine, fragt sie einmal «ASK 0.2.0 ist da. Jetzt aktualisieren?» und zeigt den Text des Releases. Nach «Jetzt aktualisieren» lädt sie das Update im Hintergrund; ein Balken oben in der App und die Taskleiste zeigen den Fortschritt, man kann weiterarbeiten. Ist es geladen, zählt der Balken 10 Sekunden herunter, dann schliesst sich ASK, ein kleines Fenster zeigt das Installieren (ohne Admin-Rechte), und ASK startet von selbst wieder; «Jetzt neu starten» wartet nicht, «Später» installiert erst beim Schliessen von ASK. Während das Modell arbeitet, fragt und startet sie nie, sondern erst danach (ENTSCHEIDE E40). Chats, Ordner und Einstellungen bleiben. Bei «Später» in der Frage fragt sie bis zum nächsten Start nicht mehr von selbst, unten steht aber «Update 0.2.0» zum Anklicken. Von Hand: «Nach Updates suchen» in den Einstellungen oder im Ordner-Menü, `/update` oder der Eintrag unten. Ohne Internet bleibt die Suche still.
+
+Die einzelne EXE kann sich nicht selbst ersetzen. Sie sucht genauso, meldet eine neue Version aber nur mit «Download öffnen» (Seite des Releases); die neue `ASK.exe` entpackt sich beim ersten Start und räumt den alten Stand weg.
 
 Installer und EXE sind nicht signiert. Windows SmartScreen kann deshalb beim ersten Start warnen («Weitere Informationen», «Trotzdem ausführen»).
 
@@ -72,29 +165,35 @@ Installer und EXE sind nicht signiert. Windows SmartScreen kann deshalb beim ers
 
 Beim ersten Start erscheint ein Hinweis in einfachem Deutsch (das Modell kann im Ordner ändern und löschen, darum nur mit Kopien arbeiten, Inhalte gehen an ASK). Danach legt man das erste Projekt an: Name eingeben, die App erstellt `%USERPROFILE%\ASK-Projekte\<Name>`; oder man öffnet einen vorhandenen Ordner als Projekt. Ist man nicht bei ASK angemeldet, zeigt die App die Anmeldeseite von ASK. Solange sie prüft, ob man angemeldet ist, steht dort «Verbinde mit ASK …» bzw. «Anmeldung wird geprüft …»; die Oberfläche von Open WebUI ist nie zu sehen.
 
-**Aufbau.** Links die Projekte mit ihren Chats, in der Mitte der Chat, rechts Dateien, Vorschau und Browser (ENTSCHEIDE E35). Oben das TF-Zeichen, Reiter für die zuletzt geöffneten Chats und die Knöpfe zum Ein- und Ausblenden der beiden Seiten. Ein leerer Chat zeigt das Eingabefeld in der Mitte mit kurzen Vorschlägen; sobald der Chat beginnt, steht es unten. Hell und Dunkel folgen Windows oder der Wahl in den Einstellungen.
+**Aufbau.** Links die Projekte mit ihren Chats, in der Mitte der Chat, rechts Dateien, Vorschau und Browser (ENTSCHEIDE E42). Oben das TF-Zeichen, Reiter für die zuletzt geöffneten Chats und die Knöpfe zum Ein- und Ausblenden der beiden Seiten. Ein leerer Chat zeigt das Eingabefeld in der Mitte mit kurzen Vorschlägen; sobald der Chat beginnt, steht es unten. Hell und Dunkel folgen Windows oder der Wahl in den Einstellungen.
 
-**Projekte.** Ein Projekt ist ein Arbeitsordner mit Namen und Farbe (ENTSCHEIDE E36). Ein Klick auf einen Chat öffnet ihn; liegt er in einem anderen Projekt, wechselt die App dorthin (das Terminal startet neu). «+» neben dem Projekt beginnt dort einen neuen Chat, «…» oder Rechtsklick öffnet das Menü des Projekts (Umbenennen, Farbe, im Explorer öffnen, Projektnotizen, GitHub, aus der Liste entfernen; der Ordner bleibt). Rechtsklick auf einen Chat löscht ihn nach Rückfrage. Während das Modell arbeitet, lässt sich das Projekt nicht wechseln. Ältere Einstellungen mit der Liste der zuletzt verwendeten Ordner werden beim ersten Start zu Projekten.
+**Projekte.** Ein Projekt ist ein Arbeitsordner mit Namen und Farbe (ENTSCHEIDE E43). Ein Klick auf einen Chat öffnet ihn; liegt er in einem anderen Projekt, wechselt die App dorthin (das Terminal startet neu). «+» neben dem Projekt beginnt dort einen neuen Chat, «…» oder Rechtsklick öffnet das Menü des Projekts (Umbenennen, Farbe, im Explorer öffnen, Projektnotizen, GitHub, aus der Liste entfernen; der Ordner bleibt). «…» an einem Chat (oder Rechtsklick) öffnet sein Menü: Umbenennen, Anheften (angeheftete Chats stehen oben), Löschen. Die Suche findet Titel und ab zwei Zeichen auch Inhalte der Chats aller Projekte («Im Inhalt gefunden»). Während das Modell arbeitet, lässt sich das Projekt nicht wechseln. Ältere Einstellungen mit der Liste der zuletzt verwendeten Ordner werden beim ersten Start zu Projekten.
 
-**Eingabe.** Enter sendet, Shift+Enter macht eine neue Zeile, Pfeil nach oben holt die letzte Eingabe, Esc stoppt das Modell, Ctrl+N beginnt einen neuen Chat. Im Eingabefeld: Büroklammer (Anhänge), «Web» (ASK sucht vor der ersten Antwort im Web, nur wenn ASK es für das Konto freigibt; die Quellen stehen unter der Antwort), der Denkaufwand und rechts die Modellwahl. Mit `/` öffnen sich Befehle: `/neu`, `/projekt`, `/goal`, `/suchen`, `/ordner`, `/explorer`, `/dateien`, `/github`, `/modell`, `/denken`, `/web`, `/chats`, `/einstellungen`, `/neustart` (Terminal), `/abmelden`. Unten links stehen Konto und Verbindung; fehlt etwas (nicht angemeldet, Terminal läuft nicht), steht es dort, ein Klick zeigt Details. Das Zahnrad öffnet die Einstellungen: Darstellung, Rückfrage vor heiklen Schritten, frühere Chats, ASK-Konto, GitHub, Version und Updates.
+**Eingabe.** Enter sendet, Shift+Enter macht eine neue Zeile, Pfeil nach oben holt die letzte Eingabe, Ctrl+N beginnt einen neuen Chat. Während das Modell arbeitet, reiht Enter eine Folgenachricht ein, die nach dem Auftrag hinausgeht (ENTSCHEIDE E34); Esc oder ■ stoppt, die wartende Nachricht kommt dann zurück ins Eingabefeld. Rechts im Eingabefeld zeigt ein Ring, wie voll das Kontextfenster ist (ab 80 % gelb; E36). Im Eingabefeld: Büroklammer (Anhänge), «Web» (ASK sucht vor der ersten Antwort im Web, nur wenn ASK es für das Konto freigibt; die Quellen stehen unter der Antwort), der Denkaufwand und rechts die Modellwahl. Mit `/` öffnen sich Befehle: `/neu`, `/projekt`, `/goal`, `/suchen`, `/ordner`, `/explorer`, `/dateien`, `/github`, `/modell`, `/denken`, `/web`, `/chats`, `/einstellungen`, `/neustart` (Terminal), `/abmelden`. Unten links stehen Konto und Verbindung; fehlt etwas (nicht angemeldet, Terminal läuft nicht), steht es dort, ein Klick zeigt Details. Das Zahnrad öffnet die Einstellungen: Darstellung, Rückfrage vor heiklen Schritten, frühere Chats, ASK-Konto, GitHub, Version und Updates. Während ein Update lädt oder bereit ist, steht oben ein Balken mit Fortschritt bzw. Countdown (ENTSCHEIDE E40).
 
 **Chat.** Die Eingabe steht als Sprechblase rechts. Die Arbeitsschritte eines Auftrags stehen in einer Karte («4 Arbeitsschritte»): pro Werkzeug eine Zeile mit Symbol, Aufruf und Kurzresultat («84 Zeilen gelesen», «+10 −4 Zeilen», erste Fehlerzeile in Rot); ein Klick zeigt ganzen Befehl, Ausgabe oder Diff. Mehrere Lese- und Suchschritte hintereinander stehen in einer Zeile («2 Dateien gelesen, 1 Ordner angesehen»). Während der Arbeit ist die Karte offen; ist der Auftrag fertig und hat er vier oder mehr Schritte, klappt sie zu, sichtbar bleiben Antwort, Hinweise, Quellen und Änderungen. Die Schlussantwort steht darunter als Markdown; Dateinamen des Projekts sind hervorgehoben (Klick öffnet die Vorschau). «Kopieren» und die Zeile «4 Schritte · 9’840 Token · 140 Token/s · Modell 70.4 s» erscheinen beim Darüberfahren; der Tooltip zeigt die Werte pro Schritt. Liefert ASK keine Tokenzahlen, schätzt die App sie und schreibt «≈» davor. Die Gedanken des Modells sind ausgeblendet; Ctrl+O zeigt Gedanken und alle Details. Die Chats eines Projekts liegen in `.ask/chats`.
 
-**Fragen von ASK.** Fehlt dem Modell eine Entscheidung oder Angabe, fragt es mit dem Werkzeug `frage_stellen` (ENTSCHEIDE E37). Die Frage erscheint als Karte im Chat, mit Antworten zum Anklicken und einem Feld für eine eigene Antwort; auch eine Eingabe im normalen Eingabefeld gilt als Antwort. Das Modell wartet und arbeitet danach weiter. Stoppen beendet die Frage ohne Antwort.
+**Fragen von ASK.** Fehlt dem Modell eine Entscheidung oder Angabe, fragt es mit dem Werkzeug `frage_stellen` (ENTSCHEIDE E44). Die Frage erscheint als Karte im Chat, mit Antworten zum Anklicken und einem Feld für eine eigene Antwort; auch eine Eingabe im normalen Eingabefeld gilt als Antwort. Das Modell wartet und arbeitet danach weiter. Stoppen beendet die Frage ohne Antwort.
 
-**Rückfrage vor heiklen Schritten.** Vor dem Löschen (`del`, `rd`, `rmdir`, `Remove-Item`, `os.remove` usw.), vor dem Überschreiben einer vorhandenen Datei, die das Modell nicht im selben Auftrag erstellt hat, und vor Befehlen mit Pfaden ausserhalb des Projekts hält das Modell an (ENTSCHEIDE E33). Im Chat steht, was es tun will: «Erlauben», «Immer in diesem Chat» (für diese Art Schritt) oder «Ablehnen». Abgelehnt erfährt das Modell es und macht ohne den Schritt weiter. In den Einstellungen: nie fragen, heikle Schritte (Standard) oder immer (vor jedem Befehl und jeder Änderung). Ist die App im Hintergrund, blinkt sie in der Taskleiste. Was ein Python-Skript intern löscht, erkennt die App nicht; dafür bleibt «Rückgängig».
+**Rückfrage vor heiklen Schritten.** Vor dem Löschen (`del`, `rd`, `rmdir`, `Remove-Item`, `os.remove` usw.), vor dem Überschreiben einer vorhandenen Datei, die das Modell nicht im selben Auftrag erstellt hat, und vor Befehlen mit Pfaden ausserhalb des Projekts hält das Modell an (ENTSCHEIDE E41). Im Chat steht, was es tun will: «Erlauben», «Immer in diesem Chat» (für diese Art Schritt) oder «Ablehnen». Abgelehnt erfährt das Modell es und macht ohne den Schritt weiter. In den Einstellungen: nie fragen, heikle Schritte (Standard) oder immer (vor jedem Befehl und jeder Änderung). Ist die App im Hintergrund, blinkt sie in der Taskleiste. Was ein Python-Skript intern löscht, erkennt die App nicht; dafür bleibt «Rückgängig».
 
 Im Eingabefeld öffnet «✻ Standard» den Regler für den Denkaufwand, wie «Reasoning Effort» in ASK: Standard (das Modell entscheidet), Tief, Mittel, Hoch, Maximal. Die App schickt `reasoning_effort` (low, medium, high), ab Hoch zusätzlich den Qwen-Schalter `/think` und `chat_template_kwargs`/`think`; lehnt ASK einen Parameter ab, lässt sie ihn weg.
 
 Mit `/goal <Ziel>` setzt man ein Ziel für den Chat (Leiste «◎ Ziel» über der Eingabe). Das Modell arbeitet dann, bis es das Ziel mit dem Werkzeug `goal_done` als erreicht meldet; hört es vorher auf (etwa nach «Los geht's:»), stösst die App es an («↻ Weiter am Ziel»). Antwortet es zweimal hintereinander ohne Arbeitsschritt, wartet es offenbar auf die Person, und die App hält an. `/goal` zeigt das Ziel, `/goal aus` hebt es auf.
 
+**Eingabe ändern oder neu senden.** An der letzten Eingabe eines Chats stehen beim Darüberfahren «Bearbeiten» und «Neu senden». Beides nimmt die Eingabe und alles danach aus dem Chat; hat der Auftrag Dateien geändert, fragt die App, ob der Ordner auf den Stand davor zurückgehen soll (bei Nein bleibt alles, wie es ist). Der Text steht danach wieder im Eingabefeld, die Anhänge bleiben dabei.
+
+**Einstellungen.** Das Zahnrad unten links (oder `/einstellungen`) öffnet die Einstellungen: Darstellung, Rückfrage vor heiklen Schritten, frühere Chats, ASK-Konto, GitHub, Details immer zeigen, Aufgabenliste eingeklappt lassen, Version mit «Nach Updates suchen» und «Beta-Versionen erhalten», Terminal und Anmeldungen im Browser löschen.
+
+**Tastatur.** Alles Anklickbare (Chats, Dateien, Arbeitsschritte, Befehle) ist mit Tab erreichbar und mit Enter oder Leertaste auslösbar. Dialoge halten den Fokus, Esc schliesst sie, und danach steht der Fokus wieder dort, wo er war.
+
 **Anhänge.** Bilder, Bildschirmfotos und Dokumente fügt man mit Ctrl+V ein, zieht sie ins Fenster oder wählt sie mit der Büroklammer im Eingabefeld (höchstens 10, je bis 50 MB). Vor dem Senden stehen sie als Kacheln über der Eingabe und lassen sich mit × entfernen. Die App legt sie versteckt unter `.ask/anhaenge/<Chat>/` ab (eingefügte Bildschirmfotos als `bild-<Datum>-<Zeit>.png`, gleiche Namen als «name (2).ext») und nennt dem Modell die Pfade; sie verschwinden mit dem Chat oder nach 14 Tagen. Was das Modell daraus macht (ein bearbeitetes Dokument, ein Bild im Bericht), speichert es im Arbeitsordner. Bilder schickt sie zusätzlich direkt mit, wie die ASK-Webseite, aus den letzten zwei Eingaben mit Bildern, grosse Bilder verkleinert auf 2048 Pixel. Meldet ASK, dass das Modell keine Bilder versteht, oder lehnt es sie ab, gehen nur die Pfade mit (ENTSCHEIDE E23).
 
 **GitHub.** Mit `/github` (oder in den Einstellungen bzw. im Menü des Projekts «GitHub …») trägt man einmal ein persönliches Token mit dem Recht «repo» ein; die App speichert es verschlüsselt, das Modell sieht es nie. Danach kann man sagen «leg das Projekt auf GitHub an», «hol das Projekt lea/website von GitHub» oder «lad die Änderungen hoch». Das Modell holt mit `github_clone`/`github_pull`, lädt mit `github_push` hoch und legt mit `github_create` ein neues, privates Repository an. Hochladen und Anlegen bestätigt man in einem Dialog; beim Hochladen schaltet das Häkchen «Für dieses Repository nicht mehr fragen» die Rückfrage für dieses Repository ab (im `/github`-Dialog «wieder fragen»). `.ask` wird nie hochgeladen. Wurde eine Datei hier und auf GitHub geändert, überschreibt die App nichts und meldet einen Konflikt (ENTSCHEIDE E22).
 
-Ein Auftrag läuft, bis das Modell fertig ist. Ein Schleifenschutz hält es an, wenn es dreimal hintereinander genau denselben Schritt macht oder acht Werkzeugaufrufe hintereinander scheitern (Notbremse nach 500 Schritten). Befehle, die Programme mit Fenster starten (Word, Excel, PowerPoint, Explorer, Editor, Browser, `start`), lehnt die App ab: sie sperren Dateien und warten auf Eingaben.
+Ein Auftrag läuft, bis das Modell fertig ist. Ein Schleifenschutz hält es an, wenn es dreimal hintereinander genau denselben Schritt macht oder acht Werkzeugaufrufe hintereinander scheitern (Notbremse nach 500 Schritten). Befehle, die Programme mit Fenster starten (Word, Excel, PowerPoint, Explorer, Editor, Browser, `start`, auch hinter `cmd /c` oder `call`), lehnt die App ab: sie sperren Dateien und warten auf Eingaben. Wird der Verlauf für das Modell zu lang, schickt die App ältere Arbeitsschritte gekürzt mit (der gespeicherte Chat bleibt vollständig) und sagt es im Chat. Hinweise, Fehler und eine gestoppte Antwort bleiben im Chat stehen, auch nach dem Wiederöffnen.
 
-**Dateien und Vorschau.** Rechts zeigt der Reiter «Dateien» den Ordner des Projekts als Baum, live. Was der letzte Auftrag angelegt oder geändert hat, ist mit «neu» bzw. «geändert» markiert, gelöschte Dateien stehen durchgestrichen darunter. Ein Klick zeigt die Datei im Reiter «Vorschau» (Text, Bilder, PDF; Office-Dateien öffnen, im Explorer zeigen oder mit dem installierten Office als PDF anzeigen), ⤢ vergrössert sie. Doppelklick öffnet Dokumente, Bilder und Text im zugehörigen Programm; Programme und Skripte (`.bat`, `.exe`, `.lnk` …) zeigt die App nur im Explorer, damit sie nicht ausserhalb der Sperre starten.
+**Dateien und Vorschau.** Rechts zeigt der Reiter «Dateien» den Ordner des Projekts als Baum, live. Was der letzte Auftrag angelegt oder geändert hat, ist mit «neu» bzw. «geändert» markiert, gelöschte Dateien stehen durchgestrichen darunter. Ein Klick zeigt die Datei im Reiter «Vorschau» (Text, Bilder, PDF; Office-Dateien öffnen, im Explorer zeigen oder mit dem installierten Office als PDF anzeigen), ⤢ vergrössert sie. Doppelklick öffnet Dokumente, Bilder und Text im zugehörigen Programm; Programme, Skripte und unbekannte Dateiarten (`.bat`, `.exe`, `.lnk` …) öffnet sie nur nach einer Rückfrage, denn sie liefen ausserhalb der Sperre (ENTSCHEIDE E33).
 
 **Internet.** Das Modell sucht selbst im Internet, so oft es nötig ist (ENTSCHEIDE E26): `web_search` über die Websuche von ASK (dieselbe Suchmaschine wie auf der Webseite; ist sie nicht freigegeben oder scheitert sie, über DuckDuckGo) mit bis zu 8 Treffern, `web_fetch` holt eine Seite als lesbaren Text ohne HTML (12’000 Zeichen pro Aufruf, PDF wird gespeichert und mit `read_file` gelesen). Adressen im lokalen Netz und auf dem Laptop sind gesperrt. Die gelesenen Seiten stehen als Quellen unter der Antwort. Der Schalter «Web» lässt ASK zusätzlich vor der ersten Antwort suchen.
 
@@ -110,11 +209,11 @@ Anmelden macht die Person selbst im Browser-Bereich; das Modell gibt keine Passw
 
 **Ansehen und testen.** Das Modell sieht, was es erstellt (ENTSCHEIDE E25). `view_file` zeigt ihm Bilder, PDF, Word, Excel und PowerPoint als Bild (Seiten bzw. Folien, Standard die ersten 3, höchstens 6; Office-Dateien wandelt die App dafür mit Office in PDF um). Die Bilder stehen als Vorschau in der Werkzeugzeile (Klick: gross) und liegen in `.ask/arbeit/<Chat>/ansicht/`. Versteht das Modell laut ASK keine Bilder, gibt es `view_file` nicht, und `browser` liefert nur Text.
 
-**Arbeiten im Ordner.** Das Modell legt neue Dateien dort an, wo sie ins Projekt passen, und ändert vorhandene Dateien direkt, ohne Kopien wie `_V2` (ENTSCHEIDE E24). Vor jedem Auftrag sichert die App den Stand des Ordners. Unter einem Auftrag, der Dateien geändert hat, steht «Dateien: 2 neu, 1 geändert» mit den Namen und dem Knopf «Rückgängig» (beim letzten solchen Auftrag); er setzt den Ordner nach einer Rückfrage auf den Stand vor dem Auftrag zurück, löscht neu angelegte Dateien und sagt es dem Modell. Gesichert wird jede Dateifassung nur einmal; Dateien über 100 MB und `.git`, `node_modules` werden nicht gesichert.
+**Arbeiten im Ordner.** Das Modell legt neue Dateien dort an, wo sie ins Projekt passen, und ändert vorhandene Dateien direkt, ohne Kopien wie `_V2` (ENTSCHEIDE E24). Vor jedem Auftrag sichert die App den Stand des Ordners. Unter einem Auftrag, der Dateien geändert hat, steht «Dateien: 2 neu, 1 geändert» mit den Namen und dem Knopf «Rückgängig» (beim letzten solchen Auftrag); er setzt den Ordner nach einer Rückfrage auf den Stand vor dem Auftrag zurück, löscht neu angelegte Dateien und sagt es dem Modell. Gesichert wird jede Dateifassung nur einmal; Dateien über 100 MB und `.git`, `node_modules` werden nicht gesichert. Die Sicherung liegt nicht im Arbeitsordner, sondern unter `%LOCALAPPDATA%\ASK-Desktop\projekte\<Kennung>\sicherung`, wo das Modell sie nicht ändern kann (ENTSCHEIDE E33).
 
 **Projektnotizen.** `.ask/projekt.md` ist wie `CLAUDE.md` in Claude Code: Die App gibt die Datei jedem Chat im Ordner mit, und das Modell hält darin kurz fest, was spätere Chats wissen müssen (Aufbau, wichtige Dateien, Vorlagen, Wünsche). Im Menü des Projekts öffnet «Projektnotizen bearbeiten» sie im Editor.
 
-Im Arbeitsordner legt die App nur `.ask/` an. Dort liegen die Anleitungen (`skills/`), die Aufgabenliste, die Chats (`chats/`), die Projektnotizen, die Hilfsskripte des Modells (`skripte/<Chat>/`), seine Zwischendateien (`arbeit/<Chat>/`) und die Anhänge (`anhaenge/<Chat>/`), damit der Arbeitsordner aufgeräumt bleibt; diese drei verschwinden mit dem Chat und werden nach 14 Tagen automatisch gelöscht. Die Sicherung für «Rückgängig» liegt in `sicherung/` und wird ebenfalls nach 14 Tagen gelöscht. `.ask` ist versteckt (Windows-Attribut wie bei `.git`) und erscheint im Explorer nur mit «Ausgeblendete Elemente», umgewandelte PDFs (`pdf/`) und Aufträge an die App.
+Im Arbeitsordner legt die App nur `.ask/` an. Dort liegen die Anleitungen (`skills/`), die Aufgabenliste, die Chats (`chats/`), die Projektnotizen, die Hilfsskripte des Modells (`skripte/<Chat>/`), seine Zwischendateien (`arbeit/<Chat>/`) und die Anhänge (`anhaenge/<Chat>/`), damit der Arbeitsordner aufgeräumt bleibt; diese drei verschwinden mit dem Chat und werden nach 14 Tagen automatisch gelöscht. Die Sicherung für «Rückgängig» und die Verbindung mit GitHub liegen ausserhalb des Ordners (siehe oben); die Sicherung wird ebenfalls nach 14 Tagen gelöscht. `.ask` ist versteckt (Windows-Attribut wie bei `.git`) und erscheint im Explorer nur mit «Ausgeblendete Elemente», umgewandelte PDFs (`pdf/`) und Aufträge an die App.
 
 Scrollt man im Chat nach oben, bleibt die Ansicht dort, auch während das Modell arbeitet; «↓ nach unten» oder Scrollen bis ans Ende lässt sie dem Text wieder folgen. Projekte, deren Ordner es nicht mehr gibt, sind durchgestrichen mit «Ordner nicht gefunden»; im Menü des Projekts lassen sie sich aus der Liste entfernen.
 
@@ -124,15 +223,16 @@ Tastenkürzel: Ctrl+Plus/Minus/0 zoomt die Oberfläche, Ctrl+R lädt die Anmelde
 
 ## Bekannte Grenzen
 
-- **Lesen ausserhalb des Ordners.** Windows verhindert Schreiben und Löschen ausserhalb des Arbeitsordners (Low Integrity Level). Lesen kann das Modell über die Shell aber alle Dateien, die der Nutzer lesen darf, und es hat Internetzugang. Die Datei-API von open-terminal ist zusätzlich auf den Ordner gesperrt. Siehe MACHBARKEIT, Abschnitt 5.
-- **Originale im Ordner.** Das Modell ändert Dateien direkt; Windows schützt sie nicht (ENTSCHEIDE E14). Schutz bieten die Rückfrage vor Löschen und Überschreiben (E33, erkennt nur, was im Befehl selbst steht) und die Sicherung mit «Rückgängig» (E24). Sie gilt 14 Tage, nur für den letzten Auftrag mit Änderungen und nicht für Dateien über 100 MB, `.git` und Ordner mit mehr als 5000 Dateien. Fürs Rückgängigmachen müssen betroffene Dateien in Word, Excel oder PowerPoint geschlossen sein.
+- **Lesen ausserhalb des Ordners.** Windows verhindert Schreiben und Löschen ausserhalb des Arbeitsordners (Low Integrity Level). Genauer: ausserhalb aller Ordner, die je Arbeitsordner waren. Die Kennzeichnung bleibt an einem Ordner, auch wenn er aus der Liste entfernt wird; das Modell kann also aus Projekt B über die Shell auch in Projekt A schreiben, und dort gibt es dafür keine Sicherung. Lesen kann das Modell über die Shell aber alle Dateien, die der Nutzer lesen darf, und es hat Internetzugang. Die Datei-API von open-terminal ist zusätzlich auf den Ordner gesperrt. Siehe MACHBARKEIT, Abschnitt 5.
+- **Originale im Ordner.** Das Modell ändert Dateien direkt; Windows schützt sie nicht (ENTSCHEIDE E14). Schutz bieten die Rückfrage vor Löschen und Überschreiben (E41, erkennt nur, was im Befehl selbst steht) und die Sicherung mit «Rückgängig» (E24). Sie gilt 14 Tage, nur für den letzten Auftrag mit Änderungen und nicht für Dateien über 100 MB, `.git` und Ordner mit mehr als 5000 Dateien. Fürs Rückgängigmachen müssen betroffene Dateien in Word, Excel oder PowerPoint geschlossen sein.
 - **Werkzeuge unter Low.** Windows PowerShell 5.1 und die Unix-Werkzeuge von Git for Windows starten im Terminal nicht. Das Modell arbeitet mit `cmd.exe` und Python. Office lässt sich nur über die App umwandeln, nicht direkt steuern.
 - **Ordner auf FAT/exFAT-USB-Sticks** oder Netzlaufwerken werden abgelehnt, weil sie sich nicht schützen lassen.
 - **Abhängigkeit von ASK.** Die App braucht nur, was auch die ASK-Webseite braucht: Anmeldung und Zugriff auf ein Modell. Ob ASK die Werkzeugliste (`tools`) an das Modell weitergibt, ist mit dem echten ASK noch nicht geprüft. Lehnt ASK sie ab oder schreibt das Modell Aufrufe als `<tool_call>` in den Text, wechselt die App von selbst in einen Textmodus und beschreibt die Werkzeuge im Systemprompt.
-- **Websuche einmal pro Auftrag.** ASK sucht vor der ersten Antwort; das Modell kann während der Arbeit nicht selbst nochmals suchen. Ob die Websuche über die Schnittstelle bei eurem ASK genauso läuft wie im Browser, ist noch nicht geprüft.
+- **Schalter «Web» sucht einmal pro Auftrag.** Mit dem Schalter sucht ASK vor der ersten Antwort. Während der Arbeit sucht das Modell selbst mit `web_search` (siehe «Internet»).
 - **Werkzeuge und Wissen aus ASK** (die Werkzeuge und Wissenssammlungen, die einem Modell in ASK zugeordnet sind) stehen in der App nicht zur Verfügung, ausser Flux für Bilder.
 - **Flux nicht mit dem echten ASK geprüft.** Beim Bau war Flux nur im Beta-Arbeitsbereich verfügbar. Wie ASK das Bild über die Schnittstelle zurückgibt, ist deshalb nicht geprüft; die App sucht an allen üblichen Stellen (E31). Kommt kein Bild, sagt die App, was ASK stattdessen geantwortet hat, und legt die Antwort unter `.ask/arbeit/<Chat>/flux-….json` ab. Während der Anfrage steht kurz ein Chat «ASK Desktop: Bild» im ASK-Verlauf.
 - **GitHub ohne Git.** Der Abgleich läuft über die Schnittstelle von GitHub, nicht mit Git: kein Zusammenführen innerhalb einer Datei, keine Branches ausser dem Standard-Branch, keine Git-Historie im Ordner. Ist ein Ordner schon ein Git-Repository, bleibt `.git` unberührt. Mit dem echten GitHub ist der Abgleich noch nicht getestet, nur mit einem Nachbau der Schnittstelle.
+- **Kontextanzeige.** Nennt ASK weder Tokenzahlen noch die Grösse des Kontextfensters, ist die Anzeige eine Schätzung aus der Textlänge ohne Prozentangabe.
 - **Chats nicht in ASK.** Die Chats liegen nur im Arbeitsordner (`.ask/chats`), nicht im Verlauf von ASK.
 - **Ausgabe von Windows-Programmen.** Programme wie `ping` schreiben in der OEM-Codepage; das Terminal wandelt solche Zeilen um. Gemischte Zeilen können einzelne falsche Zeichen enthalten.
 - **Office-Umwandlung** braucht ein installiertes Microsoft Office. Office bekommt immer eine Kopie im Temp-Ordner, nie die Datei im Arbeitsordner; aus der Kopie wird ein Verweis auf eine externe Word-Vorlage entfernt, Inhaltsverzeichnisse werden vor dem Export aktualisiert, und bei einem Verbindungsabbruch versucht die App es einmal neu. Scheitert die Umwandlung, meldet `pruefen.py --pdf` Exitcode 2 und sagt ausdrücklich, dass Seitenzahl und Inhaltsverzeichnis nicht geprüft sind. Ein Office-Fenster, das die Person gerade offen hat, wird nicht geschlossen; eine hängende unsichtbare Office-Instanz wird nach 2 Minuten beendet.
@@ -153,8 +253,8 @@ Grundsatzfragen, die nur die Schule bzw. du entscheiden können:
 Technische Weiterentwicklungen:
 
 - Mit dem echten ASK und Qwen testen: Werkzeugaufrufe über die Schnittstelle, Qualität der Arbeitsschritte, Anweisungen und Skills nachschärfen (`resources/anweisungen/systemprompt.md` ist bewusst kurz).
-- Rückfrage vor heiklen Befehlen (Löschen), falls die Anweisung im Systemprompt nicht reicht.
 - Stärkere Isolation mit AppContainer, damit auch Lesen auf den Ordner beschränkt ist.
-- Update-Server einrichten (`updateUrl` in `resources/app-config.json`, ENTSCHEIDE E34) und die Installer dort ablegen; am besten mit Code-Signatur.
+- Die Kennzeichnung «Low» von einem Ordner wieder entfernen, wenn er aus der Liste genommen wird.
+- `pip install` in einer virtuellen Umgebung (`.venv`) scheitert im Terminal an `PIP_USER=1`; ohne `.venv` geht es.
 - Die Bildmarke der Technischen Fachschule Bern steht ohne Wortmarke im Kopf der App. Das CD Manual (1.1.3) verbietet das; mit der Schule klären oder durch das ganze Logo ersetzen.
 - Vorschau für Office-Dateien direkt beim Anklicken, sobald klar ist, dass Office auf allen Laptops vorhanden ist.

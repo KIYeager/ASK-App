@@ -5,10 +5,10 @@ const crypto = require('node:crypto');
 const net = require('node:net');
 const http = require('node:http');
 const { EventEmitter } = require('node:events');
-const NativeLowBackend = require('./backend/native-low');
 
 const PORT_MIN = 20000;
 const PORT_MAX = 39999;
+const HEALTH_MISSES = 3; // so viele Proben hintereinander ohne Antwort, bevor das Terminal als ausgefallen gilt
 
 function isPortFree(port) {
   return new Promise((resolve) => {
@@ -45,11 +45,17 @@ function getJson(port, path, key, timeout = 3000) {
 }
 
 class Terminal extends EventEmitter {
-  constructor() {
+  // backend: nur für Tests; sonst das Terminal mit Low Integrity
+  constructor(backend = null) {
     super();
-    this.backend = new NativeLowBackend();
+    this.backend = backend || new (require('./backend/native-low'))();
+    this.queue = Promise.resolve(); // Starten und Stoppen laufen streng nacheinander
+    this.misses = 0;
+    this.unhealthy = false;
     this.state = 'gestoppt'; // gestoppt | startet | läuft | fehler
     this.error = '';
+    this.detail = ''; // Zwischenstand beim Starten, z. B. «Python wird eingerichtet … 40 %»
+    this.prepare = null; // async (report) => {}: vor jedem Start, z. B. Python entpacken (ENTSCHEIDE E39)
     this.port = 0;
     this.key = '';
     this.folder = '';
@@ -66,11 +72,12 @@ class Terminal extends EventEmitter {
   setState(state, error = '') {
     this.state = state;
     this.error = error;
+    if (state !== 'startet') this.detail = '';
     this.emit('state', this.snapshot());
   }
 
   snapshot() {
-    return { state: this.state, error: this.error, port: this.port, url: this.url(), folder: this.folder,
+    return { state: this.state, error: this.error, detail: this.detail, port: this.port, url: this.url(), folder: this.folder,
       lowIntegrity: this.info?.low_integrity ?? null };
   }
 
@@ -80,20 +87,36 @@ class Terminal extends EventEmitter {
   }
 
   // options: { folder, preferredPort, origin, systemPrompt, executeDescription }
-  // Starts nacheinander: Zwei gleichzeitige Aufrufe (Doppelklick, Adresse und Neustart) liessen sonst
-  // einen verwaisten Python-Prozess zurück.
+  // Mehrere Aufrufe kurz hintereinander (Doppelklick auf «Neu starten», zwei Ordnerwechsel) laufen
+  // nacheinander, und nur der letzte startet wirklich: Sonst bleibt ein Terminal übrig, von dem die App
+  // nichts mehr weiss, oder das Terminal läuft in einem anderen Ordner, als die App anzeigt.
   start(options) {
-    this.queue = (this.queue || Promise.resolve()).then(() => this.startNow(options), () => this.startNow(options));
-    return this.queue;
+    const generation = ++this.generation;
+    clearInterval(this.healthTimer);
+    const run = this.queue.then(() => this.startNow(options, generation));
+    this.queue = run.catch(() => {});
+    return run;
   }
 
-  async startNow(options) {
-    await this.stop();
-    const generation = ++this.generation;
+  async startNow(options, generation) {
+    if (generation !== this.generation) return;
+    await this.backend.stop();
+    if (generation !== this.generation) return;
     this.folder = options.folder;
     this.info = null;
+    this.misses = 0;
+    this.unhealthy = false;
     this.setState('startet');
     try {
+      if (this.prepare) {
+        await this.prepare((detail) => {
+          if (generation !== this.generation) return;
+          this.detail = detail || '';
+          this.emit('state', this.snapshot());
+        });
+        if (generation !== this.generation) return;
+        this.detail = '';
+      }
       this.port = await choosePort(options.preferredPort);
       this.key = crypto.randomBytes(32).toString('base64url');
       this.emit('port', this.port);
@@ -111,6 +134,7 @@ class Terminal extends EventEmitter {
       if (generation !== this.generation) return;
       this.log(`Start fehlgeschlagen: ${err.message}`);
       await this.backend.stop();
+      if (generation !== this.generation) return;
       this.setState('fehler', this.error || err.message);
     }
   }
@@ -126,6 +150,7 @@ class Terminal extends EventEmitter {
     }
     if (ev.event === 'exit' || ev.event === 'process-exit') {
       clearInterval(this.healthTimer);
+      this.unhealthy = false;
       if (this.state === 'läuft' || this.state === 'startet') {
         this.setState('fehler', this.error || 'Das Terminal wurde unerwartet beendet.');
       }
@@ -139,50 +164,50 @@ class Terminal extends EventEmitter {
       if (this.state === 'fehler') throw new Error(this.error);
       if (!this.backend.running()) throw new Error(this.error || 'Das Terminal hat sich beim Start beendet.');
       try {
-        const info = await getJson(this.port, '/ask/info', this.key, 1500);
-        if (generation !== this.generation) return; // inzwischen neu gestartet oder gestoppt
-        this.info = info;
-        this.healthFails = 0;
-        this.setState('läuft');
-        clearInterval(this.healthTimer);
-        this.healthTimer = setInterval(() => this.checkHealth(generation), 10000);
-        return;
+        this.info = await getJson(this.port, '/ask/info', this.key, 1500);
       } catch {
         await new Promise((r) => setTimeout(r, 400));
+        continue;
       }
+      if (generation !== this.generation) return;
+      // Der Starter bricht ab, wenn er das Terminal nicht schützen kann; die App prüft es trotzdem selbst.
+      if (this.info.low_integrity !== true) throw new Error('Das Terminal läuft nicht mit niedriger Integritätsstufe und wurde darum nicht freigegeben.');
+      this.setState('läuft');
+      this.healthTimer = setInterval(() => this.checkHealth(generation), 10000);
+      return;
     }
     throw new Error('Das Terminal antwortet nicht.');
   }
 
-  // Erst nach drei verpassten Antworten in Folge gilt das Terminal als ausgefallen (es kann mit einer
-  // grossen Umwandlung beschäftigt sein); antwortet es wieder, läuft es wieder.
+  // Eine einzelne verpasste Probe (Laptop war kurz im Ruhezustand, ein Befehl lastet den Rechner aus) ist kein
+  // Ausfall. Antwortet das Terminal später wieder, gilt es wieder als laufend, ohne dass die Person neu starten muss.
   async checkHealth(generation) {
-    if (generation !== this.generation) return;
-    if (this.state !== 'läuft' && !(this.state === 'fehler' && this.healthDown)) return;
+    if (generation !== this.generation || (this.state !== 'läuft' && !this.unhealthy)) return;
     try {
-      await getJson(this.port, '/health', null, 5000);
+      await getJson(this.port, '/health', null, 3000);
       if (generation !== this.generation) return;
-      this.healthFails = 0;
-      if (this.state === 'fehler' && this.healthDown && this.backend.running()) {
-        this.healthDown = false;
+      this.misses = 0;
+      if (this.unhealthy && this.backend.running()) {
+        this.unhealthy = false;
         this.setState('läuft');
       }
     } catch {
       if (generation !== this.generation || this.state !== 'läuft') return;
-      this.healthFails = (this.healthFails || 0) + 1;
-      if (this.healthFails >= 3) {
-        this.healthDown = true;
+      if (++this.misses >= HEALTH_MISSES) {
+        this.unhealthy = true;
         this.setState('fehler', 'Das Terminal antwortet nicht mehr.');
       }
     }
   }
 
   async stop() {
-    this.generation++;
-    this.healthDown = false;
+    const generation = ++this.generation;
     clearInterval(this.healthTimer);
-    await this.backend.stop();
-    if (this.state !== 'gestoppt') this.setState('gestoppt');
+    this.unhealthy = false;
+    const run = this.queue.then(() => this.backend.stop());
+    this.queue = run.catch(() => {});
+    await run;
+    if (generation === this.generation && this.state !== 'gestoppt') this.setState('gestoppt');
   }
 }
 

@@ -19,6 +19,7 @@ const defaults = {
   thinking: 'standard',
   approvals: 'heikel', // Rückfrage vor heiklen Schritten: aus | heikel | alle (approvals.js)
   theme: 'system', // system | hell | dunkel
+  betaUpdates: false,
 };
 
 // Farben der Projekte in der Seitenleiste (TF Blau zuerst, danach Sekundärfarben des CD)

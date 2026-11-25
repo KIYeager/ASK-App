@@ -60,9 +60,17 @@ Liste im Systemprompt ohne den laufenden Chat, neueste zuerst; Verlauf als Text 
 
 Gegen ein nachgebautes ASK: Argumente für Flux nur, wenn gesetzt und gültig (Format und Qualität aus der Liste, Anzahl höchstens 4, beim Bearbeiten `bearbeiten` und keine Referenzen); Bildtyp an den ersten Bytes; Bilder in Antworten finden (Dateien vom Typ Bild mit Adresse oder nur id, `/api/v1/files/…` mit und ohne `/content`, `/cache/image/…`, eingebettete Bilder, HTML-kodierte Werkzeugergebnisse; Links auf andere Server nur als Ausweichlösung, Wikipedia-Bilder nie, ASK-Pfade auf fremden Servern nie mit Anmeldung); Dateinamen (neu unter `bilder/` ohne Überschreiben, nummeriert, gewünschter Pfad, Vorlage ersetzen, bei anderem Format daneben, Anhang nach `bilder/`, Pfad ausserhalb abgelehnt, bevor Flux gefragt wird); Flux-Werkzeug in der Liste finden, ohne oder bei verweigertem Zugriff nicht; Ablauf wie die Webseite (vorübergehender Chat, Antwort im Hintergrund, Bild als Datei im Chat, Fortschritt, Chat danach gelöscht); gestreamter Link in kleinen Stücken, ohne Chat, Vorlage als Bild in der Nachricht, dasselbe Bild unter zwei Adressen nur einmal; kein Bild: Fehler mit der Antwort von ASK und abgelegter Antwort; zurückgegebener statt ausgeführter Aufruf; von ASK abgelehnt; ohne Flux; Stopp hält auch die Aufgabe in ASK an.
 
-### Neue Oberfläche, Rückfragen, Fragen, Updates (`tests/chatmodel.test.js`, `tests/approvals.test.js`, `tests/agent.test.js`, `tests/updater.test.js`, `tests/haertung.test.js`, 26 Tests)
+### Mitgeliefertes Python als Archiv (`tests/python.test.js`, 9 Tests)
 
-Datenmodell des Chats (Live und gespeichert ergeben dasselbe, Gruppen von Leseschritten, Fragen und Rückfragen in der Karte, Rückgängig, Statistik, Markdown maskiert). Erkennung heikler Befehle (Löschen in cmd, PowerShell und Python, Pfade ausserhalb, Überschreiben, Stufen). Arbeitsschleife: abgelehnter Löschbefehl wird nicht ausgeführt, «Immer in diesem Chat», Stopp während der Rückfrage, `frage_stellen` mit Antwort und mit Stopp. Updates: Versionsvergleich, `latest.yml`, einzelne EXE mit Hinweis, installierte App mit electron-updater (nachgebaut). Härtungen: lokale Adressen in anderen Schreibweisen, Pfade von GitHub, Gerätenamen von Windows.
+Entpacken beim ersten Mal über `<id>.neu` mit Fortschritt (0 bis 100), schon entpackt ohne `tar`, ältere Fassungen und abgebrochene Entpackungen werden entfernt, zwei Starts gleichzeitig entpacken einmal, halb entpackter Ordner ohne `.fertig` wird ersetzt, `tar` scheitert oder `python.exe` fehlt (nichts bleibt liegen), fehlendes Archiv mit verständlicher Meldung, Fassung nur aus Build-Skript und `requirements.txt`, Zählen der Einträge. Zusätzlich von Hand mit dem echten bsdtar auf Linux: Packen mit `scripts/pack-python.js` und Entpacken mit `src/main/python.js` (303 Dateien, Umlaut im Namen, Fortschritt, zweiter Start ohne Entpacken). Nicht getestet: `tar.exe` von Windows, Dauer mit Virenscanner auf einem Schullaptop.
+
+### Updates und Release (`tests/updater.test.js`, 17 Tests)
+
+Mit nachgebautem electron-updater und nachgebauter Uhr: ohne Paket oder ohne Release-Repository aus; neue Version: eine Frage, Download, 10 s Countdown, Installieren mit Fortschrittsfenster nach dem Beenden des Terminals; «Jetzt neu starten» ohne Countdown; «Später» bei der Frage fragt nicht von selbst nochmals, ein Klick schon; «Später» im Balken startet nicht neu, auch nicht nach einem Auftrag; während das Modell arbeitet keine Frage und kein Neustart, ein Auftrag im Countdown hält ihn an, danach beginnt er neu; einzelne EXE nur mit Link, ohne Download; Beta-Schalter setzt `allowPrerelease`; Fehler beim automatischen Prüfen still, beim Klick gemeldet; Release-Text ohne HTML und gekürzt; einzelne EXE am Ordner erkennen; Versionen und Reihenfolge für `npm run release` (Beta vor der normalen Version); nächste Version beim Merge mit `beta` und `release`, mit und ohne eigene Nummer, abgelehnte Nummern; Zeilen `Version:` und `Release-Text:` aus dem PR-Text, die PR-Vorlage selbst gibt keine. Nicht getestet: der Workflow auf GitHub und ein echtes Update (siehe Teil 2, E).
+
+### Neue Oberfläche, Rückfragen, Fragen (`tests/chatmodel.test.js`, `tests/approvals.test.js`, `tests/rueckfrage.test.js`, `tests/haertung.test.js`)
+
+Datenmodell des Chats (Live und gespeichert ergeben dasselbe, Gruppen von Leseschritten, Fragen und Rückfragen in der Karte, Rückgängig, Statistik, Markdown maskiert). Erkennung heikler Befehle (Löschen in cmd, PowerShell und Python, Pfade ausserhalb, Überschreiben, Stufen). Arbeitsschleife: abgelehnter Löschbefehl wird nicht ausgeführt, «Immer in diesem Chat», Stopp während der Rückfrage, `frage_stellen` mit Antwort und mit Stopp. Härtungen: lokale Adressen in anderen Schreibweisen, Pfade von GitHub, Gerätenamen von Windows.
 
 Die Oberfläche selbst wurde unter Linux im Browser mit der Attrappe (`npm run dev:ui`) und in Electron unter Xvfb gegen den Nachbau von ASK geprüft (lädt, Projekte übernommen, angemeldet; das Terminal läuft nur unter Windows). Der End-to-End-Test ist an die neue Oberfläche angepasst, aber noch nicht unter Windows gelaufen.
 
@@ -107,8 +115,9 @@ Echtes ASK (Version, Freigaben, Anmeldung über Microsoft-Konto in der App), ech
 
 ```
 $env:ASK_BUILD_DIR = Get-Content .ask-build-dir   # von scripts\setup.ps1 geschrieben
+npm run lint
 npm test
-& "$env:ASK_BUILD_DIR\python\python.exe" -m unittest tests\test_terminal.py tests\test_skills.py
+& "$env:ASK_BUILD_DIR\python\python.exe" -m unittest tests\test_terminal.py tests\test_skills.py tests\test_streams.py
 npm run test:e2e
 node tests\e2e\packaged-test.js "$env:ASK_BUILD_DIR\dist\win-unpacked\ASK.exe" "$env:USERPROFILE\ASK-Test"
 node tests\e2e\portable-test.js "$env:ASK_BUILD_DIR\dist\ASK-0.1.0.exe" "$env:USERPROFILE\ASK-Test"
@@ -167,4 +176,26 @@ Erst möglich, wenn Flux in ASK für dein Konto läuft (beim Bau nur im Beta-Arb
 3. Ein eigenes Foto anhängen: «Mach daraus ein Comic.» Erwartet: Ergebnis unter `bilder/`, das Foto im Anhang bleibt.
 4. Kommt kein Bild, steht im Chat «ASK hat kein Bild zurückgegeben …» oder «ASK hat Flux nicht selbst ausgeführt …» mit einem Pfad `.ask/arbeit/<Chat>/flux-….json`. Diese Datei und die Meldung bitte schicken: Daran sieht man, wie ASK das Bild zurückgibt.
 
-Bitte zurückmelden: ASK-Version, ob A4 bis A6 wie beschrieben liefen (vor allem, ob Werkzeugzeilen erscheinen), für B1 bis B3 das Ergebnis und wie viele Rückfragen oder Fehlversuche das Modell brauchte, Auffälligkeiten bei C und für D die Meldung bzw. die Datei aus D4.
+### E. Updates
+
+Erst möglich, wenn ASK-Releases, das Secret und die Schreibrechte der Workflows eingerichtet sind (README, «Neue Version veröffentlichen», Einmal einrichten). Stand 25.11.2026: v0.2.1 ist so entstanden (PR mit Label `release`); Installer und `latest.yml` sind geprüft (Grösse und SHA-512 stimmen, `app-update.yml` zeigt auf ASK-Releases).
+
+
+Durchgeführt am 25.11.2026 auf Windows 11 (Laptop des Entwicklers):
+
+| Update | Ergebnis |
+|---|---|
+| 0.2.1 → 0.2.2 | Klappte, dauerte aber über 3 Minuten ohne Anzeige (still, 12'000 Dateien); ein Klick auf die Verknüpfung in dieser Zeit bot an, sie zu löschen (E39). |
+| 0.2.2 → 0.2.3-beta.2 | Klappte; noch einmal langsam und still, weil 0.2.2 den alten Ablauf ausführt; danach einmal «Python wird eingerichtet». Download nur unten in der Statuszeile sichtbar (E40). |
+| 0.2.3-beta.2 → 0.2.3 | Klappte, «einigermassen schnell», mit Fortschrittsfenster des Installers; kein erneutes Entpacken von Python. |
+| 0.2.3 → 0.2.4 | Erster Test mit Balken oben und Countdown (E40). |
+
+1. Den Link `…/releases/latest/download/ASK-Setup.exe` aus dem README öffnen und installieren. Erwartet: In den Einstellungen steht die aktuelle Version (z. B. «Version 0.2.1»).
+2. Einen PR mit Label `release` mergen. Erwartet: Die Prüfung «Release-Art gewählt» nennt vorher die neue Version; nach dem Merge läuft im Reiter «Actions» «Release» durch (Jobs «version» und «release»), in ASK-Releases steht die neue Version als Latest mit sechs Dateien, auf `main` liegt ein Commit «Version …».
+3. ASK neu starten. Erwartet: nach etwa 20 Sekunden «ASK <neue Version> ist da. Jetzt aktualisieren?» mit «Neu:» und dem Release-Text; «Jetzt aktualisieren», oben ein Balken «Update … wird geladen … %» (auch in der Taskleiste), dann «ASK startet in 10 s neu» mit Countdown; ASK schliesst sich, ein Fenster zeigt das Installieren, ASK startet von selbst mit der neuen Version, Chats und Ordner sind noch da. Ab der ersten Version mit Python-Archiv (E39): Das Installieren dauert Sekunden, nicht Minuten; nur beim ersten Start danach steht unten «Python wird eingerichtet (einmalig) … %».
+7. Verknüpfung «ASK» im Startmenü löschen, ASK über `ASK.exe` im Installationsordner starten. Erwartet: Die Verknüpfung ist wieder da.
+4. Einen PR mit Label `beta` mergen. Erwartet: In ASK-Releases als Pre-release; ASK bietet nichts an. In den Einstellungen «Beta-Versionen erhalten» einschalten. Erwartet: «ASK <Version>-beta.1 (Beta) ist da».
+5. Mit der einzelnen EXE einer älteren Version: Erwartet «… ist da» mit «Download öffnen», das die Seite des Releases öffnet.
+6. Während eines laufenden Auftrags «Nach Updates suchen»: Erwartet keine Frage, bis der Auftrag fertig ist.
+
+Bitte zurückmelden: ASK-Version, ob A4 bis A6 wie beschrieben liefen (vor allem, ob Werkzeugzeilen erscheinen), für B1 bis B3 das Ergebnis und wie viele Rückfragen oder Fehlversuche das Modell brauchte, Auffälligkeiten bei C und für D die Meldung bzw. die Datei aus D4, für E wo es hakte (Meldung im Reiter «Actions» oder in der App).

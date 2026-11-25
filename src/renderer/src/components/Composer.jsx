@@ -78,13 +78,15 @@ function ThinkPicker({ level, onChange }) {
 
 const Composer = forwardRef(function Composer(props, ref) {
   const { state, running, block, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
-    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, setMemory, notice } = props;
+    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed } = props;
   const [text, setText] = useState('');
-  const [pending, setPending] = useState([]);
+  const [pending, setPending] = useState([]); // neue Anhänge { name, type, size, data, url }
+  const [kept, setKept] = useState([]); // schon gespeicherte Anhänge einer zurückgenommenen Eingabe { path, name, image }
+  const [queued, setQueued] = useState(null); // Enter während eines Auftrags: eine wartende Nachricht (ENTSCHEIDE E34)
   const [slashIndex, setSlashIndex] = useState(0);
   const [dropping, setDropping] = useState(false);
   const [todoOpen, setTodoOpen] = useState(true);
-  const [todoPeek, setTodoPeek] = useState(false);
+  const [todoPeek, setTodoPeek] = useState(null); // null: wie in den Einstellungen
   const [, tick] = useState(0);
   const input = useRef(null);
   const fileInput = useRef(null);
@@ -95,15 +97,47 @@ const Composer = forwardRef(function Composer(props, ref) {
     setText: (t) => { setText(t); setTimeout(() => { input.current?.focus(); autosize(); }, 0); },
     addFiles: (list) => addFiles(list),
     toggleTodo: () => toggleTodo(),
-    restore: (t, files) => { if (t && !input.current?.value) setText(t); setPending(files || []); },
+    // Text und Anhänge zurück ins Eingabefeld (zurückgenommene Eingabe, Senden fehlgeschlagen)
+    restore: ({ text: t = '', files = [], kept: k = [] } = {}) => {
+      if (t) setText((cur) => (cur ? `${t}\n${cur}` : t));
+      if (files.length) setPending((p) => [...files, ...p]);
+      if (k.length) setKept((p) => [...k, ...p]);
+      setTimeout(() => input.current?.focus(), 0);
+    },
+    restoreQueued: () => restoreQueued(),
+    stop: () => stopRun(),
   }));
+
+  // Wartende Nachricht geht nach dem Auftrag von selbst hinaus (ausser es ist gerade nichts möglich)
+  useEffect(() => {
+    if (running || !queued) return;
+    const q = queued;
+    setQueued(null);
+    if (block) { restoreQueuedFrom(q); return; }
+    sendNow(q.text, q.files, q.kept);
+  }, [running]);
+
+  function restoreQueuedFrom(q) {
+    if (!q) return;
+    if (q.text) setText((cur) => (cur ? `${q.text}\n${cur}` : q.text));
+    setPending((p) => [...q.files, ...p].slice(0, MAX_ATTACH));
+    setKept((p) => [...q.kept, ...p]);
+  }
+  function restoreQueued() {
+    restoreQueuedFrom(queued);
+    setQueued(null);
+  }
+  function stopRun() {
+    restoreQueued();
+    onStop();
+  }
 
   useEffect(() => {
     if (!running) return undefined;
     const t = setInterval(() => tick((n) => n + 1), 500);
     return () => clearInterval(t);
   }, [running]);
-  useEffect(() => { if (!running) setTodoPeek(false); }, [running]);
+  useEffect(() => { if (!running) setTodoPeek(null); }, [running]);
   useEffect(autosize, [text]);
 
   function autosize() {
@@ -116,13 +150,13 @@ const Composer = forwardRef(function Composer(props, ref) {
   function toggleTodo() {
     if (!tasks?.length) return;
     if (running && tasksLive) setTodoOpen((o) => !o);
-    else setTodoPeek((o) => !o);
+    else setTodoPeek((o) => !(o ?? !todoCollapsed));
   }
 
   async function addFiles(list) {
     const next = [];
     for (const file of [...list]) {
-      if (pending.length + next.length >= MAX_ATTACH) { notice(`Höchstens ${MAX_ATTACH} Anhänge auf einmal.`); break; }
+      if (pending.length + kept.length + next.length >= MAX_ATTACH) { notice(`Höchstens ${MAX_ATTACH} Anhänge auf einmal.`); break; }
       if (file.size > MAX_ATTACH_SIZE) { notice(`${file.name} ist grösser als 50 MB und wurde nicht angehängt.`); continue; }
       let data;
       try { data = new Uint8Array(await file.arrayBuffer()); } catch { notice(`${file.name || 'Die Datei'} lässt sich nicht lesen (ein Ordner?).`); continue; }
@@ -147,21 +181,38 @@ const Composer = forwardRef(function Composer(props, ref) {
       setText('');
       return;
     }
-    if (running) { onStop(); return; }
     const t = text.trim();
-    if (!t && !pending.length) return;
+    if (!t && !pending.length && !kept.length) return; // leere Eingabe tut nichts, auch während eines Auftrags
     const goalCmd = /^\/goal(?:\s+([\s\S]*))?$/i.exec(t);
-    if (goalCmd) { setText(''); props.onGoal((goalCmd[1] || '').trim()); return; }
+    if (goalCmd) {
+      const arg = (goalCmd[1] || '').trim();
+      if (running && arg && !/^(aus|stopp|stop|löschen|off|clear)$/i.test(arg)) { notice('Ein neues Ziel lässt sich erst setzen, wenn der Auftrag fertig ist.'); return; }
+      setText('');
+      props.onGoal(arg);
+      return;
+    }
     if (slashMatches.length) { runSlash(slashMatches[slashIndex] || slashMatches[0]); return; }
+    if (running) {
+      // Enter während eines Auftrags reiht ein, statt zu stoppen (stoppen: Esc oder ■)
+      if (queued) { notice('Es wartet schon eine Nachricht. Mit × entfernen oder den Auftrag abwarten.'); return; }
+      setQueued({ text: t, files: pending, kept });
+      setText(''); setPending([]); setKept([]);
+      return;
+    }
     if (block) return;
-    if (t) { sent.current.list.push(t); sent.current.index = -1; }
     const files = pending;
-    setText('');
-    setPending([]);
-    const res = await onSend(t, files);
+    const keptFiles = kept;
+    setText(''); setPending([]); setKept([]);
+    await sendNow(t, files, keptFiles);
+  }
+
+  async function sendNow(t, files = [], keptFiles = []) {
+    if (t) { sent.current.list.push(t); sent.current.index = -1; }
+    const res = await onSend(t, files, keptFiles);
     if (res && res.ok === false) {
-      setPending(files);
-      if (t) setText((cur) => cur || t);
+      setPending((p) => [...files, ...p]);
+      setKept((p) => [...keptFiles, ...p]);
+      if (t) setText((cur) => (cur ? `${t}\n${cur}` : t));
     } else {
       for (const f of files) if (f.url) URL.revokeObjectURL(f.url);
     }
@@ -217,12 +268,15 @@ const Composer = forwardRef(function Composer(props, ref) {
     return () => { document.removeEventListener('dragover', over); document.removeEventListener('dragleave', leave); document.removeEventListener('drop', drop); };
   });
 
-  const showTodoOpen = running && tasksLive ? todoOpen : todoPeek;
+  const showTodoOpen = running && tasksLive ? todoOpen : (todoPeek ?? !todoCollapsed);
   const answering = !!pendingQuestion;
   const placeholder = answering ? 'Antworte auf die Frage von ASK …'
     : pendingApproval ? 'ASK wartet oben auf deine Entscheidung …'
-    : running ? 'Das Modell arbeitet … (Esc stoppt)' : (block || 'Auftrag beschreiben …');
+    : running ? 'Folgenachricht (wird nach dem Auftrag gesendet) · Esc stoppt' : (block || 'Auftrag beschreiben …');
   const sendDisabled = answering ? !text.trim() : (!running && !!block);
+  const ctxKnown = context?.limit > 0;
+  const ctxPct = ctxKnown ? Math.min(100, Math.round((context.tokens / context.limit) * 100)) : 0;
+  const short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n)));
   const seconds = runStarted ? Math.round((Date.now() - runStarted) / 1000) : 0;
 
   return (
@@ -255,8 +309,26 @@ const Composer = forwardRef(function Composer(props, ref) {
           </div>
         ) : null}
         <div id="input-box" className={`input-box${block && !running && !answering ? ' disabled' : ''}${dropping ? ' dropping' : ''}${answering ? ' answering' : ''}`}>
-          {pending.length ? (
+          {queued ? (
+            <div id="queue-row" className="attach-row">
+              <span className="attach-chip queue-chip" title={queued.text}>
+                <span className="name">Wartet: {queued.text || [...queued.files, ...queued.kept].map((f) => f.name || 'Bild').join(', ')}</span>
+                <button type="button" className="remove" aria-label="Wartende Nachricht entfernen" title="Entfernen (Text zurück ins Eingabefeld)" onClick={restoreQueued}>
+                  <Icon name="close" size={12} />
+                </button>
+              </span>
+            </div>
+          ) : null}
+          {pending.length || kept.length ? (
             <div id="attach-row" className="attach-row">
+              {kept.map((f, i) => (
+                <span key={`k-${f.path}`} className="attach-chip" title={f.path}>
+                  <span className={`badge ext-${extOf(f.name)}`}>{fileBadge(f.name)}</span>
+                  <span className="name">{f.name}</span>
+                  <button type="button" className="remove" aria-label={`${f.name} entfernen`} title="Entfernen"
+                    onClick={() => setKept(kept.filter((_x, j) => j !== i))}><Icon name="close" size={12} /></button>
+                </span>
+              ))}
               {pending.map((f, i) => (
                 <span key={`${f.name}-${i}`} className="attach-chip" title={`${f.name} (${formatSize(f.size)})`}>
                   {f.url ? <img src={f.url} alt="" /> : <span className={`badge ext-${extOf(f.name)}`}>{fileBadge(f.name)}</span>}
@@ -282,6 +354,14 @@ const Composer = forwardRef(function Composer(props, ref) {
             </button>
             <ThinkPicker level={state.thinking || 'standard'} onChange={setThinking} />
             <span className="spacer" />
+            {context?.tokens > 0 ? (
+              <span id="ctx" className={`ctx${ctxKnown && ctxPct >= 80 ? ' warn' : ''}`}
+                title={ctxKnown && ctxPct >= 80 ? 'Der Kontext ist fast voll. Beginne mit /neu einen neuen Chat, sonst vergisst das Modell Früheres.'
+                  : `Belegung des Kontextfensters${context.estimated ? ' (geschätzt)' : ''}`}>
+                {ctxKnown ? <span className="ctx-ring" style={{ '--p': `${ctxPct}%` }} aria-hidden="true" /> : null}
+                <span id="ctx-text">{ctxKnown ? `${ctxPct} %` : `${context.estimated ? '≈ ' : ''}${short(context.tokens)}`}</span>
+              </span>
+            ) : null}
             <label className="model-pick" title="Modell in ASK">
               <select id="model-select" value={state.model || ''} disabled={!state.models?.length} onChange={(e) => setModel(e.target.value)}>
                 {(state.models || []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -289,7 +369,7 @@ const Composer = forwardRef(function Composer(props, ref) {
               <Icon name="chevDown" size={13} />
             </label>
             <button type="button" id="send-btn" className={`send${running && !answering ? ' stop' : ''}`} disabled={sendDisabled}
-              onClick={submit} title={answering ? 'Antwort senden (Enter)' : running ? 'Stoppen (Esc)' : 'Senden (Enter)'}
+              onClick={() => (running && !answering ? stopRun() : submit())} title={answering ? 'Antwort senden (Enter)' : running ? 'Stoppen (Esc)' : 'Senden (Enter)'}
               aria-label={answering ? 'Antwort senden' : running ? 'Stoppen' : 'Senden'}>
               <Icon name={running && !answering ? 'stop' : 'send'} size={16} strokeWidth={2.2} />
             </button>

@@ -42,7 +42,7 @@ function FileTree({ root, files, marks, removed, selected, onSelect, onOpen, onS
     if (!root) return;
     load('');
     for (const rel of expanded) load(rel);
-  }, [root, files, load]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [root, files, load]);
   const toggle = (rel) => {
     const next = new Set(expanded);
     if (next.has(rel)) next.delete(rel);
@@ -88,7 +88,7 @@ export function PreviewBody({ entry, big = false }) {
     setP(null); setPdf(null); setStatus('');
     if (entry) api().preview(entry.path).then((r) => { if (alive) setP(r); });
     return () => { alive = false; };
-  }, [entry?.path, entry?.modified]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [entry?.path, entry?.modified]);
   if (!entry) return <div className="panel-empty">Klicke im Dateibaum oder im Chat auf eine Datei, um sie hier anzusehen.</div>;
   if (!p) return <div className="panel-empty">Lädt …</div>;
   const v = Math.round(entry.modified || 0);
