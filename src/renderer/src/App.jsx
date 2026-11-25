@@ -610,7 +610,8 @@ export default function App() {
           <RightPanel tab={tab} setTab={setTab} root={state.folder} files={files} marks={marks} removed={removed} selected={selected}
             onSelect={setSelected} onBig={() => setDialog({ name: 'preview' })} browser={browser} browserActive={browserActive}
             onBrowserClose={() => { api().browserClose(); setBrowser(BROWSER0); setBrowserBig(false); setTab('dateien'); }}
-            onBrowserBig={() => setBrowserBig(!browserBig)} browserBig={browserBig} />
+            onBrowserBig={() => setBrowserBig(!browserBig)} browserBig={browserBig}
+            onMention={(p) => composer.current?.insert(`\`${String(p).replaceAll('\\', '/')}\``)} notice={notice} />
         ) : <span />}
       </main>
 

@@ -34,12 +34,15 @@ const now = Date.now();
 const tree = {
   '': [
     { path: 'daten', name: 'daten', dir: true, size: 0, modified: now - 86400000 },
+    { path: 'bilder', name: 'bilder', dir: true, size: 0, modified: now - 3600000 },
     { path: 'ausgaben.csv', name: 'ausgaben.csv', dir: false, size: 2140, modified: now - 86400000 },
     { path: 'auswertung.py', name: 'auswertung.py', dir: false, size: 1530, modified: now - 300000 },
     { path: 'auswertung.xlsx', name: 'auswertung.xlsx', dir: false, size: 18800, modified: now - 280000 },
     { path: 'budget-notizen.docx', name: 'budget-notizen.docx', dir: false, size: 14200, modified: now - 270000 },
   ],
   daten: [{ path: 'daten\\kategorien.txt', name: 'kategorien.txt', dir: false, size: 120, modified: now - 86400000 }],
+  bilder: [{ path: 'bilder\\diagramm.png', name: 'diagramm.png', dir: false, size: 84000, modified: now - 280000 },
+    { path: 'bilder\\titelbild.png', name: 'titelbild.png', dir: false, size: 1200000, modified: now - 86400000 }],
 };
 const files = { top: tree[''], recent: tree[''].filter((f) => !f.dir) };
 
@@ -115,6 +118,8 @@ export function install() {
     chatPin: async (_f, id, on) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.pinned = on; return true; },
     chatSearch: async (q) => (/proxmox|budget/i.test(q) ? [{ folder: FOLDER, name: 'Haushaltsbudget', id: 'c2', title: 'Budgetplan 2027', updated: Date.now(), snippets: ['Person: Budget für 2027 aufstellen …'] }] : []),
     listDir: async (rel) => ({ ok: true, entries: tree[rel] || [] }),
+    findFiles: async (q) => Object.values(tree).flat().filter((e) => e.path.toLowerCase().includes(String(q).toLowerCase())),
+    importFiles: async () => ({ ok: true, paths: [] }),
     restartTerminal: async () => {}, terminalLogs: async () => 'open-terminal läuft auf 127.0.0.1', acceptWarning: async () => {},
     setAskUrl: async () => ({ ok: true }), connectAsk: async () => state.ask, logout: async () => {}, models: async () => state.models,
     setModel: async (id) => { state = { ...state, model: id }; push(); }, setWebSearch: async (v) => { state = { ...state, webSearch: v }; push(); },

@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld('ask', {
   onGroupsChanged: on('chat:groups-changed'),
   setSettings: (values) => ipcRenderer.invoke('settings:set', values),
   listDir: (rel) => ipcRenderer.invoke('workspace:list', rel),
+  findFiles: (query) => ipcRenderer.invoke('workspace:find', query),
+  importFiles: (rel, files) => ipcRenderer.invoke('workspace:import', rel, files),
   openFolder: (folder) => ipcRenderer.invoke('folder:open', folder),
   forgetFolder: (folder) => ipcRenderer.invoke('folder:forget', folder),
   folderMenu: () => ipcRenderer.invoke('folder:menu'),

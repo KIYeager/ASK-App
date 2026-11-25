@@ -14,6 +14,7 @@ const PATHS = {
   spark: <path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4" />,
   chevDown: <path d="m6 9 6 6 6-6" />,
   chevRight: <path d="m9 6 6 6-6 6" />,
+  chevUp: <path d="m6 15 6-6 6 6" />,
   chevLeft: <path d="m15 6-6 6 6 6" />,
   send: <path d="M12 19V5M5 12l7-7 7 7" />,
   stop: <rect x="7" y="7" width="10" height="10" rx="1.5" />,

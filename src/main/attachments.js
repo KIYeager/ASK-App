@@ -89,4 +89,4 @@ function nativeResize(nativeImage) {
   };
 }
 
-module.exports = { saveAttachments, imageUrl, nativeResize, cleanName, INBOX, MAX_FILES, MAX_SIZE, MAX_IMAGE_SIDE };
+module.exports = { saveAttachments, imageUrl, nativeResize, cleanName, freeName, INBOX, MAX_FILES, MAX_SIZE, MAX_IMAGE_SIDE };

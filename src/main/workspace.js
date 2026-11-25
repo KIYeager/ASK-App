@@ -184,6 +184,49 @@ class Workspace extends EventEmitter {
     return { ok: true, entries: out, more: entries.length > MAX_ENTRIES };
   }
 
+  // Dateien im ganzen Projekt nach Namen suchen (für die Suche im Dateibereich), höchstens 200 Treffer
+  find(query) {
+    const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+    if (!this.root || !words.length) return [];
+    const out = [];
+    let seen = 0;
+    const walk = (dir, depth) => {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (out.length >= 200 || ++seen > 20000 || HIDDEN.test(entry.name)) continue;
+        const full = path.join(dir, entry.name);
+        const rel = path.relative(this.root, full);
+        if (words.every((w) => rel.toLowerCase().includes(w))) {
+          try {
+            const stat = fs.statSync(full);
+            out.push({ path: rel, name: entry.name, dir: stat.isDirectory(), size: stat.size, modified: stat.mtimeMs });
+          } catch { /* gerade gelöscht */ }
+        }
+        if (entry.isDirectory() && depth > 0) walk(full, depth - 1);
+      }
+    };
+    walk(this.root, 8);
+    return out.sort((a, b) => (b.dir - a.dir) || b.modified - a.modified);
+  }
+
+  // Hineingezogene Dateien in einen Ordner des Projekts kopieren. Vorhandene Dateien werden nie
+  // überschrieben («name (2).ext»). files: [{ name, data }]; liefert die neuen relativen Pfade.
+  import(relDir, files) {
+    const dir = relDir ? this.resolve(relDir) : (this.root ? fs.realpathSync.native(this.root) : null);
+    if (!dir || !fs.statSync(dir).isDirectory()) throw new Error('Ordner nicht gefunden.');
+    const { cleanName, freeName } = require('./attachments');
+    const done = [];
+    for (const f of (Array.isArray(files) ? files : []).slice(0, 50)) {
+      const name = freeName(dir, cleanName(f.name, f.type));
+      const data = Buffer.from(f.data || []);
+      if (data.length > 200 * 1024 * 1024) throw new Error(`${name} ist grösser als 200 MB.`);
+      fs.writeFileSync(path.join(dir, name), data, { flag: 'wx' });
+      done.push(path.relative(this.root, path.join(dir, name)));
+    }
+    return done;
+  }
+
   // Absoluter Pfad zu einer Datei im Arbeitsordner, oder null, wenn sie ausserhalb liegt.
   resolve(rel) {
     if (!this.root) return null;

@@ -105,6 +105,14 @@ const Composer = forwardRef(function Composer(props, ref) {
       setTimeout(() => input.current?.focus(), 0);
     },
     restoreQueued: () => restoreQueued(),
+    // Datei im Chat erwähnen: Pfad an der Schreibstelle einfügen
+    insert: (t) => {
+      const el = input.current;
+      const at = el ? el.selectionStart ?? text.length : text.length;
+      const next = text.slice(0, at) + (at && !/\s$/.test(text.slice(0, at)) ? ' ' : '') + t + ' ' + text.slice(at);
+      setText(next);
+      setTimeout(() => { el?.focus(); }, 0);
+    },
     stop: () => stopRun(),
   }));
 

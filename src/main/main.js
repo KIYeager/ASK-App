@@ -562,6 +562,14 @@ function setupIpc() {
   ipcMain.handle('chat:approve', (_e, id, answer) => agent.answerApproval(id, answer));
   ipcMain.handle('chat:answer', (_e, id, text) => agent.answerQuestion(id, text));
   ipcMain.handle('workspace:list', (_e, rel) => workspace.list(String(rel || '')));
+  ipcMain.handle('workspace:find', (_e, query) => workspace.find(String(query || '')));
+  ipcMain.handle('workspace:import', (_e, rel, files) => {
+    try {
+      return { ok: true, paths: workspace.import(String(rel || ''), files) };
+    } catch (err) {
+      return { ok: false, reason: `Nicht kopiert: ${err.message}` };
+    }
+  });
   ipcMain.handle('folder:menu', () => {
     Menu.buildFromTemplate(folderMenuItems()).popup({ window: appWindow.win });
   });

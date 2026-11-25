@@ -597,3 +597,44 @@ button.work-head:hover { background: var(--hover); }
 .turn:hover .user-actions, .user-actions:focus-within { opacity: 1; }
 .checks { display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
 .check.small { font-size: 12.5px; font-weight: 400; margin-top: 4px; }
+
+/* Dateien wie im Explorer: Ordner betreten, über den Pfad zurück, Vorschau unten */
+.files-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.explorer { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; padding: 8px 6px 6px; gap: 4px; }
+.explorer.dropping .ex-list { outline: 2px dashed var(--acc); outline-offset: -2px; border-radius: 10px; background: var(--acc-soft); }
+.ex-search { display: flex; gap: 7px; align-items: center; padding: 5px 9px; margin: 0 2px; border-radius: 8px; background: var(--pane); border: 1px solid var(--line); color: var(--dim); }
+.ex-search:focus-within { border-color: var(--acc); }
+.ex-search input { border: 0; background: none; outline: none; flex: 1; min-width: 0; color: var(--text); font-size: 13px; }
+.ex-crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.crumbs { flex: 1; display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; font-size: 12.5px; }
+.crumb-part { display: inline-flex; align-items: center; gap: 2px; color: var(--dim); min-width: 0; }
+.crumb-btn { border: 0; background: none; padding: 3px 5px; border-radius: 6px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+.crumb-btn:hover { background: var(--hover); color: var(--text); }
+.crumb-btn.cur { color: var(--text); font-weight: 600; }
+.ex-head, .ex-row { display: grid; grid-template-columns: minmax(0, 1fr) 54px 58px; gap: 6px; align-items: center; }
+.ex-head { padding: 2px 8px 4px; border-bottom: 1px solid var(--line); }
+.ex-col { border: 0; background: none; padding: 2px 0; font-size: 11px; color: var(--dim); display: inline-flex; gap: 3px; align-items: center; justify-content: flex-end; }
+.ex-col.name { justify-content: flex-start; }
+.ex-col.on { color: var(--text); }
+.ex-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 0; }
+.ex-row { padding: 5px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; }
+.ex-row:hover { background: var(--hover); }
+.ex-row.sel { background: var(--acc-soft); }
+.ex-row.gone { cursor: default; }
+.ex-row.gone .tn { text-decoration: line-through; color: var(--dim); }
+.ex-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ex-name .tn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ex-name .ti.dir { color: var(--acc-text); }
+.ex-row.dir .tn { font-weight: 500; }
+.ex-c { font-size: 11.5px; color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ex-name .mark { font-size: 10.5px; font-weight: 600; flex: none; background: none; padding: 0; }
+.fi { width: 18px; height: 18px; border-radius: 4px; display: inline-grid; place-items: center; font: 700 7px/1 var(--sans); color: #fff; background: #6b7780; flex: none; letter-spacing: .02em; }
+.fi.ext-docx, .fi.ext-doc { background: #2b5797; } .fi.ext-xlsx, .fi.ext-xls, .fi.ext-csv { background: #1d6f42; }
+.fi.ext-pptx, .fi.ext-ppt { background: #c24c22; } .fi.ext-pdf { background: #b1261c; }
+.fi.ext-py, .fi.ext-js, .fi.ext-html, .fi.ext-css { background: #0082b4; } .fi.ext-png, .fi.ext-jpg, .fi.ext-jpeg, .fi.ext-gif, .fi.ext-webp, .fi.ext-svg { background: #7a5bb5; }
+.ex-drop { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); background: var(--acc); color: var(--acc-ink); padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; pointer-events: none; }
+.peek { margin: 0 8px 8px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--pane); display: flex; flex-direction: column; gap: 8px; }
+.peek-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.peek-head b { flex: 1; font-weight: 600; }
+.peek-img { max-height: 120px; max-width: 100%; object-fit: contain; border-radius: 6px; background: #fff; align-self: center; }
+.peek-acts { display: flex; gap: 6px; flex-wrap: wrap; }

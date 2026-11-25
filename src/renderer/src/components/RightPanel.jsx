@@ -1,78 +1,189 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
-import { baseName, extOf, fileBadge, formatSize, formatTime } from '../lib/format.js';
+import { baseName, extOf, fileBadge, fileUrl, formatSize } from '../lib/format.js';
 
 const norm = (p) => String(p || '').replaceAll('\\', '/').replace(/^\.?\//, '').toLowerCase();
 const MARK_TEXT = { neu: 'neu', geaendert: 'geändert', geloescht: 'gelöscht' };
 
-// ---------- Dateibaum ----------
+// ---------- Dateien: wie der Explorer (Ordner betreten, über den Pfad zurück) ----------
 
-function TreeNode({ entry, depth, marks, expanded, toggle, children, selected, onSelect, onOpen }) {
-  const mark = marks.get(norm(entry.path));
-  const isOpen = expanded.has(entry.path);
+const SORTS = { name: 'Name', modified: 'Geändert', size: 'Grösse' };
+
+function when(ms) {
+  const d = new Date(ms);
+  if (d.toDateString() === new Date().toDateString()) return d.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' });
+}
+
+function FileMenu({ menu, onClose, onOpen, onPreview, onMention, onShow }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    ref.current?.querySelector('button')?.focus();
+    const away = (e) => { if (!ref.current?.contains(e.target)) onClose(); };
+    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key, true); };
+  }, [onClose]);
+  const item = (label, fn) => <button type="button" role="menuitem" onClick={() => { onClose(); fn(); }}>{label}</button>;
+  const left = Math.max(4, Math.min(menu.x, window.innerWidth - 200));
+  const top = Math.max(4, Math.min(menu.y, window.innerHeight - 170));
   return (
-    <>
-      <div className={`tree-row${selected === entry.path ? ' sel' : ''}`} style={{ paddingLeft: 8 + depth * 16 }} role="treeitem"
-        aria-expanded={entry.dir ? isOpen : undefined} aria-selected={selected === entry.path} tabIndex={0}
-        title={`${entry.path}${entry.dir ? '' : ` · ${formatSize(entry.size)} · ${formatTime(entry.modified)}`}`}
-        onClick={() => (entry.dir ? toggle(entry.path) : onSelect(entry))}
-        onDoubleClick={() => { if (!entry.dir) onOpen(entry.path); }}
-        onKeyDown={(e) => { if (e.key === 'Enter') { if (entry.dir) toggle(entry.path); else onOpen(entry.path); } }}>
-        {entry.dir ? <Icon name={isOpen ? 'chevDown' : 'chevRight'} size={13} className="tw" /> : <span className="tw" />}
-        <Icon name={entry.dir ? (isOpen ? 'folderOpen' : 'folder') : 'file'} size={15} className={`ti${entry.dir ? ' dir' : ''}`} />
-        <span className="tn">{entry.name}</span>
-        {mark ? <span className={`mark ${mark}`}>{MARK_TEXT[mark]}</span> : null}
-      </div>
-      {entry.dir && isOpen ? children : null}
-    </>
+    <div ref={ref} className="chat-menu popover" role="menu" aria-label={menu.entry.name} style={{ left, top }}>
+      {menu.entry.dir ? item('Öffnen', onOpen) : item('Öffnen', onOpen)}
+      {!menu.entry.dir ? item('Vorschau', onPreview) : null}
+      {item('Im Chat erwähnen', onMention)}
+      {item('Im Explorer zeigen', onShow)}
+    </div>
   );
 }
 
-function FileTree({ root, files, marks, removed, selected, onSelect, onOpen, onShowFolder }) {
-  const [dirs, setDirs] = useState({}); // rel → entries
-  const [expanded, setExpanded] = useState(() => new Set());
+function FileExplorer({ root, files, marks, removed, selected, onSelect, onPreview, onMention, notice }) {
+  const [dir, setDir] = useState('');
+  const [entries, setEntries] = useState(null);
+  const [sort, setSort] = useState({ key: 'name', asc: true });
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState(null);
+  const [menu, setMenu] = useState(null);
+  const [dropping, setDropping] = useState(false);
   const load = useCallback(async (rel) => {
     const res = await api().listDir(rel);
-    setDirs((d) => ({ ...d, [rel]: res?.entries || [] }));
+    if (!res?.ok && rel) { setDir(''); return; } // Ordner gibt es nicht mehr
+    setEntries(res?.entries || []);
   }, []);
-  // Neu laden, wenn sich im Ordner etwas ändert (files kommt vom Hauptprozess) oder das Projekt wechselt
-  useEffect(() => { setDirs({}); setExpanded(new Set()); }, [root]);
+  useEffect(() => { setDir(''); setQuery(''); setEntries(null); }, [root]);
+  useEffect(() => { if (root) load(dir); }, [root, dir, files, load]);
   useEffect(() => {
-    if (!root) return;
-    load('');
-    for (const rel of expanded) load(rel);
-  }, [root, files, load]);
-  const toggle = (rel) => {
-    const next = new Set(expanded);
-    if (next.has(rel)) next.delete(rel);
-    else { next.add(rel); load(rel); }
-    setExpanded(next);
-  };
-  const render = (rel, depth) => (dirs[rel] || []).map((e) => (
-    <TreeNode key={e.path} entry={e} depth={depth} marks={marks} expanded={expanded} toggle={toggle} selected={selected} onSelect={onSelect} onOpen={onOpen}>
-      {render(e.path, depth + 1)}
-    </TreeNode>
-  ));
+    const q = query.trim();
+    if (!q) { setResults(null); return undefined; }
+    const t = setTimeout(async () => setResults(await api().findFiles(q)), 180);
+    return () => clearTimeout(t);
+  }, [query, files]);
+
   if (!root) return <div className="panel-empty">Kein Projekt geöffnet.</div>;
-  const top = dirs[''];
+  const parts = dir ? dir.split(/[\\/]/) : [];
+  const go = (rel) => { setDir(rel); setQuery(''); };
+  const up = () => go(parts.slice(0, -1).join('\\'));
+  const list = results || entries || [];
+  const sorted = results ? list : [...list].sort((a, b) => {
+    if (a.dir !== b.dir) return b.dir - a.dir;
+    const k = sort.key;
+    const v = k === 'name' ? a.name.localeCompare(b.name, 'de', { numeric: true }) : (a[k] || 0) - (b[k] || 0);
+    return sort.asc ? v : -v;
+  });
+  const here = norm(dir);
+  const gone = results ? [] : removed.filter((p) => { const n = norm(p); const i = n.lastIndexOf('/'); return (i < 0 ? '' : n.slice(0, i)) === here; });
+  const open = (e) => (e.dir ? go(e.path) : api().openFile(e.path));
+  const clickSort = (key) => setSort((s) => ({ key, asc: s.key === key ? !s.asc : key === 'name' }));
+
+  // Dateien aus dem Explorer hineinziehen: in den offenen Ordner kopieren (nicht in den Chat)
+  const onDrop = async (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDropping(false);
+    const list2 = [];
+    for (const f of [...e.dataTransfer.files]) {
+      try { list2.push({ name: f.name, type: f.type, data: new Uint8Array(await f.arrayBuffer()) }); } catch { /* Ordner */ }
+    }
+    if (!list2.length) return;
+    const res = await api().importFiles(dir, list2);
+    if (!res?.ok) notice(res?.reason || 'Nicht kopiert.');
+    else load(dir);
+  };
+  const onDragOver = (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDropping(true);
+  };
+
   return (
-    <div className="tree" role="tree" aria-label="Dateien im Projekt">
-      <div className="tree-root" title={root}>
-        <Icon name="folder" size={15} /><b>{baseName(root)}</b>
-        <button type="button" className="icon-btn" title="Im Explorer öffnen (/explorer)" onClick={onShowFolder}><Icon name="folderOpen" size={14} /></button>
+    <div className={`explorer${dropping ? ' dropping' : ''}`} onDragOver={onDragOver} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropping(false); }} onDrop={onDrop}>
+      <div className="ex-search">
+        <Icon name="search" size={14} />
+        <input id="file-search" type="search" placeholder="Im Projekt suchen" spellCheck={false} value={query} onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setQuery(''); } }} aria-label="Dateien im Projekt suchen" />
       </div>
-      {top && !top.length ? <div className="panel-empty">Der Ordner ist noch leer. Lege die Dateien hinein, mit denen ASK arbeiten soll, oder ziehe sie in den Chat.</div> : null}
-      {render('', 0)}
-      {removed.length ? (
-        <div className="tree-removed">
-          {removed.map((p) => (
-            <div key={p} className="tree-row gone" style={{ paddingLeft: 8 }} title={`${p} (gelöscht, «Rückgängig» holt sie zurück)`}>
-              <span className="tw" /><Icon name="file" size={15} className="ti" /><span className="tn">{p}</span><span className="mark geloescht">gelöscht</span>
-            </div>
+      <div className="ex-crumbs">
+        <button type="button" className="icon-btn" title="Eine Ebene hoch" aria-label="Eine Ebene hoch" disabled={!dir || !!results} onClick={up}><Icon name="arrowLeft" size={15} /></button>
+        <nav className="crumbs" aria-label="Ordner">
+          {results ? <span className="muted">{results.length} {results.length === 1 ? 'Treffer' : 'Treffer'} im Projekt</span> : (
+            <>
+              <button type="button" className={`crumb-btn${!dir ? ' cur' : ''}`} onClick={() => go('')}>{baseName(root)}</button>
+              {parts.map((p, i) => (
+                <span key={i} className="crumb-part"><Icon name="chevRight" size={12} />
+                  <button type="button" className={`crumb-btn${i === parts.length - 1 ? ' cur' : ''}`} onClick={() => go(parts.slice(0, i + 1).join('\\'))}>{p}</button>
+                </span>
+              ))}
+            </>
+          )}
+        </nav>
+        <button type="button" className="icon-btn" title="Im Explorer öffnen" aria-label="Im Explorer öffnen" onClick={() => (dir ? api().showFile(dir) : api().showFolder())}><Icon name="folderOpen" size={15} /></button>
+      </div>
+      {!results ? (
+        <div className="ex-head" role="row">
+          {Object.entries(SORTS).map(([k, label]) => (
+            <button key={k} type="button" className={`ex-col ${k}${sort.key === k ? ' on' : ''}`} onClick={() => clickSort(k)} aria-sort={sort.key === k ? (sort.asc ? 'ascending' : 'descending') : undefined}>
+              {label}{sort.key === k ? <Icon name={sort.asc ? 'chevDown' : 'chevUp'} size={11} /> : null}
+            </button>
           ))}
         </div>
       ) : null}
+      <div className="ex-list" role="list">
+        {entries === null && !results ? <div className="panel-empty">Lädt …</div> : null}
+        {sorted.map((e) => {
+          const mark = marks.get(norm(e.path));
+          return (
+            <div key={e.path} role="listitem" tabIndex={0} className={`ex-row${selected === e.path ? ' sel' : ''}${e.dir ? ' dir' : ''}`}
+              title={e.path} onClick={() => (e.dir ? go(e.path) : onSelect(e))} onDoubleClick={() => { if (!e.dir) api().openFile(e.path); }}
+              onKeyDown={(ev) => { if (ev.key === 'Enter') open(e); }}
+              onContextMenu={(ev) => { ev.preventDefault(); setMenu({ entry: e, x: ev.clientX, y: ev.clientY }); }}>
+              <span className="ex-name">
+                {e.dir ? <Icon name="folder" size={16} className="ti dir" /> : <span className={`fi ext-${extOf(e.name)}`}>{fileBadge(e.name).slice(0, 3)}</span>}
+                <span className="tn">{results ? e.path.replaceAll('\\', '/') : e.name}</span>
+                {mark ? <span className={`mark ${mark}`}>{MARK_TEXT[mark]}</span> : null}
+              </span>
+              <span className="ex-c">{when(e.modified)}</span>
+              <span className="ex-c">{e.dir ? '' : formatSize(e.size)}</span>
+            </div>
+          );
+        })}
+        {gone.map((p) => (
+          <div key={`g-${p}`} className="ex-row gone" title={`${p} (gelöscht, «Rückgängig» holt sie zurück)`}>
+            <span className="ex-name"><span className={`fi ext-${extOf(p)}`}>{fileBadge(p).slice(0, 3)}</span><span className="tn">{baseName(p)}</span><span className="mark geloescht">gelöscht</span></span>
+            <span className="ex-c" /><span className="ex-c" />
+          </div>
+        ))}
+        {entries && !results && !entries.length && !gone.length ? (
+          <div className="panel-empty">{dir ? 'Der Ordner ist leer.' : 'Das Projekt ist noch leer. Ziehe Dateien hierher, um sie hineinzukopieren.'}</div>
+        ) : null}
+        {results && !results.length ? <div className="panel-empty">Keine Datei mit diesem Namen.</div> : null}
+      </div>
+      {dropping ? <div className="ex-drop">In «{parts.length ? parts[parts.length - 1] : baseName(root)}» kopieren</div> : null}
+      {menu ? <FileMenu menu={menu} onClose={() => setMenu(null)} onOpen={() => open(menu.entry)} onPreview={() => onPreview(menu.entry)}
+        onMention={() => onMention(menu.entry.path)} onShow={() => api().showFile(menu.entry.path)} /> : null}
+    </div>
+  );
+}
+
+function Peek({ entry, onPreview, onMention }) {
+  if (!entry) return null;
+  const image = /\.(png|jpe?g|gif|webp|bmp)$/i.test(entry.path);
+  return (
+    <div className="peek">
+      <div className="peek-head">
+        <span className={`fi ext-${extOf(entry.name || entry.path)}`}>{fileBadge(entry.name || entry.path).slice(0, 3)}</span>
+        <b className="ell" title={entry.path}>{baseName(entry.path)}</b>
+        <span className="muted small">{entry.size ? formatSize(entry.size) : ''}</span>
+      </div>
+      {image ? <img className="peek-img" src={fileUrl(entry.path, Math.round(entry.modified || 0))} alt="" /> : null}
+      <div className="peek-acts">
+        <button type="button" className="btn small primary" onClick={() => api().openFile(entry.path)}>Öffnen</button>
+        <button type="button" className="btn small" onClick={() => onPreview(entry)}>Vorschau</button>
+        <button type="button" className="btn small" onClick={() => onMention(entry.path)}>Im Chat erwähnen</button>
+      </div>
     </div>
   );
 }
@@ -171,7 +282,7 @@ function BrowserTab({ browser, active, onClose, onBig, big }) {
 
 // ---------- Panel ----------
 
-export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig }) {
+export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice }) {
   const entry = selected ? (files.recent.find((f) => f.path === selected.path) || selected) : null;
   return (
     <aside id="sidebar" className="sidebar">
@@ -184,8 +295,11 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
       </div>
       <div className="rp-body">
         {tab === 'dateien' ? (
-          <FileTree root={root} files={files} marks={marks} removed={removed} selected={selected?.path}
-            onSelect={(e) => { onSelect(e); setTab('vorschau'); }} onOpen={(p) => api().openFile(p)} onShowFolder={() => api().showFolder()} />
+          <div className="files-pane">
+            <FileExplorer root={root} files={files} marks={marks} removed={removed} selected={selected?.path}
+              onSelect={onSelect} onPreview={(e) => { onSelect(e); setTab('vorschau'); }} onMention={onMention} notice={notice} />
+            <Peek entry={entry} onPreview={(e) => { onSelect(e); setTab('vorschau'); }} onMention={onMention} />
+          </div>
         ) : null}
         {tab === 'vorschau' ? (
           <div className="preview">
