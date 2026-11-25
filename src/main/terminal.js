@@ -54,6 +54,8 @@ class Terminal extends EventEmitter {
     this.unhealthy = false;
     this.state = 'gestoppt'; // gestoppt | startet | läuft | fehler
     this.error = '';
+    this.detail = ''; // Zwischenstand beim Starten, z. B. «Python wird eingerichtet … 40 %»
+    this.prepare = null; // async (report) => {}: vor jedem Start, z. B. Python entpacken (ENTSCHEIDE E39)
     this.port = 0;
     this.key = '';
     this.folder = '';
@@ -70,11 +72,12 @@ class Terminal extends EventEmitter {
   setState(state, error = '') {
     this.state = state;
     this.error = error;
+    if (state !== 'startet') this.detail = '';
     this.emit('state', this.snapshot());
   }
 
   snapshot() {
-    return { state: this.state, error: this.error, port: this.port, url: this.url(), folder: this.folder,
+    return { state: this.state, error: this.error, detail: this.detail, port: this.port, url: this.url(), folder: this.folder,
       lowIntegrity: this.info?.low_integrity ?? null };
   }
 
@@ -105,6 +108,15 @@ class Terminal extends EventEmitter {
     this.unhealthy = false;
     this.setState('startet');
     try {
+      if (this.prepare) {
+        await this.prepare((detail) => {
+          if (generation !== this.generation) return;
+          this.detail = detail || '';
+          this.emit('state', this.snapshot());
+        });
+        if (generation !== this.generation) return;
+        this.detail = '';
+      }
       this.port = await choosePort(options.preferredPort);
       this.key = crypto.randomBytes(32).toString('base64url');
       this.emit('port', this.port);

@@ -1,6 +1,7 @@
 // Windows-Installer für ASK: NSIS, Installation pro Nutzer (ohne Admin-Rechte).
 // Die einzelne EXE ohne Installation baut scripts/build-portable.js aus win-unpacked (ENTSCHEIDE E18).
-// Das mitgelieferte Python baut scripts/build-python.ps1 nach ASK_BUILD_DIR\python.
+// Das mitgelieferte Python baut scripts/build-python.ps1 nach ASK_BUILD_DIR\python, scripts/pack-python.js
+// packt es nach ASK_BUILD_DIR\python-pack (ein Archiv statt 12'000 Dateien, ENTSCHEIDE E39).
 const path = require('node:path');
 
 const buildDir = require('./src/main/build-dir').buildDir();
@@ -14,7 +15,7 @@ module.exports = {
   directories: { output: path.join(buildDir, 'dist') },
   files: ['src/**/*', 'package.json'],
   extraResources: [
-    { from: path.join(buildDir, 'python'), to: 'python' },
+    { from: path.join(buildDir, 'python-pack'), to: 'python-pack' },
     { from: 'python/ask_terminal', to: 'ask_terminal', filter: ['*.py'] },
     { from: 'resources/skills', to: 'skills' },
     { from: 'resources/anweisungen', to: 'anweisungen' },
@@ -41,5 +42,7 @@ module.exports = {
     uninstallDisplayName: 'ASK Desktop',
     artifactName: 'ASK-Setup-${version}.exe',
     deleteAppDataOnUninstall: false,
+    // Beim Deinstallieren (nicht bei Updates) das entpackte Python in %LOCALAPPDATA% entfernen
+    include: 'scripts/installer.nsh',
   },
 };

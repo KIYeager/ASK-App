@@ -255,3 +255,17 @@ Voraussetzung: Workflows dürfen auf `main` schreiben (Einstellung «Read and wr
 
 Dabei behoben: v0.2.0 scheiterte beim Veröffentlichen mit `no matches found for '-'` von `gh release create`. Die Argumente gingen als `@flags` an gh, und `$flags` war nach `if` nur ein Text statt einer Liste. Vermutlich hat PowerShell den Text beim Splatting nicht als Argument übergeben; nachgestellt ist das nicht. Jetzt bekommt gh eine ausdrückliche Liste `[string[]]`, und der Workflow schreibt den Aufruf ins Log.
 
+## E39 Python als ein Archiv, einmal entpackt
+
+Das erste echte Update (0.2.1 auf 0.2.2) dauerte über 3 Minuten, ohne dass man etwas sah: Der Installer lief still, entfernte zuerst die alte Version und schrieb dann alles neu. Wer in dieser Zeit auf die Verknüpfung klickte, bekam «geändert oder verschoben», und Windows bot an, sie zu löschen. Der Installer legt bei Updates und bei einer Installation über eine bestehende keine fehlende Verknüpfung neu an; sie blieb weg.
+
+Von den 11'990 Dateien des Installers gehörten 11'951 zum mitgelieferten Python, der Rest von ASK sind 39 Dateien. Jede einzelne Datei kostet beim Löschen und Schreiben Zeit, dazu prüft der Virenscanner jede. Darum liegt Python jetzt als ein Archiv in der App (`resources\python-pack\python.zip`, gepackt von `scripts/pack-python.js` mit `tar.exe`), und die App entpackt es vor dem ersten Terminal-Start nach `%LOCALAPPDATA%\ASK-Desktop\python\<id>` (`src/main/python.js`): mit `tar.exe` von Windows (bsdtar, ab Windows 10 1803 vorhanden), zuerst nach `<id>.neu`, erst danach umbenannt, mit Fortschritt in der Statuszeile. Die `id` hängt nur von `build-python.ps1` und `requirements.txt` ab; ändert sich Python nicht, entpackt ein Update nichts. Ältere Fassungen räumt die App weg, die Deinstallation (nicht ein Update) entfernt den Ordner (`scripts/installer.nsh`).
+
+Damit die vorkompilierten `.pyc` nach dem Entpacken gültig bleiben, entstehen sie mit `--invalidation-mode unchecked-hash`: Python vergleicht sie nicht mit den Zeitstempeln der Quellen (ein ZIP speichert diese nicht immer sekundengenau), und ohne Schreibrecht (Low Integrity) würde sonst jeder Import neu übersetzen.
+
+Sicherheit: Der Starter des Terminals läuft mit normalen Rechten aus diesem Ordner. Er liegt neben `laufzeit`, nicht darin, und bekommt keine Low-Kennzeichnung; Prozesse mit niedriger Integritätsstufe können ihn lesen, aber nicht ändern (wie den Stand der einzelnen EXE unter `ASK-Desktop\app`, E18).
+
+Weiter: Beim Neustart für ein Update läuft der Installer nicht mehr still, sondern zeigt sein Fortschrittsfenster und startet ASK danach (`quitAndInstall(false, true)`); der Dialog sagt vorher, dass ASK sich schliesst und von selbst wiederkommt. Fehlt die Verknüpfung im Startmenü, legt die installierte App sie beim Start mit `shell.writeShortcutLink` wieder an.
+
+Der Wechsel selbst ist noch einmal langsam: Das Update auf die erste Version mit Archiv entfernt die alten 12'000 Dateien, und der erste Start entpackt Python. Ab dann schreibt ein Update rund 40 Dateien.
+

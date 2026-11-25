@@ -37,6 +37,11 @@ if (!singleInstance) {
 }
 
 const terminal = new Terminal();
+// Installierte App und einzelne EXE: Python vor dem ersten Terminal-Start entpacken (ENTSCHEIDE E39)
+if (app.isPackaged) {
+  terminal.prepare = (report) => paths.pythonRuntime().ensure((percent) =>
+    report(percent >= 100 ? '' : `Python wird eingerichtet (einmalig) … ${percent} %`));
+}
 const ask = new AskSession();
 const workspace = new Workspace();
 const testMode = !app.isPackaged && !!process.env.ASK_TEST_SCRIPT;
@@ -705,6 +710,20 @@ function wireEvents() {
   workspace.on('files', (files) => appWindow?.send('files', files));
 }
 
+// Verknüpfung im Startmenü wieder anlegen, wenn sie fehlt. Der Installer legt sie bei Updates und bei einer
+// Installation über eine bestehende nicht neu an, und Windows bietet an, sie zu löschen, wenn man während
+// eines Updates darauf klickt (ENTSCHEIDE E39).
+function ensureStartMenuLink() {
+  try {
+    const link = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'ASK.lnk');
+    if (fs.existsSync(link)) return;
+    shell.writeShortcutLink(link, 'create', { target: process.execPath, icon: process.execPath, iconIndex: 0,
+      appUserModelId: 'ch.tfbern.ask', description: 'ASK Desktop' });
+  } catch {
+    // kein Startmenü (z. B. umgeleitete Ordner): ASK läuft trotzdem
+  }
+}
+
 app.on('second-instance', () => {
   if (appWindow?.win) {
     if (appWindow.win.isMinimized()) appWindow.win.restore();
@@ -736,6 +755,7 @@ app.whenReady().then(() => {
   if (singleInstance) {
     cleanupOldVersions();
     updater.start();
+    if (app.isPackaged && !isPortable()) ensureStartMenuLink();
   }
   if (!app.isPackaged && process.env.ASK_TEST_SCRIPT) {
     require(process.env.ASK_TEST_SCRIPT)({ app, appWindow, terminal, ask, agent, workspace, settings, openFolder, pushState, folderMenuItems });
