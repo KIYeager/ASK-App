@@ -292,19 +292,42 @@ pub use crate::bild::ProgressFn;
 /// Live-Daten für die Oberfläche (JS `onLive(data)`)
 pub type LiveFn = Arc<dyn Fn(Value) + Send + Sync>;
 
-/// Repositories, für die die Person das Nachfragen vor dem Hochladen abgeschaltet hat (JS: ein `Set`)
+/// Repositories, in die ohne Rückfrage hochgeladen wird (Häkchen im Dialog, zurücksetzen im GitHub-Dialog).
+/// Gross- und Kleinschreibung zählen nicht. Mit `with_store` gespeichert (main.js: Einstellung `githubTrusted`).
 #[derive(Default)]
-pub struct GithubTrust(Mutex<HashSet<String>>);
+pub struct GithubTrust {
+    list: Mutex<Vec<String>>,
+    save: Option<Arc<dyn Fn(&[String]) + Send + Sync>>,
+}
 
 impl GithubTrust {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Mit gespeicherter Liste; `save` bekommt nach jeder Änderung die ganze Liste
+    pub fn with_store(initial: Vec<String>, save: impl Fn(&[String]) + Send + Sync + 'static) -> Self {
+        Self { list: Mutex::new(initial), save: Some(Arc::new(save)) }
+    }
+    pub fn list(&self) -> Vec<String> {
+        self.list.lock().clone()
+    }
     pub fn has(&self, repo: &str) -> bool {
-        self.0.lock().contains(repo)
+        self.list.lock().iter().any(|r| r.to_lowercase() == repo.to_lowercase())
     }
     pub fn add(&self, repo: &str) {
-        self.0.lock().insert(repo.to_string());
+        if self.has(repo) {
+            return;
+        }
+        let list = { let mut l = self.list.lock(); l.push(repo.to_string()); l.clone() };
+        if let Some(save) = &self.save {
+            save(&list);
+        }
+    }
+    pub fn remove(&self, repo: &str) {
+        let list = { let mut l = self.list.lock(); l.retain(|r| r.to_lowercase() != repo.to_lowercase()); l.clone() };
+        if let Some(save) = &self.save {
+            save(&list);
+        }
     }
 }
 

@@ -5,6 +5,7 @@ mod askview;
 mod cdp;
 mod host;
 mod ipc;
+mod pages;
 mod platform;
 mod protocol;
 mod updates;
@@ -45,6 +46,7 @@ impl Shell {
 
     /// ASK-Seite geladen oder Laden begonnen (askapi liest danach das Token)
     pub fn ask_page_load(&self, _wv: &Webview<Wry>, finished: bool, url: &str) {
+        askview::LOADING.store(!finished, std::sync::atomic::Ordering::SeqCst);
         if let Some(core) = self.core.get() {
             core.ask_page_load(finished, url);
         }
@@ -136,7 +138,17 @@ fn setup(app: AppHandle) -> anyhow::Result<()> {
         anyhow::bail!("Hülle doppelt gestartet");
     }
     let host = Arc::new(host::HostImpl::new(app.clone()));
-    let core = App::new(host);
+    let cfg = ask_core::settings::app_config();
+    let owner = cfg.pointer("/updates/owner").and_then(Value::as_str).unwrap_or("");
+    let repo = cfg.pointer("/updates/repo").and_then(Value::as_str).unwrap_or("");
+    let file_base = if cfg!(windows) { "http://askfile.localhost/datei/" } else { "askfile://datei/" };
+    let core = App::new(ask_core::app::AppOptions {
+        host,
+        ask_view: Arc::new(askview::AskViewImpl),
+        pages: Arc::new(pages::Pages),
+        update_backend: Arc::new(updates::TauriUpdates::new(app.clone(), owner, repo)),
+        file_base: file_base.into(),
+    });
     let _ = shell().core.set(core.clone());
     let dark = matches!(ask_core::settings::get("theme").as_str(), Some("dunkel"));
     shell().views.create(dark)?;

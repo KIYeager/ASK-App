@@ -60,6 +60,7 @@ pub fn setup_ask_view(wv: &Webview<Wry>) {
                         sender.Source(&mut src)?;
                         let url = take_pwstr(src);
                         // Abgebrochen (eine neue Navigation) ist kein Fehler (Electron: Code -3)
+                        crate::askview::LOADING.store(false, std::sync::atomic::Ordering::SeqCst);
                         if status != COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED {
                             if let Some(core) = crate::shell().core_opt() {
                                 core.ask_load_failed(status.0, &web_error_text(status.0), &url);

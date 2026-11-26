@@ -42,6 +42,17 @@ pub async fn ipc(channel: String, args: Vec<Value>) -> Result<Value, String> {
             }
             v.set_browser_visible(false);
         }
+        // Rückfrage in der App, Löschen hier: Cookies und Speicher des Browsers der App
+        "browser:clear" => {
+            let ok = s.core().handle(&channel, args).await?;
+            if ok == Value::Bool(true) {
+                if let Some(wv) = v.webview(views::BROWSER) {
+                    let _ = wv.clear_all_browsing_data();
+                    let _ = wv.reload();
+                }
+            }
+            return Ok(ok);
+        }
         _ => return s.core().handle(&channel, args).await,
     }
     Ok(Value::Null)

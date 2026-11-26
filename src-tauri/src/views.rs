@@ -120,6 +120,9 @@ impl Views {
             .on_page_load(move |_wv, payload| {
                 if payload.event() == PageLoadEvent::Finished {
                     let _ = main.show();
+                } else if let Some(core) = crate::shell().core_opt() {
+                    // Oberfläche lädt neu: offene Dialoge gelten als abgebrochen
+                    core.ui_reloading();
                 }
             })
             .auto_resize();
@@ -157,10 +160,7 @@ impl Views {
         let window = self.window()?;
         let builder = WebviewBuilder::new(BROWSER, WebviewUrl::External("about:blank".parse().expect("URL")))
             .data_directory(data_dir("browser"))
-            .on_navigation(|url| {
-                let root = crate::shell().views.browser_file_root.lock().clone();
-                ask_core::visual::allowed_navigation(url.as_str(), &root)
-            })
+            .on_navigation(|url| crate::pages::navigation_allowed(BROWSER, url.as_str()))
             .on_new_window(|url, features| {
                 if !matches!(url.scheme(), "http" | "https") {
                     return NewWindowResponse::Deny;
@@ -181,11 +181,17 @@ impl Views {
                 }
                 false
             })
-            .on_page_load(|wv, _payload| crate::shell().browser_state(&wv));
+            .on_page_load(|wv, payload| {
+                if !cfg!(windows) && payload.event() == PageLoadEvent::Finished {
+                    crate::pages::page_loaded(BROWSER, None);
+                }
+                crate::shell().browser_state(&wv)
+            });
         let wv = window.add_child(builder, LogicalPosition::new(0.0, 0.0), LogicalSize::new(10.0, 10.0)).ok()?;
         let _ = wv.set_background_color(Some(tauri::window::Color(0, 0, 0, 255)));
         let _ = wv.hide();
         crate::platform::setup_browser_view(&wv);
+        crate::pages::watch(&wv);
         self.apply_browser_layout();
         Some(wv)
     }

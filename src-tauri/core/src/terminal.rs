@@ -320,6 +320,11 @@ impl Terminal {
     }
 
     /// Ereignisse: «state» (Schnappschuss) und «port» (Zahl)
+    /// Dasselbe Terminal (geteilter Zustand)?
+    pub fn ptr_eq(&self, other: &Terminal) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     pub fn on(&self, event: &str, f: impl Fn(&Value) + Send + Sync + 'static) {
         self.inner.events.on(event, f);
     }
