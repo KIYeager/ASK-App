@@ -10,6 +10,7 @@ pub mod paths;
 pub mod settings;
 pub mod safe;
 pub mod secrets;
+pub mod doh;
 
 // Welle 1: Module ohne Abhängigkeiten untereinander
 pub mod approvals;

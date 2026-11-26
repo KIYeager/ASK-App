@@ -26,6 +26,11 @@ pub async fn ipc(channel: String, args: Vec<Value>) -> Result<Value, String> {
                 }
             }
         }
+        // Anmelden in einem eigenen Fenster (ENTSCHEIDE E57)
+        "ask:login-window" => {
+            let url = ask_core::settings::get("askUrl").as_str().unwrap_or("").to_string();
+            return Ok(Value::Bool(!url.is_empty() && crate::askview::open_login(&url)));
+        }
         "browser:show" => { v.ensure_browser(); }
         "browser:go" => {
             let target = browser_address(&ask_core::util::js_string(&arg(0)));

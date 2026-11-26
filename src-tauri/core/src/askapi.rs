@@ -797,6 +797,54 @@ pub fn same_origin(url: &str, base: &str) -> bool {
     }
 }
 
+/// Chromium-Codes für «Name nicht gefunden» (ERR_NAME_NOT_RESOLVED, ERR_NAME_RESOLUTION_FAILED). Die Hülle meldet
+/// den entsprechenden Fehler von WebView2 mit demselben Code (ENTSCHEIDE E57).
+pub const NAME_ERRORS: [i64; 2] = [-105, -137];
+
+/// Scheiterte eine Anfrage, weil der Name nicht aufgelöst wurde? (Chromium-Text oder Fehler der Namensauflösung von reqwest)
+pub fn is_name_error(err: &str) -> bool {
+    re!(r"(?i)ERR_NAME_(NOT_RESOLVED|RESOLUTION_FAILED)|dns error|failed to lookup address|no such host is known|os error 11001|name or service not known").is_match(err)
+}
+
+/// Kurzer Grund eines Netzfehlers für Meldungen («ERR_NAME_NOT_RESOLVED» statt der ganzen Kette)
+pub fn net_reason(err: &str) -> String {
+    if let Some(m) = re!(r"net::(ERR_[A-Z_]+)").captures(err) {
+        return m[1].to_string();
+    }
+    if is_name_error(err) {
+        return "ERR_NAME_NOT_RESOLVED".into();
+    }
+    err.to_string()
+}
+
+/// Token aus dem Browser bereinigen: «Bearer » und Leerzeichen weg; ein JWT (drei Teile) oder ein API-Schlüssel (sk-…)
+pub fn clean_token(raw: &str) -> String {
+    let t = raw.trim();
+    let t = re!(r"(?i)^bearer\s+").replace(t, "").to_string();
+    let t = t.trim_start_matches(['"', '\'']).trim_end_matches(['"', '\'']).to_string();
+    if t.is_empty() || t.len() > 8192 || t.chars().any(char::is_whitespace) {
+        return String::new();
+    }
+    if re!(r"^sk-[A-Za-z0-9_-]{8,}$").is_match(&t) || re!(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$").is_match(&t) {
+        return t;
+    }
+    String::new()
+}
+
+/// Welche Adresse von ASK gilt (ENTSCHEIDE E58): Liefert die App eine mit, immer diese. Eine früher selbst
+/// eingetippte (erste Versionen fragten danach) bliebe sonst bei jedem Update stehen, auch vertippt. Ausnahme:
+/// ein nachgebautes ASK auf diesem Rechner (http://127.0.0.1 oder localhost) für die automatischen Tests.
+pub fn effective_ask_url(stored: &str, built_in: &str) -> String {
+    let local = re!(r"(?i)^http://(127\.0\.0\.1|localhost)(:\d+)?(/|$)").is_match(stored);
+    if !built_in.is_empty() && !local { built_in.to_string() } else { stored.to_string() }
+}
+
+/// Ablage für das Token aus dem Browser (verschlüsselt in den Einstellungen, app.rs)
+pub trait TokenStore: Send + Sync {
+    fn get(&self) -> String;
+    fn set(&self, token: &str);
+}
+
 // ---------- Schnittstellen nach aussen ----------
 
 /// Die ASK-Anmeldeseite in einer Webansicht der Hülle (in Electron die `WebContentsView`).
@@ -814,8 +862,8 @@ pub trait AskView: Send + Sync {
     fn is_destroyed(&self) -> bool;
     /// Adresse laden, ohne zu warten; scheitert das Laden, meldet die Hülle `on_view_failed` (`loadURL`)
     fn load_url(&self, url: &str);
-    /// Cookies dieser Herkunft löschen (`clearStorageData({ origin, storages: ['cookies'] })`)
-    async fn clear_cookies(&self, origin: &str);
+    /// Cookies und localStorage dieser Herkunft löschen (`clearStorageData({ origin, storages: ['cookies', 'localstorage'] })`)
+    async fn clear_site_data(&self, origin: &str);
 }
 
 /// Eine Anfrage an das Modell (die Felder von `chat({ ... })` in JS)
@@ -910,6 +958,9 @@ struct State {
     failed_at: i64,
     cleaned_for: String,
     view: Option<Arc<dyn AskView>>,
+    /// Token aus dem Browser (eingefügt oder aus dem Anmeldefenster), falls die ASK-Seite in der App nicht lädt (E57)
+    manual_token: String,
+    token_store: Option<Arc<dyn TokenStore>>,
     timer: Option<tokio::task::JoinHandle<()>>,
     handle: Option<tokio::runtime::Handle>,
 }
@@ -982,6 +1033,8 @@ impl AskSession {
                     failed_at: 0,
                     cleaned_for: String::new(),
                     view: None,
+                    manual_token: String::new(),
+                    token_store: None,
                     timer: None,
                     handle: tokio::runtime::Handle::try_current().ok(),
                 }),
@@ -1030,6 +1083,35 @@ impl AskSession {
     /// Token setzen (Tests, Wiederherstellung); sonst liest `check` es aus der Seite
     pub fn set_token(&self, token: &str) {
         self.inner.st.lock().token = token.to_string();
+    }
+
+    /// Ablage für das Token aus dem Browser setzen und ein gespeichertes Token übernehmen
+    pub fn set_token_store(&self, store: Arc<dyn TokenStore>) {
+        let token = clean_token(&store.get());
+        let mut s = self.inner.st.lock();
+        s.manual_token = token;
+        s.token_store = Some(store);
+    }
+
+    /// Token aus dem Browser (leer: keines)
+    pub fn manual_token(&self) -> String {
+        self.inner.st.lock().manual_token.clone()
+    }
+
+    fn remember_token(&self, token: &str) {
+        let store = {
+            let mut s = self.inner.st.lock();
+            s.manual_token = token.to_string();
+            s.token_store.clone()
+        };
+        if let Some(store) = store {
+            store.set(token);
+        }
+    }
+
+    /// Konnte die ASK-Seite zuletzt nicht laden?
+    pub fn load_failed(&self) -> bool {
+        self.inner.st.lock().load_failed
     }
 
     fn publish(&self, status: Value) {
@@ -1100,6 +1182,27 @@ impl AskSession {
         if state_of(&status) != "angemeldet" {
             self.publish(with_field(&status, "loadError", json!({ "code": code, "description": description, "url": url })));
         }
+        if NAME_ERRORS.contains(&code) {
+            self.inner.events.emit("name-not-resolved", &json!(url));
+        }
+        // Für die Meldung: geht die App direkt oder über einen Proxy? Unterscheidet sich das vom Browser, ist das oft der Grund.
+        let me = self.clone();
+        let target = url.to_string();
+        self.spawn(async move {
+            let proxy = tokio::task::spawn_blocking({
+                let t = target.clone();
+                move || crate::web::proxy_for(&t)
+            })
+            .await
+            .unwrap_or_default();
+            let status = me.status();
+            let Some(e) = status.get("loadError") else { return };
+            if !proxy.is_empty() && e.get("url").and_then(Value::as_str) == Some(target.as_str()) && e.get("code").and_then(Value::as_i64) == Some(code) {
+                let mut e = e.clone();
+                e["proxy"] = json!(proxy);
+                me.publish(with_field(&status, "loadError", e));
+            }
+        });
     }
 
     /// Hülle: eine Navigation beginnt (`did-start-navigation`). Nur Hauptframe und echte Seitenwechsel zählen.
@@ -1193,11 +1296,13 @@ impl AskSession {
             }
             (s.view.clone().expect("view"), s.base.clone(), state_of(&s.status), s.load_failed)
         };
-        if view.is_destroyed() || view.is_loading() || load_failed {
-            return self.status();
-        }
         let url = view.url();
-        if !same_origin(&url, &base) {
+        let page_ready = !view.is_destroyed() && !view.is_loading() && !load_failed && same_origin(&url, &base);
+        let manual = !self.manual_token().is_empty();
+        if !page_ready && !manual {
+            if view.is_destroyed() || view.is_loading() || load_failed {
+                return self.status();
+            }
             // Fertig geladen, aber nicht auf ASK (z. B. gleich zur Microsoft-Anmeldung weitergeleitet, oder eine Seite des
             // Netzes): die Seite zeigen, statt hinter «Verbinde mit ASK …» zu warten. Angemeldet ist man dort nicht.
             if ["unbekannt", "pruefen"].contains(&state.as_str()) && re!(r"(?i)^https?:").is_match(&url) {
@@ -1216,7 +1321,7 @@ impl AskSession {
             s.last_check = now_ms();
             s.busy = true;
         }
-        self.check_body(&view, force).await;
+        self.check_body(&view, page_ready, force).await;
         let again = {
             let mut s = self.inner.st.lock();
             s.busy = false;
@@ -1231,21 +1336,31 @@ impl AskSession {
         self.status()
     }
 
-    async fn check_body(&self, view: &Arc<dyn AskView>, force: bool) {
-        let token = match view.eval("localStorage.token || \"\"").await {
-            Ok(v) if truthy(&v) => js_string(&v),
-            Ok(_) => String::new(),
-            Err(err) => {
-                // Seite (noch) nicht lesbar, z. B. Fehlerseite: kein Fehler von ASK, später nochmals. Den Grund im Status
-                // mitgeben, damit die Oberfläche ihn zeigen kann, wenn das Warten zu lange dauert.
-                let detail = format!("Die ASK-Seite lässt sich nicht lesen: {err}");
-                let status = self.status();
-                if state_of(&status) != "angemeldet" && status.get("detail").and_then(Value::as_str) != Some(detail.as_str()) {
-                    self.publish(with_field(&status, "detail", json!(detail)));
+    async fn check_body(&self, view: &Arc<dyn AskView>, page_ready: bool, force: bool) {
+        let manual = self.manual_token();
+        let mut token = String::new();
+        if page_ready {
+            match view.eval("localStorage.token || \"\"").await {
+                Ok(v) if truthy(&v) => token = js_string(&v),
+                Ok(_) => {}
+                Err(err) => {
+                    // Seite (noch) nicht lesbar, z. B. Fehlerseite: kein Fehler von ASK, später nochmals. Den Grund im Status
+                    // mitgeben, damit die Oberfläche ihn zeigen kann, wenn das Warten zu lange dauert.
+                    if manual.is_empty() {
+                        let detail = format!("Die ASK-Seite lässt sich nicht lesen: {err}");
+                        let status = self.status();
+                        if state_of(&status) != "angemeldet" && status.get("detail").and_then(Value::as_str) != Some(detail.as_str()) {
+                            self.publish(with_field(&status, "detail", json!(detail)));
+                        }
+                        return;
+                    }
                 }
-                return;
             }
-        };
+        }
+        // Ohne Token auf der Seite gilt das Token aus dem Browser, falls eines da ist
+        if token.is_empty() {
+            token = manual;
+        }
         if token.is_empty() {
             self.inner.st.lock().token.clear();
             if state_of(&self.status()) != "nicht-angemeldet" {
@@ -1289,6 +1404,105 @@ impl AskSession {
         Ok(())
     }
 
+    /// Anmelden mit einem Token aus dem Browser (eingefügt oder aus dem Anmeldefenster, ENTSCHEIDE E57). Das Token wird
+    /// zuerst bei ASK geprüft; nur ein gültiges bleibt gespeichert. Antwort `{ ok, reason }`.
+    pub async fn use_token(&self, raw: &str) -> Value {
+        let token = clean_token(raw);
+        if token.is_empty() {
+            return json!({ "ok": false, "reason": "Das sieht nicht wie ein Token aus. Kopiere es ganz, ohne Leerzeichen." });
+        }
+        let base = self.base();
+        if base.is_empty() {
+            return json!({ "ok": false, "reason": "Die Adresse von ASK fehlt." });
+        }
+        for _ in 0..200 {
+            if !self.inner.st.lock().busy {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        self.inner.st.lock().busy = true;
+        let result = self.use_token_inner(&base, &token).await;
+        self.inner.st.lock().busy = false;
+        result
+    }
+
+    async fn use_token_inner(&self, base: &str, token: &str) -> Value {
+        let res = match self.inner.client.get(format!("{base}/api/v1/auths/")).header("Authorization", format!("Bearer {token}")).send().await {
+            Ok(r) => r,
+            Err(err) => {
+                let text = error_chain(&err);
+                if is_name_error(&text) {
+                    self.inner.events.emit("name-not-resolved", &json!(base));
+                }
+                return json!({ "ok": false, "reason": format!("ASK ist für die App nicht erreichbar ({}). Die App versucht es auch von selbst wieder.", net_reason(&text)) });
+            }
+        };
+        let status = res.status().as_u16();
+        if status == 401 || status == 403 {
+            return json!({ "ok": false, "reason": "ASK kennt dieses Token nicht oder es ist abgelaufen. Kopiere es nochmals aus ASK." });
+        }
+        if !res.status().is_success() {
+            return json!({ "ok": false, "reason": format!("ASK antwortet mit HTTP {status}.") });
+        }
+        self.remember_token(token);
+        {
+            let mut s = self.inner.st.lock();
+            s.token = token.to_string();
+            s.last_check = now_ms();
+        }
+        if let Err(err) = self.login(token).await {
+            if is_auth(&err) {
+                return json!({ "ok": false, "reason": "ASK hat das Token gleich wieder abgelehnt." });
+            }
+            self.publish(json!({ "state": "fehler", "message": err.to_string() }));
+        }
+        json!({ "ok": true })
+    }
+
+    /// Anmeldung in einem eigenen Fenster mit derselben Sitzung wie die ASK-Seite: Sobald dort ein Token steht (auch nach
+    /// dem Microsoft-Login, das die Seite ohne neues Laden setzt), übernimmt es die App und meldet «login-done».
+    /// Prüft alle 1,5 Sekunden; die Aufgabe endet, wenn das Fenster weg ist oder die Anmeldung geklappt hat.
+    pub fn watch_login(&self, view: Arc<dyn AskView>) -> tokio::task::JoinHandle<()> {
+        let me = self.clone();
+        let task = async move {
+            let mut tried = String::new();
+            loop {
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+                if view.is_destroyed() {
+                    break;
+                }
+                if me.grab_login_token(&view, &mut tried).await {
+                    break;
+                }
+            }
+        };
+        match self.inner.st.lock().handle.clone() {
+            Some(h) => h.spawn(task),
+            None => tokio::spawn(task),
+        }
+    }
+
+    /// Einmal nachsehen, ob im Anmeldefenster ein Token steht; true, wenn damit angemeldet
+    pub async fn grab_login_token(&self, view: &Arc<dyn AskView>, tried: &mut String) -> bool {
+        if view.is_destroyed() || view.is_loading() || !same_origin(&view.url(), &self.base()) {
+            return false;
+        }
+        let Ok(v) = view.eval("localStorage.token || \"\"").await else { return false };
+        let token = clean_token(&js_string(&v));
+        if token.is_empty() || token == *tried {
+            return false;
+        }
+        *tried = token.clone();
+        let res = self.use_token(&token).await;
+        if res.get("ok") == Some(&json!(true)) {
+            self.inner.events.emit("login-done", &Value::Null);
+            return true;
+        }
+        tried.clear(); // z. B. ASK gerade nicht erreichbar: später nochmals
+        false
+    }
+
     // ----- Anfragen an ASK -----
 
     async fn send(&self, base: &str, token: &str, path: &str, opts: RequestOptions) -> Result<reqwest::Response> {
@@ -1328,6 +1542,10 @@ impl AskSession {
         }
         let res = self.send(&base, &token, path, opts).await?;
         if res.status().as_u16() == 401 {
+            let manual = self.manual_token();
+            if !token.is_empty() && token == manual {
+                self.remember_token("");
+            }
             self.inner.st.lock().token.clear();
             self.publish(json!({ "state": "nicht-angemeldet" }));
             return Err(AuthError::new("Die Anmeldung bei ASK ist abgelaufen. Bitte neu anmelden.").into());
@@ -1456,13 +1674,15 @@ impl AskSession {
             let mut s = self.inner.st.lock();
             (std::mem::take(&mut s.token), s.base.clone(), s.view.clone())
         };
+        self.remember_token("");
         if !token.is_empty() && view.is_some() {
             let _ = self.inner.client.get(format!("{base}/api/v1/auths/signout")).header("Authorization", format!("Bearer {token}")).send().await;
         }
         if let Some(view) = view {
             let _ = view.eval("localStorage.removeItem(\"token\")").await;
             if let Ok(u) = url::Url::parse(&base) {
-                view.clear_cookies(&u.origin().ascii_serialization()).await;
+                // auch localStorage: Lädt die Seite nicht, kann die App das Token dort nicht selbst entfernen
+                view.clear_site_data(&u.origin().ascii_serialization()).await;
             }
             view.load_url(&format!("{base}/auth"));
         }
@@ -2154,11 +2374,12 @@ mod tests {
         url: Mutex<String>,
         read: Box<dyn Fn() -> Result<Value> + Send + Sync>,
         loads: Mutex<Vec<String>>,
+        cleared: Mutex<Vec<String>>,
     }
 
     impl FakeView {
         fn new(url: &str, read: impl Fn() -> Result<Value> + Send + Sync + 'static) -> Self {
-            FakeView { url: Mutex::new(url.to_string()), read: Box::new(read), loads: Mutex::new(Vec::new()) }
+            FakeView { url: Mutex::new(url.to_string()), read: Box::new(read), loads: Mutex::new(Vec::new()), cleared: Mutex::new(Vec::new()) }
         }
     }
 
@@ -2179,7 +2400,9 @@ mod tests {
         fn load_url(&self, url: &str) {
             self.loads.lock().push(url.to_string());
         }
-        async fn clear_cookies(&self, _origin: &str) {}
+        async fn clear_site_data(&self, origin: &str) {
+            self.cleared.lock().push(origin.to_string());
+        }
     }
 
     fn fake_page(url: &str, read: impl Fn() -> Result<Value> + Send + Sync + 'static) -> (AskSession, Arc<FakeView>) {
@@ -2259,5 +2482,171 @@ mod tests {
         assert_eq!(context_of(&json!({ "info": { "params": { "num_ctx": 8192 } } })), 8192);
         assert_eq!(context_of(&json!({ "max_model_len": "32768", "context_length": 5 })), 32768);
         assert_eq!(context_of(&json!({})), 0);
+    }
+    // ---------- Anmelden ohne die ASK-Seite der App (ENTSCHEIDE E57) ----------
+
+    const JWT: &str = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IjEyMyJ9.c2lnbmF0dXI";
+
+    /// ASK-Schnittstelle, die nur die Token in `accept` annimmt
+    async fn fake_ask(accept: Vec<&'static str>) -> test_http::TestServer {
+        serve(move |req| {
+            let auth = req.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("authorization")).map(|(_, v)| v.trim_start_matches("Bearer ").to_string()).unwrap_or_default();
+            if !accept.contains(&auth.as_str()) {
+                return Resp::json(401, &json!({}));
+            }
+            let body = if req.path.ends_with("/api/v1/auths/") { json!({ "name": "Lea Muster", "role": "user" }) }
+                else if req.path.ends_with("/api/models") { json!({ "data": [{ "id": "qwen", "name": "Qwen" }] }) }
+                else { json!({}) };
+            Resp::json(200, &body)
+        }).await
+    }
+
+    #[derive(Default)]
+    struct Store(Mutex<String>);
+    impl TokenStore for Store {
+        fn get(&self) -> String {
+            self.0.lock().clone()
+        }
+        fn set(&self, t: &str) {
+            *self.0.lock() = t.to_string();
+        }
+    }
+
+    fn store_of(v: &str) -> Arc<Store> {
+        Arc::new(Store(Mutex::new(v.to_string())))
+    }
+
+    #[test]
+    fn token_aus_dem_browser_bereinigt_nur_jwt_oder_api_schluessel() {
+        assert_eq!(clean_token(&format!("  Bearer {JWT}\n")), JWT);
+        assert_eq!(clean_token(&format!("\"{JWT}\"")), JWT);
+        assert_eq!(clean_token("sk-0123456789abcdef"), "sk-0123456789abcdef");
+        for bad in ["", "hallo", "abc def.ghi.jkl", "eyJ.a b.c", &"x".repeat(9000)] {
+            assert_eq!(clean_token(bad), "", "{bad}");
+        }
+    }
+
+    #[test]
+    fn adresse_von_ask_immer_die_mitgelieferte_ausser_einem_nachgebauten_ask() {
+        let school = "https://ask.ict-tfbern.ch";
+        assert_eq!(effective_ask_url("https://ask-ict.tfbern.ch", school), school, "vertippt aus einer frühen Version");
+        assert_eq!(effective_ask_url("", school), school);
+        assert_eq!(effective_ask_url("https://andere.example.ch", school), school);
+        assert_eq!(effective_ask_url("http://127.0.0.1:18901", school), "http://127.0.0.1:18901");
+        assert_eq!(effective_ask_url("http://localhost:5000", school), "http://localhost:5000");
+        assert_eq!(effective_ask_url("http://127.0.0.1.evil.ch", school), school);
+        assert_eq!(effective_ask_url("https://eigene.example.ch", ""), "https://eigene.example.ch", "ohne mitgelieferte Adresse bleibt die eigene");
+    }
+
+    #[tokio::test]
+    async fn token_einfuegen_gueltig_meldet_an_und_bleibt_gespeichert_ungueltig_nicht() {
+        let server = fake_ask(vec![JWT]).await;
+        let (ask, _view) = fake_page("https://ask.example.ch/auth", || anyhow::bail!("Fehlerseite"));
+        ask.set_base(&server.url);
+        let store = store_of("");
+        ask.set_token_store(store.clone());
+        let bad = ask.use_token("eyJhbGciOiJIUzI1NiJ9.eyJpZCI6Ijk5In0.ZmFsc2No").await;
+        assert_eq!(bad["ok"], false);
+        assert!(bad["reason"].as_str().unwrap().contains("kennt dieses Token nicht"));
+        assert_eq!(store.get(), "");
+        assert_eq!(ask.use_token("nur text").await["ok"], false);
+        let good = ask.use_token(&format!("Bearer {JWT}")).await;
+        assert_eq!(good, json!({ "ok": true }));
+        assert_eq!(store.get(), JWT);
+        assert_eq!(state_of(&ask.status()), "angemeldet");
+        assert_eq!(ask.status()["user"], "Lea Muster");
+        assert_eq!(ask.models().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn gespeichertes_token_gilt_auch_wenn_die_ask_seite_nicht_laedt() {
+        let server = fake_ask(vec![JWT]).await;
+        let (ask, _view) = fake_page("https://ask.example.ch/", || anyhow::bail!("nie gelesen"));
+        ask.set_base(&server.url);
+        ask.set_token_store(store_of(JWT));
+        ask.on_view_failed(-105, "ERR_NAME_NOT_RESOLVED", "https://ask.example.ch/");
+        assert_eq!(state_of(&ask.check(true).await), "angemeldet");
+    }
+
+    #[tokio::test]
+    async fn seite_ohne_token_gespeichertes_token_angemeldet_abgelaufen_abgemeldet_und_geloescht() {
+        let server = fake_ask(vec![JWT]).await;
+        let base = server.url.clone();
+        let (ask, _view) = fake_page(&format!("{base}/auth"), || Ok(json!("")));
+        ask.set_base(&base);
+        let store = store_of(JWT);
+        ask.set_token_store(store.clone());
+        assert_eq!(state_of(&ask.check(true).await), "angemeldet");
+        // ASK nimmt das Token nicht mehr an
+        let expired = fake_ask(vec![]).await;
+        ask.set_base(&expired.url);
+        *_view.url.lock() = format!("{}/auth", expired.url);
+        assert_eq!(state_of(&ask.check(true).await), "nicht-angemeldet");
+        assert_eq!(store.get(), "");
+        assert_eq!(ask.manual_token(), "");
+    }
+
+    #[tokio::test]
+    async fn abmelden_loescht_das_gespeicherte_token_cookies_und_localstorage() {
+        let server = fake_ask(vec![JWT]).await;
+        let (ask, view) = fake_page("https://ask.example.ch/auth", || Ok(json!("")));
+        ask.set_base(&server.url);
+        let store = store_of(JWT);
+        ask.set_token_store(store.clone());
+        ask.set_token(JWT);
+        ask.logout().await;
+        assert_eq!(store.get(), "");
+        assert_eq!(view.cleared.lock().len(), 1, "Cookies und localStorage der Herkunft von ASK");
+        assert_eq!(state_of(&ask.status()), "nicht-angemeldet");
+    }
+
+    #[tokio::test]
+    async fn name_nicht_gefunden_ereignis_fuer_das_ausweich_dns_proxy_im_ladefehler() {
+        let (ask, _view) = fake_page("https://ask.example.ch/", || Ok(json!("")));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s = seen.clone();
+        ask.on("name-not-resolved", move |v| s.lock().push(js_string(v)));
+        ask.on_view_failed(-202, "ERR_CERT_AUTHORITY_INVALID", "https://ask.example.ch/");
+        assert!(seen.lock().is_empty(), "anderer Fehler: kein Ausweich-DNS");
+        ask.on_view_failed(-105, "ERR_NAME_NOT_RESOLVED", "https://ask.example.ch/");
+        assert_eq!(*seen.lock(), vec!["https://ask.example.ch/".to_string()]);
+        for _ in 0..50 {
+            if ask.status().pointer("/loadError/proxy").is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(ask.status().pointer("/loadError/proxy").and_then(Value::as_str).is_some_and(|p| !p.is_empty()), "{}", ask.status());
+
+        // auch beim Einfügen eines Tokens, wenn ASK für die App nicht auflösbar ist
+        ask.set_base("https://fail-dns.invalid");
+        let res = ask.use_token(JWT).await;
+        assert_eq!(res["ok"], false);
+        assert!(res["reason"].as_str().unwrap().contains("nicht erreichbar (ERR_NAME_NOT_RESOLVED)"), "{res}");
+        assert_eq!(seen.lock().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn eigenes_anmeldefenster_token_nach_der_anmeldung_uebernommen_login_done() {
+        let server = fake_ask(vec![JWT]).await;
+        let base = server.url.clone();
+        let (ask, _view) = fake_page("https://ask.example.ch/", || anyhow::bail!("Fehlerseite"));
+        ask.set_base(&base);
+        ask.set_token_store(store_of(""));
+        let token = Arc::new(Mutex::new(String::new()));
+        let t = token.clone();
+        let win: Arc<dyn AskView> = Arc::new(FakeView::new(&format!("{base}/auth"), move || Ok(json!(t.lock().clone()))));
+        let done = Arc::new(Mutex::new(0));
+        let d = done.clone();
+        ask.on("login-done", move |_| *d.lock() += 1);
+        let mut tried = String::new();
+        assert!(!ask.grab_login_token(&win, &mut tried).await, "ohne Token nichts");
+        // fremde Seite (Microsoft-Login) wird nicht gelesen
+        let foreign: Arc<dyn AskView> = Arc::new(FakeView::new("https://login.microsoftonline.com/x", || Ok(json!(JWT))));
+        assert!(!ask.grab_login_token(&foreign, &mut tried).await);
+        *token.lock() = JWT.to_string();
+        assert!(ask.grab_login_token(&win, &mut tried).await);
+        assert_eq!(*done.lock(), 1);
+        assert_eq!(state_of(&ask.status()), "angemeldet");
     }
 }

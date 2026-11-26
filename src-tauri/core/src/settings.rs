@@ -60,14 +60,10 @@ fn loaded(guard: &mut Option<Map<String, Value>>) -> &mut Map<String, Value> {
         for (k, v) in stored {
             data.insert(k, v);
         }
-        let ask_url_empty = data.get("askUrl").map(crate::util::js_string).unwrap_or_default().is_empty();
-        if ask_url_empty {
-            if let Some(Value::String(u)) = app_config().get("askUrl") {
-                if !u.is_empty() {
-                    data.insert("askUrl".into(), Value::String(u.clone()));
-                }
-            }
-        }
+        // Immer die mitgelieferte Adresse der Schule (ENTSCHEIDE E58), ausser einem nachgebauten ASK für Tests
+        let stored = data.get("askUrl").map(crate::util::js_string).unwrap_or_default();
+        let built_in = app_config().get("askUrl").map(crate::util::js_string).unwrap_or_default();
+        data.insert("askUrl".into(), Value::String(crate::askapi::effective_ask_url(&stored, &built_in)));
         if !data.get("recent").is_some_and(Value::is_array) {
             data.insert("recent".into(), json!([]));
         }
@@ -125,6 +121,15 @@ pub fn set(values: Value) {
         }
     }
     save(data);
+}
+
+/// Einen Wert ganz entfernen (in JavaScript `set({ key: undefined })`)
+pub fn remove(key: &str) {
+    let mut g = DATA.lock();
+    let data = loaded(&mut g);
+    if data.remove(key).is_some() {
+        save(data);
+    }
 }
 
 /// Nur für Tests: beim nächsten Zugriff neu aus der Datei lesen.

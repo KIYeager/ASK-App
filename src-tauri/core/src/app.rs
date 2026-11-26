@@ -172,6 +172,18 @@ pub fn safe_folder_name(name: &str) -> String {
     if device { format!("{clean}-Projekt") } else { clean }
 }
 
+/// Token aus dem Browser für ASK (ENTSCHEIDE E57), verschlüsselt mit dem Windows-Konto in den Einstellungen
+struct AskTokenStore;
+
+impl crate::askapi::TokenStore for AskTokenStore {
+    fn get(&self) -> String {
+        crate::secrets::unprotect(settings::get("askToken").as_str().unwrap_or(""))
+    }
+    fn set(&self, token: &str) {
+        settings::set(json!({ "askToken": crate::secrets::protect(token) }));
+    }
+}
+
 pub struct App {
     host: Arc<dyn Host>,
     pub ask: Arc<AskSession>,
@@ -183,6 +195,10 @@ pub struct App {
     pub knowledge: Arc<Knowledge>,
     pub updater: Arc<Updater>,
     reviewer: ReviewFn,
+    /// Ausweich-DNS über Quad9 für die Anfragen der App (ENTSCHEIDE E57, E58)
+    pub dns: Arc<crate::doh::FallbackDns>,
+    /// Ausweich-DNS eingeschaltet, aber noch nicht bestätigt (ASK hat danach noch nicht geladen)
+    dns_pending: std::sync::atomic::AtomicBool,
     ask_view: Arc<dyn AskView>,
     file_base: String,
     test_mode: bool,
@@ -222,8 +238,12 @@ impl App {
         }
         let test_mode = paths::test_mode();
         let env_on = |k: &str| std::env::var(k).map(|v| v == "1").unwrap_or(false);
-        let client = Web::client_builder(test_mode).build().unwrap_or_default();
+        let dns = Arc::new(crate::doh::FallbackDns::new());
+        dns.set_host(&str_of(&settings::app_config(), "askUrl"));
+        let client = Web::client_builder(test_mode).dns_resolver(dns.clone()).build().unwrap_or_default();
         let ask = Arc::new(AskSession::with_client(client.clone()));
+        // Token aus dem Browser (ENTSCHEIDE E57), verschlüsselt wie das GitHub-Token
+        ask.set_token_store(Arc::new(AskTokenStore));
         ask.attach(o.ask_view.clone());
 
         // GitHub-Token verschlüsselt mit dem Windows-Konto (DPAPI) in den Einstellungen; nur hier lesbar.
@@ -317,6 +337,8 @@ impl App {
                 knowledge,
                 updater,
                 reviewer,
+                dns,
+                dns_pending: std::sync::atomic::AtomicBool::new(false),
                 ask_view: o.ask_view.clone(),
                 file_base: o.file_base,
                 test_mode,
@@ -355,6 +377,14 @@ impl App {
 
     /// Wie app.whenReady in main.js
     pub async fn start(self: &Arc<Self>) {
+        // Ausweich-DNS vor dem ersten Laden (ENTSCHEIDE E57). «secureDns» aus 0.3.7 galt auch nach einer vertippten
+        // Adresse: verworfen (E58). Gemerkt wird es mit der Adresse und gilt nur, wenn sie noch die der Schule ist.
+        settings::remove("secureDns");
+        let dns_for = js_string(&settings::get("secureDnsFor"));
+        let school = str_of(&settings::app_config(), "askUrl");
+        if !dns_for.is_empty() && crate::askapi::same_origin(&dns_for, &school) && crate::askapi::same_origin(&dns_for, &js_string(&settings::get("askUrl"))) {
+            self.dns.enable();
+        }
         self.skip_tour_for_existing_users();
         self.apply_theme();
         self.wire_events();
@@ -469,7 +499,37 @@ impl App {
                 Some("nicht-angemeldet") => a.images.forget(),
                 _ => {}
             }
+            // Ausweich-DNS hat geholfen: ASK lädt jetzt, also auch beim nächsten Start gleich so
+            let state = str_of(s, "state");
+            if a.dns_pending.load(std::sync::atomic::Ordering::SeqCst) && s.get("loadError").is_none()
+                && (state == "nicht-angemeldet" || state == "angemeldet") && !a.ask.load_failed()
+            {
+                a.dns_pending.store(false, std::sync::atomic::Ordering::SeqCst);
+                if let Ok(u) = url::Url::parse(&js_string(&settings::get("askUrl"))) {
+                    settings::set(json!({ "secureDnsFor": u.origin().ascii_serialization() }));
+                }
+            }
             a.push_state();
+        });
+        // Name von ASK nicht gefunden: Ausweich-DNS über Quad9, nur für die Adresse der Schule (ENTSCHEIDE E57, E58)
+        let me = Arc::downgrade(self);
+        self.ask.on("name-not-resolved", move |failed| {
+            let Some(a) = me.upgrade() else { return };
+            let school = str_of(&settings::app_config(), "askUrl");
+            if !crate::askapi::same_origin(&js_string(failed), &school) || !a.dns.enable() {
+                return;
+            }
+            a.dns_pending.store(true, std::sync::atomic::Ordering::SeqCst);
+            a.push_state();
+            // gleich nochmals laden, nicht erst nach 15 Sekunden
+            let view = a.ask_view.clone();
+            let url = js_string(&settings::get("askUrl"));
+            spawn(async move {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if !url.is_empty() {
+                    view.load_url(&url);
+                }
+            });
         });
         let me = Arc::downgrade(self);
         self.ask.on("models", move |_| { if let Some(a) = me.upgrade() { a.push_state(); } });
@@ -608,6 +668,7 @@ impl App {
         let models = self.ask.models();
         json!({
             "askUrl": s["askUrl"],
+            "secureDns": self.dns.enabled(),
             "folder": s["folder"],
             "recent": s["recent"],
             "warningAccepted": s["warningAccepted"],
@@ -1641,6 +1702,13 @@ impl App {
             }
             "ask:connect" => self.ask.check(true).await,
             "ask:logout" => { self.ask.logout().await; Value::Null }
+            // Anmelden im normalen Browser und Token einfügen (ENTSCHEIDE E57). «ask:login-window» macht die Hülle.
+            "ask:open-browser" => {
+                let url = js_string(&settings::get("askUrl"));
+                if url.to_lowercase().starts_with("https://") { self.host.open_external(&url); }
+                Value::Null
+            }
+            "ask:use-token" => self.ask.use_token(&sarg(a, 0)).await,
             "ask:models" => { let _ = self.ask.load_models().await; self.push_state(); json!(self.ask.models()) }
             "thinking:set" => {
                 let l = sarg(a, 0);

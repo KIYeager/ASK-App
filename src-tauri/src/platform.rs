@@ -63,7 +63,12 @@ pub fn setup_ask_view(wv: &Webview<Wry>) {
                         crate::askview::LOADING.store(false, std::sync::atomic::Ordering::SeqCst);
                         if status != COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED {
                             if let Some(core) = crate::shell().core_opt() {
-                                core.ask_load_failed(status.0, &web_error_text(status.0), &url);
+                                // «Name nicht gefunden» mit dem Code und Text von Chromium, den die Oberfläche und askapi kennen
+                                if status == COREWEBVIEW2_WEB_ERROR_STATUS_HOST_NAME_NOT_RESOLVED {
+                                    core.ask_load_failed(-105, "ERR_NAME_NOT_RESOLVED", &url);
+                                } else {
+                                    core.ask_load_failed(status.0, &web_error_text(status.0), &url);
+                                }
                             }
                         }
                     }

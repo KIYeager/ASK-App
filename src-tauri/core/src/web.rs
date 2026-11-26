@@ -559,6 +559,60 @@ impl Web {
     }
 }
 
+/// Geht eine Anfrage an `url` direkt oder über einen Proxy? Für die Meldung «ASK ist nicht erreichbar» (ENTSCHEIDE E57),
+/// wie `session.resolveProxy` in Electron: «DIRECT», «PROXY host:port» oder «PAC <Adresse>». Liest die Umgebung
+/// (HTTPS_PROXY, ALL_PROXY, NO_PROXY) und unter Windows die Einstellungen von Windows (Internetoptionen des Kontos).
+pub fn proxy_for(url: &str) -> String {
+    let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_lowercase)).unwrap_or_default();
+    let env = |k: &str| std::env::var(k).or_else(|_| std::env::var(k.to_lowercase())).unwrap_or_default();
+    let no_proxy = env("NO_PROXY");
+    let excluded = no_proxy.split(',').map(str::trim).filter(|p| !p.is_empty())
+        .any(|p| p == "*" || host == p.trim_start_matches('.') || host.ends_with(&format!(".{}", p.trim_start_matches('.'))));
+    if !excluded {
+        for k in ["HTTPS_PROXY", "ALL_PROXY"] {
+            let v = env(k);
+            if !v.is_empty() {
+                return format!("PROXY {}", v.trim_start_matches("http://").trim_start_matches("https://").trim_end_matches('/'));
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Some(p) = windows_proxy() {
+            return p;
+        }
+    }
+    "DIRECT".into()
+}
+
+#[cfg(windows)]
+fn windows_proxy() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("reg")
+        .args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings"])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let value = |name: &str| -> Option<String> {
+        text.lines().find_map(|l| {
+            let parts: Vec<&str> = l.split_whitespace().collect();
+            (parts.len() >= 3 && parts[0].eq_ignore_ascii_case(name)).then(|| parts[2..].join(" "))
+        })
+    };
+    if let Some(pac) = value("AutoConfigURL").filter(|v| !v.is_empty()) {
+        return Some(format!("PAC {pac}"));
+    }
+    if value("ProxyEnable").is_some_and(|v| v.trim() == "0x1") {
+        if let Some(server) = value("ProxyServer").filter(|v| !v.is_empty()) {
+            // «http=host:port;https=host:port» oder «host:port»
+            let https = server.split(';').find_map(|p| p.strip_prefix("https=")).unwrap_or(&server).to_string();
+            return Some(format!("PROXY {https}"));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -155,6 +155,7 @@ fn setup(app: AppHandle) -> anyhow::Result<()> {
         file_base: file_base.into(),
     });
     let _ = shell().core.set(core.clone());
+    core.ask.on("login-done", |_| askview::login_done());
     let dark = matches!(ask_core::settings::get("theme").as_str(), Some("dunkel"));
     shell().views.create(dark)?;
     tauri::async_runtime::spawn(async move { core.start().await });
