@@ -1,10 +1,12 @@
 # Vergleich Electron gegen Tauri auf einem Windows-Rechner von GitHub (ENTSCHEIDE E57): Startzeiten bis zur
-# Oberfläche und bis «Terminal läuft», Arbeitsspeicher, Grössen. Von Hand starten: Actions, «Benchmark»,
-# «Run workflow». Ergebnis in der Zusammenfassung des Laufs und als Datei benchmark.json.
+# Oberfläche und bis «Terminal läuft», Arbeitsspeicher, Grössen. Starten: im Pull Request das Label «benchmark»
+# setzen, oder nach dem Merge unter Actions, «Benchmark», «Run workflow». Ergebnis in der Zusammenfassung des Laufs und als Datei benchmark.json.
 # Die Rechner von GitHub haben keine Grafikkarte und schwanken etwas: Das ist ein Vergleich, keine Zahl für Laptops.
 name: Benchmark
 
 on:
+  pull_request:
+    types: [labeled]
   workflow_dispatch:
     inputs:
       electron:
@@ -19,6 +21,7 @@ permissions:
 
 jobs:
   benchmark:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'benchmark'
     runs-on: windows-latest
     timeout-minutes: 90
     defaults:
@@ -50,7 +53,7 @@ jobs:
       - name: Electron-Fassung laden und installieren
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.electron }}
+          TAG: ${{ inputs.electron || 'v0.3.6' }}
         run: |
           $v = $env:TAG.TrimStart('v')
           gh release download $env:TAG --repo KIYeager/ASK-Releases --pattern "ASK-Setup-$v.exe" --dir $env:RUNNER_TEMP
@@ -58,13 +61,13 @@ jobs:
           if (-not (Test-Path "$env:LOCALAPPDATA\Programs\ask-desktop\ASK.exe")) { throw "Electron-Fassung nicht installiert" }
       - name: Messen
         env:
-          TAG: ${{ inputs.electron }}
+          TAG: ${{ inputs.electron || 'v0.3.6' }}
         run: |
           $v = $env:TAG.TrimStart('v')
           $dist = Join-Path $env:ASK_BUILD_DIR 'dist'
           $setup = (Get-ChildItem $dist -Filter 'ASK-Setup-*.exe' | Select-Object -First 1).FullName
           node scripts/benchmark.js --electron "$env:LOCALAPPDATA\Programs\ask-desktop\ASK.exe" --tauri (Join-Path $dist 'app\ASK.exe') `
-            --runs ${{ inputs.runs }} --out benchmark.json --sizes `
+            --runs ${{ inputs.runs || '10' }} --out benchmark.json --sizes `
             "Installer Electron=$(Join-Path $env:RUNNER_TEMP "ASK-Setup-$v.exe")" "Installer Tauri=$setup" `
             "Installiert Electron=$env:LOCALAPPDATA\Programs\ask-desktop" "App-Ordner Tauri=$(Join-Path $dist 'app')"
       - uses: actions/upload-artifact@v4
