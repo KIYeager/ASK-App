@@ -1237,6 +1237,15 @@ mod tests {
         std::fs::write(work.join("Übung.txt"), "Grüezi").unwrap();
         let t = Terminal::new(Arc::new(InProcessBackend { server: Mutex::new(None) }));
         t.start(opts(&work.to_string_lossy())).await;
+        if cfg!(windows) {
+            // Unter Windows zählt das echte Token: Der Server im Testprozess läuft nicht mit Low, also gibt die App ihn
+            // nicht frei (Schutz, wie beim Python-Starter). Den Weg über HTTP mit echtem Low-Token prüft
+            // src-tauri/tests/terminal_e2e.rs mit `ask --terminal`.
+            assert_eq!(t.state(), "fehler");
+            assert!(t.error().contains("niedriger Integritätsstufe"), "{}", t.error());
+            t.stop().await;
+            return;
+        }
         assert_eq!(t.state(), "läuft", "{}", t.error());
         assert_eq!(t.snapshot()["lowIntegrity"], true);
         assert_eq!(t.info().unwrap()["workdir"].as_str().unwrap().to_lowercase().replace("\\\\?\\", ""), std::fs::canonicalize(&work).unwrap().to_string_lossy().to_lowercase().replace("\\\\?\\", ""));

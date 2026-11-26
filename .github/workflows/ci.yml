@@ -42,7 +42,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
 
   python:
@@ -82,7 +82,7 @@ jobs:
           workspaces: src-tauri
       # Enthält den Terminal-Server: Low Integrity der Befehle, Ordner mit Umlaut, OEM-Ausgabe, Job-Objekt
       # (src-tauri/terminal und src-tauri/tests/terminal_e2e.rs)
-      - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
       - run: npm run build:ui
       - run: cargo build --manifest-path src-tauri/Cargo.toml --release
