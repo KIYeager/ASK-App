@@ -10,3 +10,7 @@ src/renderer/dist/
 
 # Arbeitskopien von Hilfsagenten
 .claude/worktrees/
+
+# Rust
+src-tauri/target/
+src-tauri/gen/

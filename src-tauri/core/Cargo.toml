@@ -1,0 +1,43 @@
+[package]
+name = "ask-core"
+version = "0.3.6"
+edition = "2021"
+rust-version = "1.90"
+description = "ASK Desktop: Logik ohne Fenster (Agent, Werkzeuge, ASK, GitHub, Ablagen)"
+license = "UNLICENSED"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["clock"] }
+dirs = "6"
+dunce = "1"
+futures = "0.3"
+hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+notify = "8"
+parking_lot = "0.12"
+percent-encoding = "2"
+rand = "0.9"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "brotli", "native-tls", "multipart"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha1 = "0.10"
+sha2 = "0.10"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+url = "2"
+walkdir = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_Storage_FileSystem", "Win32_UI_Shell"] }
+
+[dev-dependencies]
+tempfile = "3"
