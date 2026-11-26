@@ -11,7 +11,8 @@
 //! - `check_health(generation)` (Probe alle 10 s, öffentlich für Tests)
 //! - Ereignisse über `on(name, f)`: «state» (Schnappschuss als JSON), «port» (Zahl)
 //! - freie Funktionen `is_port_free`, `choose_port`, `get_json`
-//! - `native_low::NativeLowBackend`: startet `python launcher.py` und gibt den Key über stdin
+//! - `native_low::NativeLowBackend`: startet die App mit `--terminal` (Terminal-Server in Rust, Crate `ask-terminal`)
+//!   mit Low Integrity im Job-Objekt, Key über stdin; `with_executable` tauscht das Programm (Tests), `build_env`
 
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
@@ -102,32 +103,137 @@ pub trait Backend: Send + Sync + 'static {
     fn running(&self) -> bool;
 }
 
-/// Backend «nativ mit Low Integrity»: startet python/ask_terminal/launcher.py mit dem mitgelieferten
-/// Python. Der Starter kennzeichnet den Ordner, senkt den Server auf Low und hält ihn in einem
-/// Job-Objekt. Der Key geht über stdin, nie über Kommandozeile oder Datei.
+/// Backend «nativ mit Low Integrity»: Die App startet sich selbst mit `--terminal` (Terminal-Server in Rust,
+/// Crate `ask-terminal`). Der Starter, der früher in Python lief (launcher.py), steckt hier: Arbeits- und
+/// Laufzeitordner mit Low kennzeichnen, den Server angehalten starten, sein Token auf Low absenken, ihn in ein
+/// Job-Objekt legen und fortsetzen. Der Key geht über stdin, nie über Kommandozeile oder Datei. Schliesst die App
+/// stdin (oder stürzt ab, dann schliesst Windows das Job-Handle), endet der Server mit allen Kindprozessen.
 pub mod native_low {
     use super::*;
+    use std::path::{Path, PathBuf};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::process::{ChildStdin, Command};
     use tokio::sync::{watch, Notify};
+
+    /// Umgebungsvariablen, die nicht an das Modell weitergegeben werden.
+    const DROP_ENV: [&str; 8] = ["ELECTRON_RUN_AS_NODE", "ELECTRON_NO_ATTACH_CONSOLE", "NODE_OPTIONS", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "VIRTUAL_ENV", "OPEN_TERMINAL_API_KEY"];
+
+    #[cfg(windows)]
+    type JobHandle = Arc<ask_terminal::winproc::Job>;
+    /// Ausserhalb von Windows gibt es kein Job-Objekt
+    #[cfg(not(windows))]
+    #[derive(Clone)]
+    struct JobHandle;
 
     struct Running {
         id: u64,
         stdin: Option<ChildStdin>,
         kill: Arc<Notify>,
         exited: watch::Receiver<bool>,
+        #[cfg_attr(not(windows), allow(dead_code))]
+        job: JobHandle,
     }
 
-    #[derive(Default)]
     pub struct NativeLowBackend {
         cur: Arc<Mutex<Option<Running>>>,
         next_id: AtomicU64,
+        executable: Option<PathBuf>,
+        low_integrity: bool,
+        execute_timeout: f64,
+    }
+
+    impl Default for NativeLowBackend {
+        fn default() -> Self {
+            NativeLowBackend { cur: Arc::new(Mutex::new(None)), next_id: AtomicU64::new(0), executable: None, low_integrity: true, execute_timeout: 60.0 }
+        }
     }
 
     impl NativeLowBackend {
         pub fn new() -> Self {
             Self::default()
         }
+
+        /// Statt der laufenden App ein anderes Programm als Server starten (Tests: gebaute App oder Attrappe)
+        pub fn with_executable(mut self, path: impl Into<PathBuf>) -> Self {
+            self.executable = Some(path.into());
+            self
+        }
+
+        /// false: ohne Kennzeichnung und ohne Absenken des Tokens (nur Tests)
+        pub fn with_low_integrity(mut self, low: bool) -> Self {
+            self.low_integrity = low;
+            self
+        }
+
+        /// Nur Tests: stdin des Servers schliessen, wie bei einem Absturz der App
+        #[cfg(test)]
+        pub fn close_stdin_for_test(&self) {
+            if let Some(r) = self.cur.lock().as_mut() {
+                r.stdin.take();
+            }
+        }
+
+        /// Wartezeit für Befehle ohne eigene Angabe (Sekunden)
+        pub fn with_execute_timeout(mut self, seconds: f64) -> Self {
+            self.execute_timeout = seconds;
+            self
+        }
+    }
+
+    /// Umgebung für den Server und seine Befehle (wie `build_env` im Starter): ohne die Variablen aus `DROP_ENV`,
+    /// mit dem mitgelieferten Python im PATH und allen Schreibzielen im Laufzeitordner.
+    pub fn build_env(runtime: &Path, python_dir: &Path, base: impl IntoIterator<Item = (String, String)>) -> Vec<(String, String)> {
+        // Windows kennt Variablen ohne Gross-/Kleinschreibung (Python macht die Namen gross); sonst unverändert
+        let norm = |k: &str| if cfg!(windows) { k.to_uppercase() } else { k.to_string() };
+        let mut env: std::collections::BTreeMap<String, String> = base
+            .into_iter()
+            .filter(|(k, _)| !DROP_ENV.contains(&k.to_uppercase().as_str()) && !k.to_uppercase().starts_with("ELECTRON_"))
+            .map(|(k, v)| (norm(&k), v))
+            .collect();
+        let user_base = runtime.join("python-benutzer");
+        let mut path: Vec<PathBuf> = vec![python_dir.to_path_buf(), python_dir.join("Scripts"), user_base.join("Python314").join("Scripts")];
+        path.extend(std::env::split_paths(&env.get("PATH").cloned().unwrap_or_default()));
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "nutzer".into());
+        let s = |p: PathBuf| p.to_string_lossy().to_string();
+        let set: Vec<(&str, String)> = vec![
+            ("PATH", std::env::join_paths(path).map(|p| p.to_string_lossy().to_string()).unwrap_or_default()),
+            ("TEMP", s(runtime.join("tmp"))),
+            ("TMP", s(runtime.join("tmp"))),
+            ("SHELL", "cmd.exe".into()),
+            ("USER", user),
+            ("PYTHONUTF8", "1".into()),
+            ("PYTHONIOENCODING", "utf-8".into()),
+            ("PYTHONUNBUFFERED", "1".into()),
+            ("PYTHONDONTWRITEBYTECODE", "1".into()),
+            ("PYTHONUSERBASE", s(user_base)),
+            // Kein PIP_USER: In einer .venv scheitert `pip install` damit («Can not perform a '--user' install»).
+            // Ist site-packages nicht beschreibbar (Low Integrity), weicht pip selbst auf eine Benutzerinstallation
+            // aus; sie landet dank PYTHONUSERBASE in runtime/python-benutzer.
+            ("PIP_DISABLE_PIP_VERSION_CHECK", "1".into()),
+            ("PIP_NO_WARN_SCRIPT_LOCATION", "1".into()),
+            ("MPLCONFIGDIR", s(runtime.join("matplotlib"))),
+            ("MPLBACKEND", "Agg".into()),
+        ];
+        for (k, v) in set {
+            env.insert(k.to_string(), v);
+        }
+        env.into_iter().collect()
+    }
+
+    fn event(ev: &EventFn, name: &str, fields: Value) {
+        let mut m = serde_json::Map::new();
+        m.insert("event".into(), json!(name));
+        if let Value::Object(o) = fields {
+            m.extend(o);
+        }
+        ev(Value::Object(m));
+    }
+
+    /// Wie der Starter bei einem Fehler: Meldung, dann Ende mit Exitcode
+    fn fail(ev: &EventFn, code: i32, fields: Value) {
+        event(ev, "error", fields);
+        event(ev, "exit", json!({ "code": code }));
+        event(ev, "process-exit", json!({ "code": code }));
     }
 
     #[async_trait]
@@ -137,73 +243,134 @@ pub mod native_low {
         }
 
         async fn start(&self, o: BackendStart) -> Result<()> {
-            let python = crate::paths::python_exe();
-            if !python.exists() {
-                bail!("Mitgeliefertes Python fehlt: {}", python.display());
+            let ev = o.on_event.clone();
+            event(&ev, "launcher", json!({ "pid": std::process::id() }));
+            let workdir = ask_terminal::guard::realpath(Path::new(&o.workdir));
+            if !workdir.is_dir() {
+                fail(&ev, 3, json!({ "code": "workdir", "message": format!("Ordner nicht gefunden: {}", workdir.display()) }));
+                return Ok(());
             }
-            // -X utf8: Die Einstellungen gehen als UTF-8 über stdin. Ohne den Schalter liest Python sie auf Windows in
-            // der ANSI-Codepage, und ein Ordner oder Benutzername mit Umlaut («Prüfung») wird nicht gefunden.
-            let mut cmd = Command::new(&python);
-            cmd.args(["-E", "-s", "-B", "-X", "utf8"])
-                .arg(crate::paths::launcher_py())
+            let runtime = crate::paths::runtime_dir();
+            for sub in ["tmp", "matplotlib", "python-benutzer"] {
+                if let Err(err) = std::fs::create_dir_all(runtime.join(sub)) {
+                    fail(&ev, 5, json!({ "code": "spawn", "message": format!("Laufzeitordner nicht erstellbar: {err}") }));
+                    return Ok(());
+                }
+            }
+            let low = self.low_integrity && cfg!(windows);
+            #[cfg(windows)]
+            if low {
+                for folder in [workdir.clone(), runtime.clone()] {
+                    let f = folder.clone();
+                    let (ok, message) = tokio::task::spawn_blocking(move || ask_terminal::winproc::ensure_low_label(&f)).await.unwrap_or((false, "Abbruch".into()));
+                    if !ok {
+                        fail(&ev, 4, json!({ "code": "label", "path": folder.to_string_lossy(), "message": message }));
+                        return Ok(());
+                    }
+                }
+                event(&ev, "label", json!({ "ok": true }));
+            }
+
+            let exe = match &self.executable {
+                Some(p) => p.clone(),
+                None => match std::env::current_exe() {
+                    Ok(p) => p,
+                    Err(err) => {
+                        fail(&ev, 5, json!({ "code": "spawn", "message": err.to_string() }));
+                        return Ok(());
+                    }
+                },
+            };
+            let python_dir = crate::paths::python_exe().parent().map(Path::to_path_buf).unwrap_or_default();
+            let env = build_env(&runtime, &python_dir, std::env::vars());
+            let mut cmd = Command::new(&exe);
+            cmd.arg("--terminal")
+                .env_clear()
+                .envs(env)
+                .current_dir(&workdir)
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
             #[cfg(windows)]
-            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW (JS: windowsHide)
+            cmd.creation_flags(ask_terminal::winproc::CREATE_SUSPENDED | ask_terminal::winproc::CREATE_NO_WINDOW);
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(err) => {
-                    (o.on_event)(json!({ "event": "error", "code": "spawn", "message": err.to_string() }));
-                    return Err(err.into());
+                    fail(&ev, 5, json!({ "code": "spawn", "message": err.to_string() }));
+                    return Ok(());
                 }
             };
+            let pid = child.id().unwrap_or(0);
+            // Angehalten: erst Token und Job, dann läuft der Server los (er hatte nie höhere Rechte im Einsatz)
+            #[cfg(windows)]
+            let job: JobHandle = {
+                let attach = || -> std::io::Result<JobHandle> {
+                    let job = ask_terminal::winproc::Job::new()?;
+                    let handle = child.raw_handle().ok_or_else(|| std::io::Error::other("Prozess-Handle fehlt"))?;
+                    if low {
+                        ask_terminal::winproc::lower_token_to_low(handle as _)?;
+                    }
+                    job.assign(handle as _)?;
+                    ask_terminal::winproc::resume_process(pid)?;
+                    Ok(Arc::new(job))
+                };
+                match attach() {
+                    Ok(j) => j,
+                    Err(err) => {
+                        let _ = child.start_kill();
+                        fail(&ev, 5, json!({ "code": "spawn", "message": err.to_string() }));
+                        return Ok(());
+                    }
+                }
+            };
+            #[cfg(not(windows))]
+            let job = JobHandle;
+
             let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
             let mut stdin = child.stdin.take().expect("stdin");
             let stdout = child.stdout.take().expect("stdout");
             let stderr = child.stderr.take().expect("stderr");
-            let ev = o.on_event.clone();
+            let cfg = json!({
+                "key": o.key,
+                "port": o.port,
+                "workdir": workdir.to_string_lossy(),
+                "origin": o.origin.clone().unwrap_or_default(),
+                "execute_timeout": self.execute_timeout,
+                "low_integrity": low || (!cfg!(windows) && self.low_integrity),
+            });
+            // stdin bleibt offen: Endet die App, endet stdin, und der Server beendet sich
+            let _ = stdin.write_all(format!("{cfg}\n").as_bytes()).await;
+            let _ = stdin.flush().await;
+            event(&ev, "started", json!({ "pid": pid, "low_integrity": low }));
+
+            let e1 = ev.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stdout).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    match serde_json::from_str::<Value>(&line) {
-                        Ok(v) => ev(v),
-                        Err(_) => ev(json!({ "event": "log", "line": line })),
+                    let text = line.trim_end().to_string();
+                    if text.starts_with('{') {
+                        if let Ok(Value::Object(m)) = serde_json::from_str::<Value>(&text) {
+                            if m.contains_key("event") {
+                                e1(Value::Object(m));
+                                continue;
+                            }
+                        }
                     }
+                    event(&e1, "log", json!({ "line": text }));
                 }
             });
-            let ev = o.on_event.clone();
+            let e2 = ev.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    ev(json!({ "event": "log", "line": line }));
+                    event(&e2, "log", json!({ "line": line.trim_end() }));
                 }
             });
-            let cfg = {
-                let mut m = serde_json::Map::new();
-                m.insert("key".into(), json!(o.key));
-                m.insert("port".into(), json!(o.port));
-                m.insert("workdir".into(), json!(o.workdir));
-                if let Some(v) = &o.origin {
-                    m.insert("origin".into(), json!(v));
-                }
-                m.insert("runtime".into(), json!(crate::paths::runtime_dir().to_string_lossy()));
-                if let Some(v) = &o.system_prompt {
-                    m.insert("system_prompt".into(), json!(v));
-                }
-                if let Some(v) = &o.execute_description {
-                    m.insert("execute_description".into(), json!(v));
-                }
-                m.insert("low_integrity".into(), json!(true));
-                Value::Object(m)
-            };
-            let _ = stdin.write_all(format!("{cfg}\n").as_bytes()).await;
-            let _ = stdin.flush().await;
+
             let kill = Arc::new(Notify::new());
             let (exited_tx, exited_rx) = watch::channel(false);
-            *self.cur.lock() = Some(Running { id, stdin: Some(stdin), kill: kill.clone(), exited: exited_rx });
+            *self.cur.lock() = Some(Running { id, stdin: Some(stdin), kill: kill.clone(), exited: exited_rx, job: job.clone() });
             let cur = self.cur.clone();
-            let ev = o.on_event.clone();
             tokio::spawn(async move {
                 let status = tokio::select! {
                     s = child.wait() => s,
@@ -212,6 +379,11 @@ pub mod native_low {
                         child.wait().await
                     }
                 };
+                // Reste im Job beenden (wie `job.terminate()` im Starter)
+                #[cfg(windows)]
+                job.terminate(1);
+                #[cfg(not(windows))]
+                let _ = job;
                 {
                     let mut c = cur.lock();
                     if c.as_ref().is_some_and(|r| r.id == id) {
@@ -219,12 +391,15 @@ pub mod native_low {
                     }
                 }
                 let _ = exited_tx.send(true);
-                ev(json!({ "event": "process-exit", "code": status.ok().and_then(|s| s.code()) }));
+                let code = status.ok().and_then(|s| s.code());
+                event(&ev, "exit", json!({ "code": code }));
+                event(&ev, "process-exit", json!({ "code": code }));
             });
             Ok(())
         }
 
-        /// Bittet den Starter, den Job zu beenden; nach 5 s wird er hart beendet (der Job räumt trotzdem auf).
+        /// Bittet den Server zu enden («stop», dann stdin schliessen); nach 5 s wird er hart beendet, und der Job
+        /// räumt alle Kindprozesse ab.
         async fn stop(&self) {
             let Some(mut r) = self.cur.lock().take() else { return };
             if let Some(mut stdin) = r.stdin.take() {
@@ -244,6 +419,8 @@ pub mod native_low {
             };
             if tokio::time::timeout(Duration::from_secs(5), wait).await.is_err() {
                 r.kill.notify_one(); // bereits beendet ist kein Fehler
+                #[cfg(windows)]
+                r.job.terminate(1);
             }
         }
     }
@@ -822,5 +999,303 @@ mod tests {
         let p = choose_port(Some(busy)).await.unwrap();
         assert_ne!(p, busy);
         assert!((PORT_MIN..PORT_MAX).contains(&p));
+    }
+
+    /// Ein Laufzeitordner für alle Tests (die Umgebungsvariable gilt für den ganzen Prozess)
+    fn shared_runtime() -> std::path::PathBuf {
+        static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        let dir = DIR.get_or_init(|| {
+            let d = tempfile::tempdir().unwrap();
+            std::env::set_var("ASK_RUNTIME_DIR", d.path());
+            d
+        });
+        dir.path().to_path_buf()
+    }
+
+    // ---------- Starter (ersetzt tests/test_terminal.py::CleanupTest und launcher.py) ----------
+
+    #[test]
+    fn umgebung_wie_build_env_im_starter() {
+        use native_low::build_env;
+        let runtime = std::path::Path::new("/laufzeit");
+        let python = std::path::Path::new("/py");
+        let base = [
+            ("PATH", "/usr/bin"),
+            ("ELECTRON_RUN_AS_NODE", "1"),
+            ("electron_irgendwas", "1"),
+            ("NODE_OPTIONS", "--x"),
+            ("PYTHONPATH", "/x"),
+            ("PYTHONHOME", "/x"),
+            ("PYTHONSTARTUP", "/x"),
+            ("VIRTUAL_ENV", "/x"),
+            ("OPEN_TERMINAL_API_KEY", "geheim"),
+            ("MEINE", "bleibt"),
+        ];
+        let env: std::collections::HashMap<String, String> = build_env(runtime, python, base.iter().map(|(k, v)| (k.to_string(), v.to_string()))).into_iter().collect();
+        for dropped in ["ELECTRON_RUN_AS_NODE", "electron_irgendwas", "NODE_OPTIONS", "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "VIRTUAL_ENV", "OPEN_TERMINAL_API_KEY"] {
+            assert!(!env.contains_key(dropped), "{dropped} muss fehlen");
+        }
+        assert!(!env.keys().any(|k| k.starts_with("OPEN_TERMINAL_")), "keine OPEN_TERMINAL_*-Variablen mehr");
+        assert_eq!(env["MEINE"], "bleibt");
+        let sep = if cfg!(windows) { ';' } else { ':' };
+        let path: Vec<&str> = env["PATH"].split(sep).collect();
+        assert_eq!(path[0], "/py", "Python zuerst");
+        assert!(path[1].ends_with("Scripts"));
+        assert!(path[2].ends_with("Scripts") && path[2].contains("python-benutzer"));
+        assert_eq!(*path.last().unwrap(), "/usr/bin");
+        for (k, v) in [("PYTHONUTF8", "1"), ("PYTHONIOENCODING", "utf-8"), ("PYTHONUNBUFFERED", "1"), ("PYTHONDONTWRITEBYTECODE", "1"), ("MPLBACKEND", "Agg"), ("SHELL", "cmd.exe"), ("PIP_DISABLE_PIP_VERSION_CHECK", "1"), ("PIP_NO_WARN_SCRIPT_LOCATION", "1")] {
+            assert_eq!(env[k], v, "{k}");
+        }
+        assert!(!env.contains_key("PIP_USER"), "kein PIP_USER");
+        assert!(env["TEMP"].contains("tmp") && env["TMP"] == env["TEMP"]);
+        assert!(env["PYTHONUSERBASE"].contains("python-benutzer"));
+        assert!(env["MPLCONFIGDIR"].contains("matplotlib"));
+    }
+
+    /// Eine Attrappe statt der App: liest die Einstellungen, meldet sich wie der Server und endet bei «stop» oder
+    /// wenn stdin endet. So lässt sich der Starter (Einstellungen, Ereignisse, Stoppen) ohne gebaute App prüfen.
+    #[cfg(unix)]
+    fn fake_server(dir: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = "#!/bin/sh\nread cfg\necho \"{\\\"event\\\":\\\"server\\\",\\\"pid\\\":$$}\"\necho \"cfg:$cfg\"\necho \"fehler\" >&2\n\
+            echo \"umgebung:$PYTHONUTF8:${ELECTRON_X:-weg}:$MEINE_VAR\"\necho \"cwd:$(pwd)\"\nwhile read cmd; do [ \"$cmd\" = stop ] && exit 7; done\nexit 8\n";
+        let path = dir.join("attrappe.sh");
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    async fn collect_events(backend: &native_low::NativeLowBackend, workdir: &str) -> Arc<Mutex<Vec<Value>>> {
+        let events = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let e = events.clone();
+        backend
+            .start(BackendStart {
+                workdir: workdir.into(),
+                port: 4711,
+                key: "schluessel".into(),
+                origin: Some("https://ask.example.ch".into()),
+                system_prompt: None,
+                execute_description: None,
+                on_event: Arc::new(move |v| e.lock().push(v)),
+            })
+            .await
+            .unwrap();
+        events
+    }
+
+    #[cfg(unix)]
+    async fn wait_for(events: &Arc<Mutex<Vec<Value>>>, name: &str) -> Value {
+        for _ in 0..100 {
+            if let Some(v) = events.lock().iter().find(|v| v["event"] == name) {
+                return v.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("Ereignis {name} kam nicht: {:?}", events.lock());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn starter_schickt_einstellungen_ueber_stdin_leitet_ereignisse_weiter_und_stoppt() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = shared_runtime();
+        let work = dir.path().join("Arbeitsordner Prüfung");
+        std::fs::create_dir_all(&work).unwrap();
+        let backend = native_low::NativeLowBackend::new().with_executable(fake_server(dir.path())).with_execute_timeout(12.0);
+        let events = collect_events(&backend, &work.to_string_lossy()).await;
+        let server = wait_for(&events, "server").await;
+        assert!(server["pid"].as_u64().unwrap() > 0);
+        assert!(backend.running());
+        let cfg = loop {
+            if let Some(line) = events.lock().iter().find_map(|v| v["line"].as_str().and_then(|l| l.strip_prefix("cfg:")).map(str::to_string)) {
+                break serde_json::from_str::<Value>(&line).unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        };
+        assert_eq!(cfg["key"], "schluessel");
+        assert_eq!(cfg["port"], 4711);
+        assert_eq!(cfg["origin"], "https://ask.example.ch");
+        assert_eq!(cfg["execute_timeout"], 12.0);
+        assert!(cfg["workdir"].as_str().unwrap().ends_with("Arbeitsordner Prüfung"), "Umlaut bleibt erhalten: {cfg}");
+        for sub in ["tmp", "matplotlib", "python-benutzer"] {
+            assert!(runtime.join(sub).is_dir(), "{sub}");
+        }
+        let lines: Vec<String> = events.lock().iter().filter(|v| v["event"] == "log").map(|v| v["line"].as_str().unwrap().to_string()).collect();
+        assert!(lines.contains(&"fehler".to_string()), "stderr kommt als log: {lines:?}");
+        assert!(lines.iter().any(|l| l.starts_with("umgebung:1:weg:")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.starts_with("cwd:") && l.ends_with("Arbeitsordner Prüfung")), "{lines:?}");
+        let names: Vec<String> = events.lock().iter().map(|v| v["event"].as_str().unwrap().to_string()).collect();
+        assert_eq!(&names[..2], ["launcher", "started"]);
+        // «stop» beendet den Server; Exitcode 7 beweist, dass er das Wort bekam (bei stdin-Ende wäre es 8)
+        backend.stop().await;
+        let exit = wait_for(&events, "exit").await;
+        assert_eq!(exit["code"], 7);
+        assert!(wait_for(&events, "process-exit").await["code"] == 7);
+        assert!(!backend.running());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn starter_server_endet_wenn_stdin_endet() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = shared_runtime();
+        let backend = native_low::NativeLowBackend::new().with_executable(fake_server(dir.path()));
+        let events = collect_events(&backend, &dir.path().to_string_lossy()).await;
+        wait_for(&events, "server").await;
+        // wie ein Absturz der App: stdin geht zu, ohne «stop»
+        backend.close_stdin_for_test();
+        assert_eq!(wait_for(&events, "exit").await["code"], 8);
+    }
+
+    #[tokio::test]
+    async fn starter_meldet_fehler_wie_der_python_starter() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = shared_runtime();
+        let events = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let start = |workdir: String, exe: Option<std::path::PathBuf>| {
+            let e = events.clone();
+            let mut backend = native_low::NativeLowBackend::new();
+            if let Some(exe) = exe {
+                backend = backend.with_executable(exe);
+            }
+            async move {
+                backend
+                    .start(BackendStart {
+                        workdir,
+                        port: 1,
+                        key: "k".into(),
+                        origin: None,
+                        system_prompt: None,
+                        execute_description: None,
+                        on_event: Arc::new(move |v| e.lock().push(v)),
+                    })
+                    .await
+                    .unwrap();
+                backend
+            }
+        };
+        let backend = start(dir.path().join("gibt-es-nicht").to_string_lossy().to_string(), None).await;
+        assert!(!backend.running());
+        {
+            let ev = events.lock();
+            assert_eq!(ev[0]["event"], "launcher");
+            assert_eq!((ev[1]["event"].as_str(), ev[1]["code"].as_str()), (Some("error"), Some("workdir")));
+            assert!(ev[1]["message"].as_str().unwrap().starts_with("Ordner nicht gefunden:"));
+            assert_eq!(ev[2]["event"], "exit");
+            assert_eq!(ev[2]["code"], 3);
+        }
+        events.lock().clear();
+        let backend = start(dir.path().to_string_lossy().to_string(), Some(dir.path().join("fehlt.exe"))).await;
+        assert!(!backend.running());
+        let ev = events.lock();
+        assert!(ev.iter().any(|v| v["event"] == "error" && v["code"] == "spawn"), "{ev:?}");
+        assert!(ev.iter().any(|v| v["event"] == "exit" && v["code"] == 5));
+    }
+
+    // ---------- Terminal und Rust-Server über HTTP, Ende zu Ende ----------
+
+    /// Backend, das den Rust-Server im selben Prozess startet (statt als eigene App): So laufen `Terminal`, die
+    /// Werkzeuge und der echte Server auf jedem System über HTTP zusammen. Mit der gebauten App (eigener Prozess,
+    /// Low Integrity, Job-Objekt) läuft derselbe Ablauf in `src-tauri/tests/terminal_e2e.rs`.
+    struct InProcessBackend {
+        server: Mutex<Option<ask_terminal::ServerHandle>>,
+    }
+
+    #[async_trait]
+    impl Backend for InProcessBackend {
+        fn running(&self) -> bool {
+            self.server.lock().is_some()
+        }
+
+        async fn start(&self, o: BackendStart) -> Result<()> {
+            let config = ask_terminal::Config {
+                key: o.key,
+                port: o.port,
+                workdir: o.workdir,
+                origin: o.origin.unwrap_or_default(),
+                execute_timeout: 60.0,
+                low_integrity: true,
+            };
+            *self.server.lock() = Some(ask_terminal::serve(config).await?);
+            Ok(())
+        }
+
+        async fn stop(&self) {
+            if let Some(h) = self.server.lock().take() {
+                h.shutdown();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_und_rust_server_ueber_http() {
+        use crate::tools::{run_tool, ToolCtx};
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("Arbeitsordner Prüfung");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(work.join("Übung.txt"), "Grüezi").unwrap();
+        let t = Terminal::new(Arc::new(InProcessBackend { server: Mutex::new(None) }));
+        t.start(opts(&work.to_string_lossy())).await;
+        assert_eq!(t.state(), "läuft", "{}", t.error());
+        assert_eq!(t.snapshot()["lowIntegrity"], true);
+        assert_eq!(t.info().unwrap()["workdir"].as_str().unwrap().to_lowercase().replace("\\\\?\\", ""), std::fs::canonicalize(&work).unwrap().to_string_lossy().to_lowercase().replace("\\\\?\\", ""));
+        t.check_health(t.generation()).await;
+        assert_eq!(t.state(), "läuft");
+
+        let ctx = ToolCtx::default();
+        let run = |name: &'static str, args: Value| {
+            let t = t.clone();
+            let ctx = ctx.clone();
+            async move { run_tool(Some(&t), name, &args, &ctx).await }
+        };
+        let r = run("run_command", json!({ "command": "echo hallo welt" })).await;
+        assert!(r.ok, "{r:?}");
+        assert!(r.output.starts_with("Exitcode 0") && r.output.contains("hallo welt"), "{}", r.output);
+        let r = run("run_command", json!({ "command": "exit 3" })).await;
+        assert!(!r.ok && r.output.starts_with("Exitcode 3"), "{r:?}");
+        let r = run("write_file", json!({ "path": "ausgabe/test.txt", "content": "eins\nzwei\n" })).await;
+        assert!(r.ok, "{r:?}");
+        let r = run("read_file", json!({ "path": "ausgabe/test.txt", "start_line": 2 })).await;
+        assert!(r.ok && r.output.contains("zwei") && r.output.contains("2 Zeilen insgesamt"), "{r:?}");
+        let r = run("edit_file", json!({ "path": "ausgabe/test.txt", "old_text": "zwei", "new_text": "2" })).await;
+        assert!(r.ok, "{r:?}");
+        let r = run("list_files", json!({ "path": "." })).await;
+        assert!(r.ok && r.output.contains("ausgabe/") && r.output.contains("Übung.txt"), "{r:?}");
+        let r = run("find_files", json!({ "pattern": "*.txt" })).await;
+        assert!(r.ok && r.output.contains("test.txt"), "{r:?}");
+        let r = run("search_text", json!({ "text": "GRÜEZI" })).await;
+        assert!(r.ok && r.output.contains("Übung.txt"), "{r:?}");
+        // die Sperre gilt auch für die Werkzeuge
+        let r = run("read_file", json!({ "path": dir.path().to_string_lossy() })).await;
+        assert!(!r.ok && r.output.contains("ausserhalb des Arbeitsordners"), "{r:?}");
+        // ein lange laufender Befehl wird über DELETE beendet (wie beim Stoppen durch die Person)
+        let (port, key) = (t.port(), t.key());
+        let client = reqwest::Client::new();
+        let sleeper = if cfg!(windows) { "ping -n 60 127.0.0.1 >nul" } else { "sleep 60" };
+        let started: Value = client
+            .post(format!("http://127.0.0.1:{port}/execute?wait=0"))
+            .bearer_auth(&key)
+            .json(&json!({ "command": sleeper }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(started["status"], "running");
+        let killed = client.delete(format!("http://127.0.0.1:{port}/execute/{}", started["id"].as_str().unwrap())).bearer_auth(&key).send().await.unwrap();
+        assert_eq!(killed.status(), 200);
+        t.stop().await;
+        assert_eq!(t.state(), "gestoppt");
+        let mut gone = false;
+        for _ in 0..40 {
+            if get_json(port, "/health", None, 500).await.is_err() {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(gone, "Server ist weg");
     }
 }

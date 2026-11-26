@@ -104,14 +104,6 @@ pub fn python_exe() -> PathBuf {
     }
 }
 
-pub fn launcher_py() -> PathBuf {
-    if is_packaged() {
-        resources(&["ask_terminal", "launcher.py"])
-    } else {
-        repo_root().join("python").join("ask_terminal").join("launcher.py")
-    }
-}
-
 pub fn skills_dir() -> PathBuf {
     resources(&["skills"])
 }

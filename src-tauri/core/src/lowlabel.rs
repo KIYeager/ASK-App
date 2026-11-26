@@ -1,5 +1,5 @@
 //! Entfernt die Integritätsmarke «Low» wieder von einem Ordner, der aus der Projektliste genommen wird.
-//! Gegenstück zu ensure_low_label in python/ask_terminal/winproc.py (setzt (OI)(CI)L beim Terminalstart).
+//! Gegenstück zu ensure_low_label in ask_terminal::winproc::ensure_low_label (setzt (OI)(CI)L beim Terminalstart).
 //!
 //! Öffentliche Schnittstelle:
 //! - `restore_label(folder, &RestoreOptions) -> Result<RestoreResult>`
