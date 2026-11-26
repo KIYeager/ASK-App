@@ -203,5 +203,6 @@ Durchgeführt am 25.11.2026 auf Windows 11 (Laptop des Entwicklers):
 4. Einen PR mit Label `beta` mergen. Erwartet: In ASK-Releases als Pre-release; ASK bietet nichts an. In den Einstellungen «Beta-Versionen erhalten» einschalten. Erwartet: «ASK <Version>-beta.1 (Beta) ist da».
 5. Mit der einzelnen EXE einer älteren Version: Erwartet «… ist da» mit «Download öffnen», das die Seite des Releases öffnet.
 6. Während eines laufenden Auftrags «Nach Updates suchen»: Erwartet keine Frage, bis der Auftrag fertig ist.
+8. Fortschrittsfenster (E59), beim Installieren aus Schritt 1 und beim Update aus Schritt 3. Erwartet: Titelleiste «ASK», daneben das Symbol, «ASK wird installiert» bzw. «ASK wird aktualisiert» halbfett, darunter eine kleinere zweite Zeile, ein schmaler türkiser Balken ohne Rahmen, der sich füllt; nichts abgeschnitten, auch bei 125 oder 150 % Skalierung. Am besten ein Bildschirmfoto zurückschicken.
 
 Bitte zurückmelden: ASK-Version, ob A4 bis A6 wie beschrieben liefen (vor allem, ob Werkzeugzeilen erscheinen), für B1 bis B3 das Ergebnis und wie viele Rückfragen oder Fehlversuche das Modell brauchte, Auffälligkeiten bei C und für D die Meldung bzw. die Datei aus D4, für E wo es hakte (Meldung im Reiter «Actions» oder in der App).

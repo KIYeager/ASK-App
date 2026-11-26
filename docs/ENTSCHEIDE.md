@@ -460,3 +460,18 @@ Jetzt:
 - Das Ausweich-DNS über Quad9 (E57) schaltet sich nur noch ein, wenn der Name der mitgelieferten Adresse nicht gefunden wird. Gemerkt wird es mit der Adresse (`secureDnsFor`) und gilt beim Start nur, wenn sie noch die der Schule ist. Das alte `secureDns` aus 0.3.7 wird beim Start gelöscht: Es konnte auch nach einer vertippten Adresse gesetzt worden sein. Braucht ein Laptop Quad9 wirklich, schaltet es sich beim nächsten Namensfehler von selbst wieder ein.
 
 Tests: `tests/askapi.test.js` (Adresse).
+
+## E59 Fortschrittsfenster des Installers
+
+Das Fenster beim Installieren und bei jedem Update sah aus wie Windows 98: «Installation von ASK», «Installation läuft, bitte warten...» in MS Sans Serif und ein grüner Balken. electron-builder zeigt es im Installer mit einem Klick (`oneClick`) mit seinem Plugin SpiderBanner; eigene Seiten oder Bilder gibt es dort nicht. Verglichen wurden drei Entwürfe (Canvas «ASK Installer Window»): das Fenster von Windows umgestaltet, linksbündig oder zentriert, und ein Startbild in ASK-Farbe wie beim Entpacken der einzelnen EXE. Gewählt von der Projektleitung: umgestaltet, linksbündig. Es bleibt ein Fenster von Windows, zeigt weiter den Fortschritt und braucht kein eigenes Plugin.
+
+`scripts/installer.nsh` setzt dafür `customCheckAppRunning`, die Stelle gleich nach `SpiderBanner::Show`, gestaltet dort das Fenster um und ruft danach dieselbe Prüfung auf wie electron-builder ohne diesen Haken (`IS_POWERSHELL_AVAILABLE`, `_CHECK_APP_RUNNING`):
+- Titelleiste «ASK», Titel in Segoe UI halbfett 11 Punkt, darunter eine zweite Zeile in 9 Punkt. Erstinstallation: «ASK wird installiert» / «Einen Moment bitte. ASK startet danach von selbst.» Update (`--updated`): «ASK wird aktualisiert» / «Chats und Einstellungen bleiben. ASK startet danach von selbst.»
+- Balken flach in ASK-Türkis `#0B6E75` auf `#D5DBDE`, ohne Rahmen und schmal (4 Dialog-Einheiten, etwa 6 Pixel). Dafür schaltet `SetWindowTheme` das Windows-Design am Balken ab, sonst gelten eigene Farben nicht.
+- Symbol, Texte und Balken neu gesetzt, in Dialog-Einheiten wie im Plugin selbst (`MapDialogRect`), damit es bei 125 und 150 % Skalierung gleich aussieht.
+
+Die Nummern der Steuerelemente stammen aus dem Dialog 104 in `SpiderBanner.dll` (nsis-resources 3.4.1): 1000 Titel, 1002 zweite Zeile, 1001 Balken, 1025 Symbol. In 1003 schreibt das Plugin die Statuszeile von NSIS; sie bleibt leer (`SetDetailsPrint none`) und wird ausgeblendet. Den grauen Hintergrund malt das Plugin; er bleibt. Ändert electron-builder das Plugin oder die Stelle, fällt das Fenster auf das alte Aussehen zurück, die Installation läuft gleich.
+
+Nicht gewählt: Startbild (kein Fortschritt sichtbar, bei langsamen Laptops wirkt es hängengeblieben, siehe E39); Installer mit Seiten (`oneClick: false`, mehr Klicks für Lernende); eigenes Plugin (müsste gebaut und gepflegt werden).
+
+Geprüft: Die Datei übersetzt mit makensis 3.0.4.1 (wie electron-builder) mit `-WX`, für Installer und Deinstaller. Aussehen nur unter Windows prüfbar (TESTPROTOKOLL, Updates).
