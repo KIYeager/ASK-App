@@ -59,7 +59,7 @@ function ThinkPicker({ level, onChange }) {
     <div className="think-wrap" ref={ref}>
       <button type="button" id="think-btn" className={`chip${level !== 'standard' ? ' on' : ''}`} onClick={() => setOpen(!open)}
         title="Denkaufwand des Modells (/denken)" aria-expanded={open}>
-        <Icon name="spark" size={14} /> <span id="think-label">{THINK_NAMES[level] || 'Standard'}</span>
+        <Icon name="spark" size={14} /> <span id="think-label" className="chip-label">{THINK_NAMES[level] || 'Standard'}</span>
       </button>
       {open ? (
         <div id="think-pop" className={`popover think-pop${level === 'standard' ? ' standard' : ''}`}>
@@ -100,7 +100,7 @@ function ModePicker({ mode, onChange }) {
     <div className="mode-wrap" ref={ref}>
       <button type="button" id="mode-btn" className={`chip mode-chip mode-${cur.id}`} onClick={() => setOpen(!open)}
         title="Modus (Shift+Tab wechselt)" aria-expanded={open} aria-haspopup="listbox">
-        <Icon name={cur.icon} size={14} /> <span id="mode-label">{cur.name}</span>
+        <Icon name={cur.icon} size={14} /> <span id="mode-label" className="chip-label">{cur.name}</span>
       </button>
       {open ? (
         <div id="mode-pop" className="popover mode-pop" role="listbox" aria-label="Modus">
@@ -471,7 +471,7 @@ const Composer = forwardRef(function Composer(props, ref) {
             <button type="button" id="web-btn" className={`chip${state.webSearch && state.webSearchAvailable ? ' on' : ''}`} disabled={!state.webSearchAvailable}
               onClick={() => setWeb(!state.webSearch)}
               title={!state.webSearchAvailable ? 'Websuche ist in ASK für dein Konto nicht freigegeben' : state.webSearch ? 'Websuche an: ASK sucht vor der Antwort im Web (/web)' : 'Websuche aus (/web)'}>
-              <Icon name="globe" size={14} /> Web
+              <Icon name="globe" size={14} /> <span className="chip-label">Web</span>
             </button>
             <ThinkPicker level={state.thinking || 'standard'} onChange={setThinking} />
             <ModePicker mode={mode} onChange={setMode} />

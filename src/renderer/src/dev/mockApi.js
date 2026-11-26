@@ -258,6 +258,17 @@ const ghMock = {
 };
 
 export function install() {
+  // Rechtsklick ins Textfeld oder auf markierten Text: wie der Hauptprozess (context-menu → ui:menu)
+  document.addEventListener('contextmenu', (e) => {
+    if (e.defaultPrevented) return;
+    const editable = e.target.closest('textarea, input');
+    const text = String(window.getSelection());
+    if (!editable && !text) return;
+    e.preventDefault();
+    setTimeout(() => emit('ui:menu', { id: Date.now(), items: editable
+      ? [{ key: 'edit0', label: 'Ausschneiden', hint: 'Ctrl+X', enabled: true }, { key: 'edit1', label: 'Kopieren', hint: 'Ctrl+C', enabled: true }, { key: 'edit2', label: 'Einfügen', hint: 'Ctrl+V', enabled: true }, { key: 'edit3', label: 'Alles auswählen', hint: 'Ctrl+A', enabled: true }]
+      : [{ key: 'edit1', label: 'Kopieren', enabled: true }] }), 0);
+  });
   window.ask = {
     getState: async () => ({ ...state, servers }),
     onState: on('state'), onFiles: on('files'), onTasks: on('tasks'),
@@ -268,10 +279,32 @@ export function install() {
     serverStop: async (id) => { servers = servers.map((x) => (x.id === id ? { ...x, state: 'gestoppt', exitCode: 1, ready: false } : x)); pushServers(); return { ok: true }; },
     serverRemove: async (id) => { servers = servers.filter((x) => x.id !== id); pushServers(); return true; },
     chooseFolder: async () => ({ ok: false, canceled: true }), newFolder: async () => ({ ok: true }), openFolder: async () => ({ ok: true }),
-    forgetFolder: async () => true, folderMenu: async () => {}, showFolder: async () => {}, projectMenu: async (f) => emit('project:rename', f),
+    forgetFolder: async () => true, folderMenu: async () => emit('ui:menu', { id: Date.now(), items: [
+      ...projects.map((p, i) => ({ key: `f${i}`, label: p.folder, type: 'radio', checked: p.folder === FOLDER, enabled: true })), { separator: true },
+      { key: 'a', label: 'Anderen Ordner wählen …', enabled: true }, { key: 'b', label: 'Neues Projekt …', enabled: true }, { separator: true },
+      { key: 'c', label: 'Aus der Liste entfernen', enabled: true, submenu: projects.map((p, i) => ({ key: `c.${i}`, label: p.folder, enabled: true })) }, { separator: true },
+      { key: 'd', label: 'Nach Updates suchen (ASK 0.2.3)', enabled: true }, { key: 'e', label: 'Beta-Versionen erhalten', type: 'checkbox', checked: false, enabled: true }] }),
+    showFolder: async () => {},
+    projectMenu: async () => emit('ui:menu', { id: Date.now(), items: [
+      { key: '0', label: 'Neuer Chat', enabled: true }, { key: '1', label: 'Umbenennen …', enabled: true },
+      { key: '2', label: 'Farbe', enabled: true, submenu: ['#0082B4', '#F28855', '#4EB68E', '#EE716D'].map((c, i) => ({ key: `2.${i}`, label: ['TF Blau', 'Orange', 'Grün', 'Rot'][i], type: 'radio', checked: i === 0, swatch: c, enabled: true })) },
+      { separator: true }, { key: '4', label: 'Im Explorer öffnen', enabled: true }, { key: '5', label: 'Projektnotizen bearbeiten', enabled: true }, { separator: true },
+      { key: '7', label: 'Aus der Liste entfernen', enabled: true }] }),
     projectUpdate: async (folder, patch) => { const p = projects.find((x) => x.folder === folder); if (p && patch.name) p.name = patch.name; return true; },
     setSettings: async (v) => { state = { ...state, ...v }; push(); },
-    updateAction: async () => {}, updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
+    updateAction: async () => emit('ui:ask', params.get('meldung')
+      ? { id: Date.now(), type: 'warning', message: 'Die Suche nach Updates hat nicht geklappt.', detail: 'Ist der Laptop mit dem Internet verbunden?\n\nnet::ERR_INTERNET_DISCONNECTED', buttons: ['OK'] }
+      : { id: Date.now(), type: 'question', message: 'ASK 0.2.4 ist da. Jetzt aktualisieren?', buttons: ['Jetzt aktualisieren', 'Später'], defaultId: 0, cancelId: 1,
+        kind: 'update', version: '0.2.4', current: '0.2.3', beta: false,
+        intro: 'Du hast 0.2.3. ASK lädt das Update im Hintergrund (Balken oben in der App), du kannst weiterarbeiten. Danach startet ASK von selbst neu, ausser während eines Auftrags. Chats, Ordner und Einstellungen bleiben.',
+        notes: '• Die Tabs oben sehen aufgeräumter aus und zeigen die Farbe des Projekts.\n• Tabs lassen sich verschieben, umbenennen und mit Ctrl+W schliessen.\n• Updates erscheinen in einem eigenen Fenster der App.' }),
+    onUiAsk: on('ui:ask'), onUiMenu: on('ui:menu'),
+    uiAnswer: async (id, value) => {
+      console.log('uiAnswer', id, value);
+      // wie webContents.paste()/copy() im Hauptprozess: wirkt auf das Feld mit dem Fokus
+      if (value === 'edit2') document.execCommand('insertText', false, 'EINGEFÜGT');
+      if (value === 'edit1') console.log('kopiert:', String(window.getSelection()) || document.activeElement?.value?.slice(document.activeElement.selectionStart, document.activeElement.selectionEnd));
+    }, updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
     setPrefs: async (v) => { state = { ...state, prefs: { ...state.prefs, ...v } }; push(); },
     usageGet: async (withAsk = true) => (withAsk ? (await wait(600), { ...mockUsage(), ask: params.get('ohneask') ? null : { webChats: 42, webChats30: 12 } }) : { ...mockUsage(), ask: null }),
     chatRewind: async () => ({ ok: true, text: 'Räum den Ordner auf', attachments: [] }),
@@ -291,7 +324,8 @@ export function install() {
     chatNew: async () => { state = { ...state, chat: { id: `neu${Date.now()}`, title: '', running: false } }; transcriptItems = []; push(); return { ok: true }; },
     chatGroups: async () => projects.map((p) => ({ ...p, current: p.folder === state.folder })),
     chatOpen: async (_f, id) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); state = { ...state, chat: { id, title: c?.title || '', running: false } }; transcriptItems = id === 'c1' ? saved : []; push(); return { ok: true }; },
-    chatDelete: async () => false, chatTranscript: async () => ({ ...state.chat, items: transcriptItems }),
+    chatDelete: async (_f, _id, title) => { emit('ui:ask', { id: Date.now(), type: 'question', buttons: ['Löschen', 'Abbrechen'], defaultId: 1, cancelId: 1, dangerId: 0,
+      message: 'Chat löschen?', detail: `«${title}» wird aus ${FOLDER} entfernt. Die Dateien im Ordner bleiben.` }); return false; }, chatTranscript: async () => ({ ...state.chat, items: transcriptItems }),
     reloadAsk: async () => {}, setSidebar: async (v) => { state = { ...state, sidebarOpen: v }; push(); }, setChatbar: async (v) => { state = { ...state, chatbarOpen: v }; push(); },
     setAskBounds: () => {}, setAskVisible: () => {}, setBrowserBounds: () => {}, setBrowserVisible: () => {},
     browserShow: async () => {}, browserGo: async () => {}, browserBack: async () => {}, browserForward: async () => {}, browserClear: async () => {}, browserReload: async () => {}, browserClose: async () => {},

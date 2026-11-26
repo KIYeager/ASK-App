@@ -1,6 +1,6 @@
 // Updates aus dem öffentlichen Release-Repository (ENTSCHEIDE E37, E40). Die installierte App fragt einmal
-// vor dem Herunterladen, zeigt den Download als Balken oben in der App und startet danach mit 10 s Countdown
-// von selbst neu («Jetzt» oder «Später» im Balken); die einzelne EXE kann sich nicht selbst ersetzen und zeigt
+// vor dem Herunterladen (Dialog in der App, E56), zeigt den Download als Karte unten links und startet danach mit 10 s Countdown
+// von selbst neu («Jetzt» oder «Später» in der Karte); die einzelne EXE kann sich nicht selbst ersetzen und zeigt
 // nur einen Hinweis mit Link zur neuen Version. Mit «Beta-Versionen erhalten» kommen auch
 // Vorabversionen (Tags wie v0.3.0-beta.1). Während das Modell arbeitet, fragt die App nie.
 const { EventEmitter } = require('node:events');
@@ -148,7 +148,7 @@ class Updater extends EventEmitter {
     }
   }
 
-  // Klick auf «Update» in der Statuszeile oder «Jetzt neu starten» im Balken
+  // Klick auf «Update» in der Statuszeile oder «Jetzt neu starten» in der Karte
   async action() {
     if (this.state === 'verfügbar') return this.offer();
     if (this.state === 'geladen' || this.state === 'neustart') return this.restartNow();
@@ -183,16 +183,16 @@ class Updater extends EventEmitter {
     const label = isBeta(version) ? `ASK ${version} (Beta)` : `ASK ${version}`;
     const notes = notesText(this.info.releaseNotes);
     if (this.portable) {
-      const res = await this.dialog({ type: 'info', message: `${label} ist da.`,
-        detail: `Du hast ${this.app.getVersion()}. Diese ASK-EXE aktualisiert sich nicht selbst: Lade die neue EXE herunter und starte sie. Chats und Einstellungen bleiben.${notes ? `\n\nNeu:\n${notes}` : ''}`,
-        buttons: ['Download öffnen', 'Später'], defaultId: 0, cancelId: 1 });
+      const intro = `Du hast ${this.app.getVersion()}. Diese ASK-EXE aktualisiert sich nicht selbst: Lade die neue EXE herunter und starte sie. Chats und Einstellungen bleiben.`;
+      const res = await this.dialog({ type: 'info', message: `${label} ist da.`, detail: `${intro}${notes ? `\n\nNeu:\n${notes}` : ''}`,
+        buttons: ['Download öffnen', 'Später'], defaultId: 0, cancelId: 1, ...this.card(version, intro, notes) });
       if (res === 0) this.openExternal(releaseUrl(this.config, version));
       else if (res === 1) this.dismissed = version;
       return;
     }
-    const res = await this.dialog({ type: 'question', message: `${label} ist da. Jetzt aktualisieren?`,
-      detail: `Du hast ${this.app.getVersion()}. ASK lädt das Update im Hintergrund (Balken oben in der App), du kannst weiterarbeiten. Danach startet ASK von selbst neu, ausser während eines Auftrags. Chats, Ordner und Einstellungen bleiben.${notes ? `\n\nNeu:\n${notes}` : ''}`,
-      buttons: ['Jetzt aktualisieren', 'Später'], defaultId: 0, cancelId: 1 });
+    const intro = `Du hast ${this.app.getVersion()}. ASK lädt das Update im Hintergrund (Anzeige unten links), du kannst weiterarbeiten. Danach startet ASK von selbst neu, ausser während eines Auftrags. Chats, Ordner und Einstellungen bleiben.`;
+    const res = await this.dialog({ type: 'question', message: `${label} ist da. Jetzt aktualisieren?`, detail: `${intro}${notes ? `\n\nNeu:\n${notes}` : ''}`,
+      buttons: ['Jetzt aktualisieren', 'Später'], defaultId: 0, cancelId: 1, ...this.card(version, intro, notes) });
     if (res === 1) this.dismissed = version;
     if (res !== 0) return;
     await this.download();
@@ -236,7 +236,7 @@ class Updater extends EventEmitter {
     this.countdown = 0;
   }
 
-  // «Später» im Balken: nicht mehr von selbst neu starten; das Update installiert sich beim Schliessen.
+  // «Später» in der Karte: nicht mehr von selbst neu starten; das Update installiert sich beim Schliessen.
   postpone() {
     if (this.state !== 'neustart' && this.state !== 'geladen') return;
     this.stopCountdown();
@@ -256,6 +256,11 @@ class Updater extends EventEmitter {
     // Nicht still: Der Installer zeigt seinen Fortschritt und startet ASK danach wieder. Still sah es aus,
     // als käme ASK nicht zurück, und ein Klick auf die Verknüpfung während des Installierens bot an, sie zu löschen.
     this.updater.quitAndInstall(false, true);
+  }
+
+  // Zusatzangaben für den eigenen Update-Dialog der App (der Windows-Dialog liest nur message und detail)
+  card(version, intro, notes) {
+    return { kind: 'update', version, current: this.app.getVersion(), beta: isBeta(version), intro, notes: notes || '' };
   }
 
   // Nie zwei Dialoge übereinander

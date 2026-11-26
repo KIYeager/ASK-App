@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
+import PopMenu from './PopMenu.jsx';
 import { api } from '../api.js';
 import { formatTime, shortTime } from '../lib/format.js';
 
@@ -8,6 +9,7 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
   onNewProject, onProjectMenu, onNewInProject, state, onSettings, onStatus, update, onUpdate, onRefresh }) {
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [menu, setMenu] = useState(null); // { folder, chat, x, y }
+  const closeMenu = useCallback(() => setMenu(null), []);
   const [renamingChat, setRenamingChat] = useState(null); // { folder, id }
   const [hits, setHits] = useState({ query: '', list: [] });
   const q = query.trim().toLowerCase();
@@ -130,19 +132,20 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
         {q && groups.length && !groups.some((g) => g.chats.some((c) => c.title.toLowerCase().includes(q))) && !(hits.query === query.trim() && hits.list.length)
           ? <div className="chat-empty">Keine Treffer</div> : null}
       </div>
-      {menu ? <ChatMenu menu={menu} onClose={() => setMenu(null)}
-        onRename={() => setRenamingChat({ folder: menu.folder, id: menu.chat.id })}
-        onPin={async () => { await api().chatPin(menu.folder, menu.chat.id, !menu.chat.pinned); onRefresh?.(); }}
-        onDelete={() => onDeleteChat(menu.folder, menu.chat.id, menu.chat.title)}
+      {menu ? <PopMenu x={menu.x} y={menu.y} label="Chat" onClose={closeMenu} items={[
         // Chat, der im Hintergrund arbeitet (parallele Chats): von hier aus anhalten
-        onStop={runningChats.some((r) => r.id === menu.chat.id) ? () => api().chatStopChat(menu.folder, menu.chat.id) : null} /> : null}
+        runningChats.some((r) => r.id === menu.chat.id) ? { label: 'Stoppen', run: () => api().chatStopChat(menu.folder, menu.chat.id) } : null,
+        { label: 'Umbenennen', run: () => setRenamingChat({ folder: menu.folder, id: menu.chat.id }) },
+        { label: menu.chat.pinned ? 'Nicht mehr anheften' : 'Anheften', run: async () => { await api().chatPin(menu.folder, menu.chat.id, !menu.chat.pinned); onRefresh?.(); } },
+        { label: 'Löschen', danger: true, run: () => onDeleteChat(menu.folder, menu.chat.id, menu.chat.title) },
+      ]} /> : null}
       <div className="side-foot">
-        {update && ['verfügbar', 'lädt', 'geladen', 'neustart'].includes(update.state) ? (
-          <button type="button" id="update-pill" className="update-chip" onClick={onUpdate} disabled={update.state === 'lädt'}
+        {/* Nur solange das Update noch nicht geladen wird; danach zeigt die Update-Karte den Stand */}
+        {update && update.state === 'verfügbar' ? (
+          <button type="button" id="update-pill" className="update-chip" onClick={onUpdate}
             title={update.portable ? `ASK ${update.version} ist da (du hast ${update.current}). Klicken für den Download.` : `ASK ${update.version} ist da (du hast ${update.current}).`}>
             <Icon name="down" size={14} />
-            <span id="update-text">{update.state === 'lädt' ? `Update lädt … ${update.percent} %`
-              : update.state === 'verfügbar' ? `Update ${update.version}${/-/.test(update.version) ? ' (Beta)' : ''}` : 'Update bereit: neu starten'}</span>
+            <span id="update-text">{`Update ${update.version}${/-/.test(update.version) ? ' (Beta)' : ''}`}</span>
           </button>
         ) : null}
         <div className="account">
@@ -174,39 +177,7 @@ function initials(name) {
   return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
 }
 
-// Menü eines Chats: Umbenennen, Anheften, Löschen (Pfeiltasten, Esc schliesst)
-function ChatMenu({ menu, onClose, onRename, onPin, onDelete, onStop }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    ref.current?.querySelector('button')?.focus();
-    const away = (e) => { if (!ref.current?.contains(e.target)) onClose(); };
-    const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('keydown', key, true);
-    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key, true); };
-  }, [onClose]);
-  const item = (label, fn, cls = '') => (
-    <button type="button" role="menuitem" className={cls} onClick={() => { onClose(); fn(); }}>{label}</button>
-  );
-  const onKey = (e) => {
-    const items = [...ref.current.querySelectorAll('button')];
-    const i = items.indexOf(document.activeElement);
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
-    if (e.key === 'Tab') onClose();
-  };
-  const left = Math.max(4, Math.min(menu.x, window.innerWidth - 190));
-  const top = Math.max(4, Math.min(menu.y, window.innerHeight - 130));
-  return (
-    <div ref={ref} className="chat-menu popover" role="menu" aria-label="Chat" style={{ left, top }} onKeyDown={onKey}>
-      {onStop ? item('Stoppen', onStop) : null}
-      {item('Umbenennen', onRename)}
-      {item(menu.chat.pinned ? 'Nicht mehr anheften' : 'Anheften', onPin)}
-      {item('Löschen', onDelete, 'danger')}
-    </div>
-  );
-}
-
-function RenameField({ name, onDone: done, className = 'rename' }) {
+export function RenameField({ name, onDone: done, className = 'rename' }) {
   const [value, setValue] = useState(name);
   const finished = useRef(false);
   const onDone = (v) => { if (finished.current) return; finished.current = true; done(v); };

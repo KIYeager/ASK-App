@@ -108,7 +108,7 @@ class Knowledge {
     handle('memory:clear', async () => {
       const n = this.memory.list().length;
       if (!n) return false;
-      if (!(await confirm('Alles vergessen?', `ASK vergisst alle ${n} Einträge im Gedächtnis, über dich und alle Projekte. Das lässt sich nicht rückgängig machen.`))) return false;
+      if (!(await confirm('Alles vergessen?', `ASK vergisst alle ${n} Einträge im Gedächtnis, über dich und alle Projekte. Das lässt sich nicht rückgängig machen.`, { danger: true }))) return false;
       this.memory.clear();
       changed();
       return true;
@@ -123,7 +123,7 @@ class Knowledge {
     handle('skills:remove', async (name) => {
       const s = this.skills.get(String(name || ''));
       if (!s) return false;
-      if (!(await confirm(`Skill «${s.slug}» löschen?`, 'Die Anleitung wird von diesem Laptop entfernt. Exportiere sie vorher, wenn du sie behalten willst.'))) return false;
+      if (!(await confirm(`Skill «${s.slug}» löschen?`, 'Die Anleitung wird von diesem Laptop entfernt. Exportiere sie vorher, wenn du sie behalten willst.', { danger: true }))) return false;
       return this.skills.remove(s.slug);
     });
     handle('skills:export', safe(async (name) => {
