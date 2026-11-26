@@ -122,6 +122,21 @@ pub fn path_key(p: &str) -> String {
     s.to_lowercase()
 }
 
+/// Binärdaten aus der Oberfläche: `{ "$b64": "…" }` (bridge.js), eine Liste von Bytes (ältere Aufrufe,
+/// Tests) oder Text. Alles andere ergibt leere Daten.
+pub fn bytes_of(v: &Value) -> Vec<u8> {
+    use base64::Engine;
+    match v {
+        Value::Object(m) => m.get("$b64").and_then(Value::as_str)
+            .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
+            .unwrap_or_default(),
+        Value::Array(a) => a.iter().map(|b| b.as_u64().unwrap_or(0) as u8).collect(),
+        Value::String(s) => s.as_bytes().to_vec(),
+        _ => Vec::new(),
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,19 +169,5 @@ mod tests {
     fn basename_windows_and_posix() {
         assert_eq!(win_basename(r"C:\Users\a\Projekt"), "Projekt");
         assert_eq!(win_basename("/home/a/b/"), "b");
-    }
-}
-
-/// Binärdaten aus der Oberfläche: `{ "$b64": "…" }` (bridge.js), eine Liste von Bytes (ältere Aufrufe,
-/// Tests) oder Text. Alles andere ergibt leere Daten.
-pub fn bytes_of(v: &Value) -> Vec<u8> {
-    use base64::Engine;
-    match v {
-        Value::Object(m) => m.get("$b64").and_then(Value::as_str)
-            .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
-            .unwrap_or_default(),
-        Value::Array(a) => a.iter().map(|b| b.as_u64().unwrap_or(0) as u8).collect(),
-        Value::String(s) => s.as_bytes().to_vec(),
-        _ => Vec::new(),
     }
 }
