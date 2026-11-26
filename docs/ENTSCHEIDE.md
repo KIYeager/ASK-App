@@ -475,3 +475,5 @@ Die Nummern der Steuerelemente stammen aus dem Dialog 104 in `SpiderBanner.dll` 
 Nicht gewählt: Startbild (kein Fortschritt sichtbar, bei langsamen Laptops wirkt es hängengeblieben, siehe E39); Installer mit Seiten (`oneClick: false`, mehr Klicks für Lernende); eigenes Plugin (müsste gebaut und gepflegt werden).
 
 Geprüft: Die Datei übersetzt mit makensis 3.0.4.1 (wie electron-builder) mit `-WX`, für Installer und Deinstaller. Aussehen nur unter Windows prüfbar (TESTPROTOKOLL, Updates).
+
+Nachtrag: Der erste Release mit diesem Fenster (0.3.9) brach beim Bauen ab. electron-builder liest `installer.nsh` vor `WinMessages.nsh`, und dort steht `!define PBM_SETBARCOLOR` ohne `!ifndef`; die Datei nennt die Werte darum `ASK_PBM_…`. Ausserdem bindet electron-builder mit `customCheckAppRunning` `getProcessInfo.nsh` und `Var pid` nicht mehr ein, die `_CHECK_APP_RUNNING` braucht; das macht jetzt `installer.nsh`. Geprüft mit einem echten Build von electron-builder (Installer und Deinstaller, `-WX`) statt nur mit einem Testskript. 0.3.9 wurde nie veröffentlicht.

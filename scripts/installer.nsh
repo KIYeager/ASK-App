@@ -13,12 +13,15 @@
 ; danach wie electron-builder, ob ASK noch laeuft. Steuerelemente des Plugins (Dialog 104, Masse in
 ; Dialog-Einheiten): 1000 Titel, 1002 zweite Zeile (bekommt sonst nichts), 1001 Balken, 1003 Statuszeile von
 ; NSIS (bleibt leer, SetDetailsPrint none), 1025 Symbol. Der Hintergrund des Fensters gehoert dem Plugin.
-!ifndef PBM_SETBARCOLOR
-  !define PBM_SETBARCOLOR 0x0409
-!endif
-!ifndef PBM_SETBKCOLOR
-  !define PBM_SETBKCOLOR 0x2001
-!endif
+; Mit customCheckAppRunning bindet electron-builder getProcessInfo.nsh und Var pid nicht mehr ein
+; (include/allowOnlyOneInstallerInstance.nsh); _CHECK_APP_RUNNING braucht beides, auch im Deinstaller.
+!include "getProcessInfo.nsh"
+Var pid
+
+; Eigene Namen: electron-builder liest diese Datei vor WinMessages.nsh, das PBM_SETBARCOLOR ohne !ifndef
+; definiert; ein gleichnamiges !define hier bricht den Build ab (Release 0.3.9).
+!define ASK_PBM_SETBARCOLOR 0x0409
+!define ASK_PBM_SETBKCOLOR 0x2001
 
 ; Steuerelement ID im Dialog HWND an x y b h (Dialog-Einheiten) setzen, umgerechnet wie das Plugin selbst
 !macro askPlace HWND ID X Y W H
@@ -62,8 +65,8 @@
     System::Call 'user32::SetWindowLong(p r3, i -16, i r4)'
     System::Call 'uxtheme::SetWindowTheme(p r3, w " ", w " ")'
     ; COLORREF ist 0x00BBGGRR: #0B6E75 auf #D5DBDE
-    SendMessage $3 ${PBM_SETBARCOLOR} 0 0x00756E0B
-    SendMessage $3 ${PBM_SETBKCOLOR} 0 0x00DEDBD5
+    SendMessage $3 ${ASK_PBM_SETBARCOLOR} 0 0x00756E0B
+    SendMessage $3 ${ASK_PBM_SETBKCOLOR} 0 0x00DEDBD5
 
     ; Dialog 254 x 78: Symbol links, Titel und zweite Zeile daneben, darunter ein schmaler Balken
     !insertmacro askPlace $0 1025 10 17 20 20
