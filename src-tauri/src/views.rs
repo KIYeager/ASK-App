@@ -191,7 +191,7 @@ impl Views {
         let _ = wv.set_background_color(Some(tauri::window::Color(0, 0, 0, 255)));
         let _ = wv.hide();
         crate::platform::setup_browser_view(&wv);
-        crate::pages::watch(&wv);
+        crate::pages::watch(&wv, crate::pages::Watch { screencast: false, input: true });
         self.apply_browser_layout();
         Some(wv)
     }

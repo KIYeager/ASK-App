@@ -25,6 +25,39 @@ static LOADED: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify
 /// Abonnenten der Seitenereignisse je Webansicht
 static LISTENERS: LazyLock<Mutex<HashMap<String, Vec<(u64, PageListener)>>>> = LazyLock::new(Default::default);
 static SEQ: AtomicU64 = AtomicU64::new(1);
+/// Neuestes Bild des Screencasts je unsichtbarem Fenster: (JPEG, neu seit dem letzten take_paint)
+static PAINTS: LazyLock<Mutex<HashMap<String, (Vec<u8>, bool)>>> = LazyLock::new(Default::default);
+/// Name der DevTools-Bindung, über die Seiten Eingaben der Person melden (zufällig, damit Seiten sie nicht kennen)
+static INPUT_BINDING: LazyLock<String> = LazyLock::new(|| format!("__askEingabe{:016x}", rand_u64()));
+
+fn rand_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+    h.finish()
+}
+
+/// Was `watch` zusätzlich zu Laden, Konsole und Absturz beobachtet
+#[derive(Clone, Copy, Default)]
+pub struct Watch {
+    /// Bilder laufend mitschneiden (Page.startScreencast), für die Live-Bilder des unsichtbaren Fensters
+    pub screencast: bool,
+    /// Klicks und Tasten der Person melden (PageEvent::Input), für den Browser-Bereich
+    pub input: bool,
+}
+
+/// Skript in jeder Seite: echte Klicks und Tasten (auch die über das DevTools-Protokoll, wie in Electron
+/// before-input-event; `browse` unterscheidet sie am Zeitpunkt) an die Bindung melden
+fn input_script(binding: &str) -> String {
+    format!(r#"(() => {{
+  const send = globalThis['{binding}'];
+  if (typeof send !== 'function' || globalThis.__askEingabeAktiv) return;
+  globalThis.__askEingabeAktiv = true;
+  addEventListener('mousedown', (e) => {{ if (e.isTrusted) send('mouseDown'); }}, true);
+  addEventListener('keydown', (e) => {{ if (e.isTrusted) send(e.key && e.key.length === 1 ? 'keyDown' : 'rawKeyDown'); }}, true);
+}})();"#)
+}
+
 /// Nur der Ordner, den visual.rs freigegeben hat, ist für Navigationen der unsichtbaren Fenster erlaubt
 static FILE_ROOTS: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
 
@@ -61,8 +94,9 @@ pub fn navigation_allowed(label: &str, url: &str) -> bool {
     ask_core::visual::allowed_navigation(url, &root)
 }
 
-/// Konsole, Absturz und Ladeende einer Webansicht melden (Windows: WebView2-Ereignisse)
-pub fn watch(wv: &Webview<Wry>) {
+/// Konsole, Absturz und Ladeende einer Webansicht melden (Windows: WebView2-Ereignisse); dazu nach `opts`
+/// Screencast und Eingaben der Person
+pub fn watch(wv: &Webview<Wry>, opts: Watch) {
     #[cfg(windows)]
     {
         use webview2_com::Microsoft::Web::WebView2::Win32::*;
@@ -101,25 +135,71 @@ pub fn watch(wv: &Webview<Wry>) {
                 })),
                 &mut token,
             );
-            if let Ok(receiver) = core.GetDevToolsProtocolEventReceiver(&windows::core::HSTRING::from("Runtime.consoleAPICalled")) {
-                let l3 = label.clone();
-                let _ = receiver.add_DevToolsProtocolEventReceived(
-                    &DevToolsProtocolEventReceivedEventHandler::create(Box::new(move |_s, args| {
-                        let Some(args) = args else { return Ok(()) };
-                        let mut json = windows::core::PWSTR::null();
-                        args.ParameterObjectAsJson(&mut json)?;
-                        if let Ok(v) = serde_json::from_str::<Value>(&take_pwstr(json)) {
-                            page_event(&l3, console_event(&v));
+            // Ereignisse des DevTools-Protokolls: Name → Verarbeitung der Parameter
+            let on = |name: &str, f: Box<dyn Fn(Value)>| {
+                if let Ok(receiver) = core.GetDevToolsProtocolEventReceiver(&windows::core::HSTRING::from(name)) {
+                    let mut t = 0i64;
+                    let _ = receiver.add_DevToolsProtocolEventReceived(
+                        &DevToolsProtocolEventReceivedEventHandler::create(Box::new(move |_s, args| {
+                            let Some(args) = args else { return Ok(()) };
+                            let mut json = windows::core::PWSTR::null();
+                            args.ParameterObjectAsJson(&mut json)?;
+                            if let Ok(v) = serde_json::from_str::<Value>(&take_pwstr(json)) {
+                                f(v);
+                            }
+                            Ok(())
+                        })),
+                        &mut t,
+                    );
+                }
+            };
+            let l3 = label.clone();
+            on("Runtime.consoleAPICalled", Box::new(move |v| page_event(&l3, console_event(&v))));
+            if opts.input {
+                let l4 = label.clone();
+                on("Runtime.bindingCalled", Box::new(move |v| {
+                    if v.get("name").and_then(Value::as_str) == Some(INPUT_BINDING.as_str()) {
+                        let kind = v.get("payload").and_then(Value::as_str).unwrap_or("");
+                        if matches!(kind, "mouseDown" | "keyDown" | "rawKeyDown") {
+                            page_event(&l4, PageEvent::Input { kind: kind.to_string() });
                         }
-                        Ok(())
-                    })),
-                    &mut token,
-                );
+                    }
+                }));
+            }
+            if opts.screencast {
+                let l5 = label.clone();
+                on("Page.screencastFrame", Box::new(move |v| {
+                    use base64::Engine;
+                    if let Some(data) = v.get("data").and_then(Value::as_str) {
+                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                            PAINTS.lock().insert(l5.clone(), (bytes, true));
+                        }
+                    }
+                    // Jedes Bild bestätigen, sonst schickt WebView2 keine weiteren
+                    let session = v.get("sessionId").cloned().unwrap_or(Value::Null);
+                    let l = l5.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Some(wv) = shell().app.get_webview(&l) {
+                            let _ = cdp::call(&wv, "Page.screencastFrameAck", json!({ "sessionId": session })).await;
+                        }
+                    });
+                }));
             }
         });
         let wv = wv.clone();
         tauri::async_runtime::spawn(async move {
             let _ = cdp::call(&wv, "Runtime.enable", json!({})).await;
+            if opts.input {
+                let binding = INPUT_BINDING.as_str();
+                let script = input_script(binding);
+                let _ = cdp::call(&wv, "Runtime.addBinding", json!({ "name": binding })).await;
+                let _ = cdp::call(&wv, "Page.addScriptToEvaluateOnNewDocument", json!({ "source": script })).await;
+                let _ = cdp::eval(&wv, &script).await; // die schon geladene Seite
+            }
+            if opts.screencast {
+                // Live-Bilder wie in Electron: höchstens 960 Pixel breit, JPEG mit Qualität 80
+                let _ = cdp::call(&wv, "Page.startScreencast", json!({ "format": "jpeg", "quality": 80, "maxWidth": 960, "maxHeight": 600, "everyNthFrame": 1 })).await;
+            }
         });
     }
     #[cfg(not(windows))]
@@ -208,6 +288,20 @@ impl Page for WebPage {
         cdp::screenshot(&self.webview()?).await
     }
 
+    fn take_paint(&self) -> Option<Vec<u8>> {
+        let mut paints = PAINTS.lock();
+        let entry = paints.get_mut(&self.label)?;
+        if !entry.1 {
+            return None;
+        }
+        entry.1 = false;
+        Some(entry.0.clone())
+    }
+
+    fn last_paint(&self) -> Option<Vec<u8>> {
+        PAINTS.lock().get(&self.label).map(|e| e.0.clone())
+    }
+
     async fn mouse(&self, kind: MouseKind, x: f64, y: f64, clicks: u32) -> Result<()> {
         let k = match kind { MouseKind::Move => "mouseMoved", MouseKind::Down => "mousePressed", MouseKind::Up => "mouseReleased" };
         let button = if kind == MouseKind::Move { "none" } else { "left" };
@@ -271,6 +365,7 @@ impl Page for WebPage {
         LISTENERS.lock().remove(&self.label);
         FILE_ROOTS.lock().remove(&self.label);
         LOADS.lock().remove(&self.label);
+        PAINTS.lock().remove(&self.label);
         if let Some(w) = shell().app.get_webview_window(&self.label) {
             let _ = w.destroy();
         }
@@ -278,7 +373,7 @@ impl Page for WebPage {
 }
 
 /// Fenster ausserhalb des Bildschirms, ohne Taskleiste, ohne Rechte (keine Berechtigung «ui»)
-fn hidden_window(label: &str, url: WebviewUrl, incognito: bool) -> Result<Webview<Wry>> {
+fn hidden_window(label: &str, url: WebviewUrl, incognito: bool, opts: Watch) -> Result<Webview<Wry>> {
     let nav_label = label.to_string();
     let mut b = WebviewWindowBuilder::new(&shell().app, label, url)
         .title("ASK")
@@ -307,7 +402,7 @@ fn hidden_window(label: &str, url: WebviewUrl, incognito: bool) -> Result<Webvie
     let wv = shell().app.get_webview(label).ok_or_else(|| anyhow!("Fenster nicht angelegt"))?;
     let _ = w.set_ignore_cursor_events(true);
     crate::platform::setup_browser_view(&wv);
-    watch(&wv);
+    watch(&wv, opts);
     Ok(wv)
 }
 
@@ -334,7 +429,7 @@ impl PageProvider for Pages {
 
     async fn offscreen(&self) -> Result<Arc<dyn Page>> {
         let label = format!("unsichtbar-{}", SEQ.fetch_add(1, Ordering::SeqCst));
-        hidden_window(&label, WebviewUrl::External("about:blank".parse()?), true)?;
+        hidden_window(&label, WebviewUrl::External("about:blank".parse()?), true, Watch { screencast: true, input: false })?;
         Ok(Arc::new(WebPage { label, pane: false }))
     }
 
@@ -344,7 +439,7 @@ impl PageProvider for Pages {
         // Die Seite darf nur ihre eigenen Dateien laden (pdf.html und pdf.js)
         FILE_ROOTS.lock().insert(label.clone(), ask_core::paths::resources(&[]).to_string_lossy().to_string());
         let before = load_gen(&label);
-        hidden_window(&label, WebviewUrl::External(target), true)?;
+        hidden_window(&label, WebviewUrl::External(target), true, Watch::default())?;
         let page = WebPage { label: label.clone(), pane: false };
         // auf das erste Laden warten
         for _ in 0..150 {

@@ -635,8 +635,9 @@ impl App {
         let id = {
             let mut ui = self.ui.lock();
             ui.seq += 1;
-            ui.waits.insert(ui.seq, (tx, cancel));
-            ui.seq
+            let id = ui.seq;
+            ui.waits.insert(id, (tx, cancel));
+            id
         };
         payload["id"] = json!(id);
         self.send(channel, payload);
