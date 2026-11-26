@@ -1,7 +1,7 @@
 // Tests für das Lesen der Antworten von ASK und den Verlauf an das Modell (node --test tests/).
 const test = require('node:test');
 const assert = require('node:assert');
-const { AskSession, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, nearestEffort } = require('../src/main/askapi');
+const { AskSession, cleanToken, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, nearestEffort } = require('../src/main/askapi');
 const { apiMessages, shortArgs, TIGHT, TOO_LONG } = require('../src/main/agent');
 const { parseArgs, clip, toolSpecs } = require('../src/main/tools');
 
@@ -366,4 +366,143 @@ test('Token nicht lesbar: Status bleibt, Grund steht im Status', async () => {
   const st = await ask.check(true);
   assert.strictEqual(st.state, 'unbekannt');
   assert.match(st.detail, /Script failed to execute/);
+});
+
+// ---------- Anmelden ohne die ASK-Seite der App (ENTSCHEIDE E57) ----------
+
+const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IjEyMyJ9.c2lnbmF0dXI';
+
+// ASK-Schnittstelle, die nur das Token «good» (bzw. JWT) annimmt; zählt die Anfragen
+function fakeAsk(accept = [JWT]) {
+  const calls = [];
+  const fetch = async (url, options = {}) => {
+    calls.push(url);
+    if (url.includes('fail-dns')) throw new TypeError('net::ERR_NAME_NOT_RESOLVED');
+    const auth = String(options.headers?.Authorization || '').replace(/^Bearer /, '');
+    if (!accept.includes(auth)) return { ok: false, status: 401, json: async () => ({}), text: async () => '' };
+    const body = url.endsWith('/api/v1/auths/') ? { name: 'Lea Muster', role: 'user' }
+      : url.endsWith('/api/models') ? { data: [{ id: 'qwen', name: 'Qwen' }] }
+        : url.endsWith('/api/config') ? {} : url.endsWith('/user/settings') ? {} : {};
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  return { fetch, calls };
+}
+
+function storeOf(initial = '') {
+  const s = { value: initial, get: () => s.value, set: (v) => { s.value = v; } };
+  return s;
+}
+
+test('Token aus dem Browser: bereinigt, nur JWT oder API-Schlüssel', () => {
+  assert.strictEqual(cleanToken(`  Bearer ${JWT}\n`), JWT);
+  assert.strictEqual(cleanToken(`"${JWT}"`), JWT);
+  assert.strictEqual(cleanToken('sk-0123456789abcdef'), 'sk-0123456789abcdef');
+  for (const bad of ['', 'hallo', 'abc def.ghi.jkl', 'eyJ.a b.c', 'x'.repeat(9000)]) assert.strictEqual(cleanToken(bad), '', bad);
+});
+
+test('Token einfügen: gültig meldet an und bleibt gespeichert, ungültig nicht', async () => {
+  const { ask } = fakePage({ read: () => { throw new Error('Fehlerseite'); } });
+  const api = fakeAsk();
+  ask.session = { fetch: api.fetch };
+  const store = storeOf();
+  ask.setTokenStore(store);
+
+  const bad = await ask.useToken('eyJhbGciOiJIUzI1NiJ9.eyJpZCI6Ijk5In0.ZmFsc2No');
+  assert.strictEqual(bad.ok, false);
+  assert.match(bad.reason, /kennt dieses Token nicht/);
+  assert.strictEqual(store.value, '');
+
+  assert.strictEqual((await ask.useToken('nur text')).ok, false);
+
+  const good = await ask.useToken(`Bearer ${JWT}`);
+  assert.deepStrictEqual(good, { ok: true });
+  assert.strictEqual(store.value, JWT);
+  assert.strictEqual(ask.status.state, 'angemeldet');
+  assert.strictEqual(ask.status.user, 'Lea Muster');
+  assert.strictEqual(ask.models.length, 1);
+});
+
+test('Gespeichertes Token gilt, auch wenn die ASK-Seite nicht lädt', async () => {
+  const { ask, handlers } = fakePage({ read: () => { throw new Error('nie gelesen'); } });
+  ask.session = { fetch: fakeAsk().fetch };
+  ask.setTokenStore(storeOf(JWT));
+  handlers['did-fail-load']({}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://ask.example.ch/', true);
+  assert.strictEqual((await ask.check(true)).state, 'angemeldet');
+});
+
+test('Seite ohne Token, aber gespeichertes Token: angemeldet; abgelaufen: abgemeldet und gelöscht', async () => {
+  const api = fakeAsk();
+  const { ask } = fakePage({ url: 'https://ask.example.ch/auth', read: () => '' });
+  ask.session = { fetch: api.fetch };
+  const store = storeOf(JWT);
+  ask.setTokenStore(store);
+  assert.strictEqual((await ask.check(true)).state, 'angemeldet');
+  api.calls.length = 0;
+  const expired = fakeAsk([]); // ASK nimmt das Token nicht mehr an
+  ask.session = { fetch: expired.fetch };
+  assert.strictEqual((await ask.check(true)).state, 'nicht-angemeldet');
+  assert.strictEqual(store.value, '');
+  assert.strictEqual(ask.manualToken, '');
+});
+
+test('Abmelden löscht das gespeicherte Token, Cookies und localStorage von ASK', async () => {
+  const { ask } = fakePage({ read: () => '' });
+  const cleared = [];
+  ask.session = { fetch: fakeAsk().fetch, clearStorageData: async (o) => { cleared.push(o); } };
+  ask.view.webContents.executeJavaScript = async () => {};
+  const store = storeOf(JWT);
+  ask.setTokenStore(store);
+  ask.token = JWT;
+  await ask.logout();
+  assert.strictEqual(store.value, '');
+  assert.deepStrictEqual(cleared[0].storages, ['cookies', 'localstorage']);
+  assert.strictEqual(ask.status.state, 'nicht-angemeldet');
+});
+
+test('Name nicht gefunden: Ereignis für das Ausweich-DNS, Proxy steht im Ladefehler', async () => {
+  const { ask, handlers } = fakePage({ read: () => '' });
+  ask.session = { resolveProxy: async () => 'DIRECT' };
+  const seen = [];
+  ask.on('name-not-resolved', (url) => seen.push(url));
+  handlers['did-fail-load']({}, -202, 'ERR_CERT_AUTHORITY_INVALID', 'https://ask.example.ch/', true);
+  assert.deepStrictEqual(seen, [], 'anderer Fehler: kein Ausweich-DNS');
+  handlers['did-fail-load']({}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://ask.example.ch/', true);
+  assert.deepStrictEqual(seen, ['https://ask.example.ch/']);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual(ask.status.loadError.proxy, 'DIRECT');
+
+  // auch beim Einfügen eines Tokens, wenn ASK für die App nicht auflösbar ist
+  ask.base = 'https://fail-dns.example.ch';
+  ask.session = { fetch: fakeAsk().fetch };
+  const res = await ask.useToken(JWT);
+  assert.strictEqual(res.ok, false);
+  assert.match(res.reason, /nicht erreichbar \(ERR_NAME_NOT_RESOLVED\)/);
+  assert.strictEqual(seen.length, 2);
+});
+
+test('Eigenes Anmeldefenster: Token nach der Anmeldung übernommen, «login-done»', async () => {
+  const { ask } = fakePage({ read: () => { throw new Error('Fehlerseite'); } });
+  ask.session = { fetch: fakeAsk().fetch };
+  ask.setTokenStore(storeOf());
+  const handlers = {};
+  const win = { url: 'https://ask.example.ch/auth', token: '' };
+  const wc = {
+    on: (n, fn) => { handlers[n] = fn; }, once: (n, fn) => { handlers[n] = fn; },
+    isDestroyed: () => false, isLoading: () => false, getURL: () => win.url,
+    executeJavaScript: async () => win.token,
+  };
+  let done = 0;
+  ask.on('login-done', () => { done++; });
+  const stop = ask.watchLoginWindow(wc);
+  await handlers['did-finish-load']();
+  assert.strictEqual(done, 0, 'ohne Token nichts');
+  win.url = 'https://login.microsoftonline.com/x';
+  win.token = JWT;
+  await handlers['did-navigate-in-page']();
+  assert.strictEqual(done, 0, 'fremde Seite wird nicht gelesen');
+  win.url = 'https://ask.example.ch/';
+  await handlers['did-navigate-in-page']();
+  assert.strictEqual(done, 1);
+  assert.strictEqual(ask.status.state, 'angemeldet');
+  stop();
 });

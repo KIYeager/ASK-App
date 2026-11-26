@@ -292,6 +292,19 @@ function sameOrigin(url, base) {
   try { return !!url && !!base && new URL(url).origin === new URL(base).origin; } catch { return false; }
 }
 
+// Chromium: Name nicht gefunden (ERR_NAME_NOT_RESOLVED, ERR_NAME_RESOLUTION_FAILED)
+const NAME_ERRORS = new Set([-105, -137]);
+const isNameError = (err) => /ERR_NAME_(NOT_RESOLVED|RESOLUTION_FAILED)/.test(String(err?.message || err));
+const netReason = (err) => (String(err?.message || err).match(/net::(ERR_[A-Z_]+)/) || [])[1] || String(err?.message || err);
+
+// Token aus dem Browser bereinigen: «Bearer » und Leerzeichen weg; ein JWT (drei Teile) oder ein API-Schlüssel (sk-…)
+function cleanToken(raw) {
+  const t = String(raw || '').trim().replace(/^bearer\s+/i, '').replace(/^["']|["']$/g, '');
+  if (!t || t.length > 8192 || /\s/.test(t)) return '';
+  if (/^sk-[A-Za-z0-9_-]{8,}$/.test(t) || /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(t)) return t;
+  return '';
+}
+
 const RETRY_LOAD_MS = 15000; // so oft lädt die ASK-Seite nach einem Ladefehler von selbst neu
 const STALL_MS = 5 * 60 * 1000; // so lange darf ASK mitten in einer Antwort schweigen
 
@@ -310,6 +323,20 @@ class AskSession extends EventEmitter {
     this.timer = null;
     this.busy = false;
     this.lastCheck = 0;
+    // Token aus dem Browser (eingefügt oder aus dem Anmeldefenster), falls die ASK-Seite in der App nicht lädt (ENTSCHEIDE E57)
+    this.manualToken = '';
+    this.tokenStore = null;
+  }
+
+  // Ablage für das Token aus dem Browser (verschlüsselt in den Einstellungen, main.js)
+  setTokenStore(store) {
+    this.tokenStore = store;
+    try { this.manualToken = cleanToken(store?.get?.() || ''); } catch { this.manualToken = ''; }
+  }
+
+  rememberToken(token) {
+    this.manualToken = token;
+    try { this.tokenStore?.set?.(token); } catch { /* bleibt nur bis zum Beenden */ }
   }
 
   attach(view) {
@@ -327,6 +354,12 @@ class AskSession extends EventEmitter {
       this.loadFailed = true;
       this.failedAt = Date.now();
       if (this.status.state !== 'angemeldet') this.publish({ ...this.status, loadError: { code, description, url } });
+      if (NAME_ERRORS.has(code)) this.emit('name-not-resolved', url);
+      // Für die Meldung: geht die App direkt oder über einen Proxy? Unterscheidet sich das vom Browser, ist das oft der Grund.
+      Promise.resolve(this.session?.resolveProxy?.(url)).then((proxy) => {
+        const e = this.status.loadError;
+        if (proxy && e && e.url === url && e.code === code) this.publish({ ...this.status, loadError: { ...e, proxy: String(proxy) } });
+      }).catch(() => {});
     });
     wc.on('did-start-navigation', (details) => { if (details?.isMainFrame !== false && !details?.isSameDocument) this.loadFailed = false; });
     // Nach einem Ladefehler kommt für die Fehlerseite von Chromium trotzdem did-finish-load: dann bleibt der Fehler
@@ -377,8 +410,9 @@ class AskSession extends EventEmitter {
     if (this.busy && force) this.again = true; // nach der laufenden Prüfung gleich nochmals
     if (!this.view || !this.base || this.busy) return this.status;
     const wc = this.view.webContents;
-    if (wc.isDestroyed() || wc.isLoading() || this.loadFailed) return this.status;
-    if (!sameOrigin(wc.getURL(), this.base)) {
+    const pageReady = !wc.isDestroyed() && !wc.isLoading() && !this.loadFailed && sameOrigin(wc.getURL(), this.base);
+    if (!pageReady && !this.manualToken) {
+      if (wc.isDestroyed() || wc.isLoading() || this.loadFailed) return this.status;
       // Fertig geladen, aber nicht auf ASK (z. B. gleich zur Microsoft-Anmeldung weitergeleitet, oder eine Seite des
       // Netzes): die Seite zeigen, statt hinter «Verbinde mit ASK …» zu warten. Angemeldet ist man dort nicht.
       if (['unbekannt', 'pruefen'].includes(this.status.state) && /^https?:/i.test(wc.getURL())) this.publish({ state: 'nicht-angemeldet' });
@@ -389,16 +423,22 @@ class AskSession extends EventEmitter {
     this.lastCheck = Date.now();
     this.busy = true;
     try {
-      let token;
-      try {
-        token = await wc.executeJavaScript('localStorage.token || ""', true);
-      } catch (err) {
-        // Seite (noch) nicht lesbar, z. B. Fehlerseite: kein Fehler von ASK, später nochmals. Den Grund im Status
-        // mitgeben, damit die Oberfläche ihn zeigen kann, wenn das Warten zu lange dauert.
-        const detail = `Die ASK-Seite lässt sich nicht lesen: ${err?.message || err}`;
-        if (this.status.state !== 'angemeldet' && this.status.detail !== detail) this.publish({ ...this.status, detail });
-        return this.status;
+      let token = '';
+      if (pageReady) {
+        try {
+          token = await wc.executeJavaScript('localStorage.token || ""', true);
+        } catch (err) {
+          // Seite (noch) nicht lesbar, z. B. Fehlerseite: kein Fehler von ASK, später nochmals. Den Grund im Status
+          // mitgeben, damit die Oberfläche ihn zeigen kann, wenn das Warten zu lange dauert.
+          const detail = `Die ASK-Seite lässt sich nicht lesen: ${err?.message || err}`;
+          if (!this.manualToken) {
+            if (this.status.state !== 'angemeldet' && this.status.detail !== detail) this.publish({ ...this.status, detail });
+            return this.status;
+          }
+        }
       }
+      // Ohne Token auf der Seite gilt das Token aus dem Browser, falls eines da ist
+      token = token || this.manualToken;
       if (!token) {
         this.token = '';
         if (this.status.state !== 'nicht-angemeldet') this.publish({ state: 'nicht-angemeldet' });
@@ -406,13 +446,7 @@ class AskSession extends EventEmitter {
       }
       if (token === this.token && this.status.state === 'angemeldet' && !force) return this.status;
       this.token = token;
-      const user = await this.json('/api/v1/auths/');
-      const models = await this.loadModels();
-      this.user = { name: user.name || user.email || '', role: user.role };
-      this.webSearch = webSearchAllowed(await this.json('/api/config').catch(() => ({})), user);
-      this.publish({ state: 'angemeldet', user: this.user.name });
-      if (models.length === 0) this.publish({ state: 'fehler', message: 'ASK bietet diesem Konto kein Modell an. Wer ASK betreut, muss deinem Konto zuerst ein Modell freigeben.' });
-      this.cleanStaleTerminal(token);
+      await this.signIn(token);
     } catch (err) {
       if (err instanceof AuthError) this.publish({ state: 'nicht-angemeldet' });
       else this.publish({ state: 'fehler', message: err.message });
@@ -426,6 +460,71 @@ class AskSession extends EventEmitter {
     return this.status;
   }
 
+  // Token gilt: Konto, Modelle und Websuche von ASK holen und «angemeldet» melden
+  async signIn(token) {
+    const user = await this.json('/api/v1/auths/');
+    const models = await this.loadModels();
+    this.user = { name: user.name || user.email || '', role: user.role };
+    this.webSearch = webSearchAllowed(await this.json('/api/config').catch(() => ({})), user);
+    this.publish({ state: 'angemeldet', user: this.user.name });
+    if (models.length === 0) this.publish({ state: 'fehler', message: 'ASK bietet diesem Konto kein Modell an. Wer ASK betreut, muss deinem Konto zuerst ein Modell freigeben.' });
+    this.cleanStaleTerminal(token);
+  }
+
+  // Anmelden mit einem Token aus dem Browser (eingefügt oder aus dem Anmeldefenster). Das Token wird zuerst bei ASK
+  // geprüft; nur ein gültiges bleibt gespeichert. Antwort { ok, reason }.
+  async useToken(raw) {
+    const token = cleanToken(raw);
+    if (!token) return { ok: false, reason: 'Das sieht nicht wie ein Token aus. Kopiere es ganz, ohne Leerzeichen.' };
+    if (!this.base || !this.session) return { ok: false, reason: 'Die Adresse von ASK fehlt.' };
+    for (let i = 0; this.busy && i < 200; i++) await new Promise((r) => setTimeout(r, 50));
+    this.busy = true;
+    try {
+      let res;
+      try {
+        res = await this.session.fetch(`${this.base}/api/v1/auths/`, { headers: { Authorization: `Bearer ${token}` } });
+      } catch (err) {
+        if (isNameError(err)) this.emit('name-not-resolved', this.base);
+        return { ok: false, reason: `ASK ist für die App nicht erreichbar (${netReason(err)}). Die App versucht es auch von selbst wieder.` };
+      }
+      if (res.status === 401 || res.status === 403) return { ok: false, reason: 'ASK kennt dieses Token nicht oder es ist abgelaufen. Kopiere es nochmals aus ASK.' };
+      if (!res.ok) return { ok: false, reason: `ASK antwortet mit HTTP ${res.status}.` };
+      this.rememberToken(token);
+      this.token = token;
+      this.lastCheck = Date.now();
+      try {
+        await this.signIn(token);
+      } catch (err) {
+        if (err instanceof AuthError) return { ok: false, reason: 'ASK hat das Token gleich wieder abgelehnt.' };
+        this.publish({ state: 'fehler', message: err.message });
+      }
+      return { ok: true };
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  // Anmeldung in einem eigenen Fenster mit derselben Sitzung wie die ASK-Seite: Sobald dort ein Token steht
+  // (auch nach dem Microsoft-Login, das die Seite ohne neues Laden setzt), übernimmt es die App und meldet «login-done».
+  watchLoginWindow(wc) {
+    let tried = '';
+    const grab = async () => {
+      if (wc.isDestroyed() || wc.isLoading() || !sameOrigin(wc.getURL(), this.base)) return;
+      let token = '';
+      try { token = cleanToken(await wc.executeJavaScript('localStorage.token || ""', true)); } catch { return; }
+      if (!token || token === tried) return;
+      tried = token;
+      const res = await this.useToken(token);
+      if (res.ok) this.emit('login-done');
+      else tried = ''; // z. B. ASK gerade nicht erreichbar: später nochmals
+    };
+    const timer = setInterval(grab, 1500);
+    wc.on('did-finish-load', grab);
+    wc.on('did-navigate-in-page', grab);
+    wc.once('destroyed', () => clearInterval(timer));
+    return () => clearInterval(timer);
+  }
+
   async request(path, options = {}) {
     if (!this.token) throw new AuthError('Nicht bei ASK angemeldet.');
     const res = await this.session.fetch(this.base + path, {
@@ -435,6 +534,7 @@ class AskSession extends EventEmitter {
     // Nur 401 heisst «nicht mehr angemeldet». 403 kommt auch, wenn das Konto ein Modell oder eine Funktion
     // nicht benutzen darf; das meldet der Aufrufer als Fehler, die Anmeldung bleibt.
     if (res.status === 401) {
+      if (this.token && this.token === this.manualToken) this.rememberToken('');
       this.token = '';
       this.publish({ state: 'nicht-angemeldet' });
       throw new AuthError('Die Anmeldung bei ASK ist abgelaufen. Bitte neu anmelden.');
@@ -511,12 +611,14 @@ class AskSession extends EventEmitter {
   async logout() {
     const token = this.token;
     this.token = '';
+    this.rememberToken('');
     if (token && this.session) {
       await this.session.fetch(`${this.base}/api/v1/auths/signout`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
     }
     if (this.view) {
       await this.view.webContents.executeJavaScript('localStorage.removeItem("token")', true).catch(() => {});
-      await this.session.clearStorageData({ origin: new URL(this.base).origin, storages: ['cookies'] }).catch(() => {});
+      // auch localStorage: Lädt die Seite nicht, kann die App das Token dort nicht selbst entfernen
+      await this.session.clearStorageData({ origin: new URL(this.base).origin, storages: ['cookies', 'localstorage'] }).catch(() => {});
       this.view.webContents.loadURL(`${this.base}/auth`).catch(() => {});
     }
     this.publish({ state: 'nicht-angemeldet' });
@@ -611,4 +713,4 @@ class AskSession extends EventEmitter {
   }
 }
 
-module.exports = { inbandError, sameOrigin, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS, nearestEffort };
+module.exports = { inbandError, sameOrigin, cleanToken, isNameError, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS, nearestEffort };

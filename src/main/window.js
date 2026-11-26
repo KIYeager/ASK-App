@@ -114,6 +114,40 @@ class AppWindow {
     this.win.setMenu(menu);
   }
 
+  // Anmeldung bei ASK in einem eigenen Fenster, mit derselben Sitzung wie die ASK-Seite (ENTSCHEIDE E57). Für den Fall,
+  // dass die Seite im Hauptfenster nicht erscheint. Popups gehen wie dort in den normalen Browser.
+  openAskLogin(url) {
+    if (this.loginWin && !this.loginWin.isDestroyed()) {
+      this.loginWin.focus();
+      return null;
+    }
+    const win = new BrowserWindow({
+      parent: this.win, width: 560, height: 780, minWidth: 420, minHeight: 500, title: 'Bei ASK anmelden', icon: paths.iconFile(),
+      autoHideMenuBar: true, backgroundColor: '#ffffff',
+      webPreferences: { partition: ASK_PARTITION, contextIsolation: true, sandbox: true, spellcheck: true },
+    });
+    win.setMenuBarVisibility(false);
+    const wc = win.webContents;
+    wc.setWindowOpenHandler(({ url: target }) => {
+      if (/^https?:/i.test(target)) shell.openExternal(target);
+      return { action: 'deny' };
+    });
+    wc.on('context-menu', (_e, params) => {
+      const items = contextMenuItems(params, wc);
+      if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+    });
+    wc.on('page-title-updated', (e) => e.preventDefault()); // Titel bleibt «Bei ASK anmelden»
+    win.on('closed', () => { if (this.loginWin === win) this.loginWin = null; });
+    this.loginWin = win;
+    wc.loadURL(`${String(url).replace(/\/$/, '')}/auth`).catch(() => {}); // Fehler zeigt Chromium im Fenster
+    return win;
+  }
+
+  closeAskLogin() {
+    if (this.loginWin && !this.loginWin.isDestroyed()) this.loginWin.close();
+    this.loginWin = null;
+  }
+
   loadAsk(url) {
     this.askOrigin = new URL(url).origin;
     const current = this.view.webContents.getURL();

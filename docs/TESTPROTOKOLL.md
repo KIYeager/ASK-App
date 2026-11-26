@@ -142,6 +142,8 @@ Voraussetzung: ein ASK-Konto mit Zugriff auf ein Modell (Qwen). Freigaben für T
 5. Auftrag: «Welche Dateien liegen in meinem Arbeitsordner?» Erwartet: Im Chat erscheint eine Zeile wie `● Ordner(.)` oder `● Befehl(dir)` mit der Ausgabe, danach eine kurze Antwort mit den Dateien.
 6. Erscheint stattdessen der Hinweis «ASK nimmt keine Werkzeugliste an …» oder schreibt das Modell nur Text ohne Werkzeugzeilen: notieren, welches Modell gewählt war und was es geschrieben hat. Fehlermeldungen von ASK (rot im Chat) bitte wörtlich notieren.
 
+7. Nur wenn die Anmeldeseite in der App nicht erscheint (ENTSCHEIDE E57): Text der Meldung notieren, besonders «Adresse» und «Verbindung». In den Einstellungen bei «ASK-Konto» auf «Anmelden» klicken. Erwartet: Ein Fenster «Bei ASK anmelden» geht auf; nach dem Login schliesst es sich und unten steht dein Name. Geht auch das Fenster nicht: «Im Browser …», ASK im Browser öffnen, dort Einstellungen → Konto → API-Schlüssel ansehen. Notieren, ob dort ein JWT-Token steht. Token einfügen. Erwartet: angemeldet, ein Auftrag läuft.
+
 ### B. Drei Beispielaufträge
 
 Die Beispieldateien liegen in `tests/beispiele/`. Vor jedem Auftrag einen neuen Projektordner anlegen und die Datei hineinkopieren. Bei jedem Auftrag die Seitenleiste beobachten (Aufgabenliste, Zuletzt geändert) und am Schluss das Ergebnis öffnen.
