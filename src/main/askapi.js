@@ -305,6 +305,14 @@ function cleanToken(raw) {
   return '';
 }
 
+// Welche Adresse von ASK gilt (ENTSCHEIDE E58): Liefert die App eine mit, immer diese. Eine früher selbst
+// eingetippte (erste Versionen fragten danach) bliebe sonst bei jedem Update stehen, auch vertippt. Ausnahme:
+// ein nachgebautes ASK auf diesem Rechner (http://127.0.0.1 oder localhost) für die automatischen Tests.
+function effectiveAskUrl(stored, builtIn) {
+  const local = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(String(stored || ''));
+  return builtIn && !local ? builtIn : String(stored || '');
+}
+
 const RETRY_LOAD_MS = 15000; // so oft lädt die ASK-Seite nach einem Ladefehler von selbst neu
 const STALL_MS = 5 * 60 * 1000; // so lange darf ASK mitten in einer Antwort schweigen
 
@@ -713,4 +721,4 @@ class AskSession extends EventEmitter {
   }
 }
 
-module.exports = { inbandError, sameOrigin, cleanToken, isNameError, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS, nearestEffort };
+module.exports = { inbandError, sameOrigin, cleanToken, isNameError, effectiveAskUrl, contextOf, AskSession, AuthError, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, THINKING_PARAMS, THINKING_LEVELS, nearestEffort };

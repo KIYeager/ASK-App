@@ -1,4 +1,4 @@
-; Zusatz zum Installer (electron-builder, nsis.include), ENTSCHEIDE E39 und E58. Nur ASCII: makensis liest die Datei ohne BOM.
+; Zusatz zum Installer (electron-builder, nsis.include), ENTSCHEIDE E39 und E59. Nur ASCII: makensis liest die Datei ohne BOM.
 ; Das mitgelieferte Python entpackt die App selbst nach %LOCALAPPDATA%\ASK-Desktop\python (src/main/python.js).
 ; Beim Deinstallieren entfernen, nicht bei einem Update (dort braucht die neue Version es meist weiter).
 ; Einstellungen und Chats bleiben wie bisher.
@@ -8,7 +8,7 @@
   ${endIf}
 !macroend
 
-; Fortschrittsfenster (ENTSCHEIDE E58). electron-builder zeigt es mit dem Plugin SpiderBanner, gleich danach
+; Fortschrittsfenster (ENTSCHEIDE E59). electron-builder zeigt es mit dem Plugin SpiderBanner, gleich danach
 ; kommt diese Stelle (CHECK_APP_RUNNING in installSection.nsh). Hier gestalten wir das Fenster um und pruefen
 ; danach wie electron-builder, ob ASK noch laeuft. Steuerelemente des Plugins (Dialog 104, Masse in
 ; Dialog-Einheiten): 1000 Titel, 1002 zweite Zeile (bekommt sonst nichts), 1001 Balken, 1003 Statuszeile von
