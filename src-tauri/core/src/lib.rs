@@ -9,6 +9,7 @@ pub mod build_dir;
 pub mod paths;
 pub mod settings;
 pub mod safe;
+pub mod secrets;
 
 // Welle 1: Module ohne Abhängigkeiten untereinander
 pub mod approvals;

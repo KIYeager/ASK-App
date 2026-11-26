@@ -46,7 +46,7 @@ tauri-plugin-clipboard-manager = "2"
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_WinRT", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_Graphics_Gdi"] }
-aes-gcm = "0.10"
+
 tauri-winrt-notification = "0.8"
 
 [profile.release]
