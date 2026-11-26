@@ -434,6 +434,48 @@ Tabs: Der aktive Tab liegt auf der Trennlinie und geht ohne Linie in den Chat ü
 
 Schmaler Chat (unter 500 Pixel Eingabefeld): Web, Denkaufwand und Modus zeigen nur ihr Symbol und der Kontext nur den Ring, damit Modellwahl und Senden in der Zeile bleiben; die Namen stehen im Tooltip.
 
+## E57 Anmelden, wenn die App den Namen von ASK nicht findet
+
+Ein Lernender kam nicht in die App: Statt der Anmeldeseite stand «ASK ist nicht erreichbar (ERR_NAME_NOT_RESOLVED)», im Browser auf demselben Laptop ging ASK. Die App fand also den Namen `ask.ict-tfbern.ch` nicht, der Browser schon. Wahrscheinliche Gründe: «Sicheres DNS» in Edge oder Chrome, ein Proxy nur für den Browser (Richtlinie von Edge) oder eine früher von Hand vertippte Adresse. Ein Knopf, der nur die Anmeldung im Browser öffnet, hätte nicht genügt: Die Chat-Anfragen schickt die App selbst an ASK und scheitert dort am selben Namen.
+
+Jetzt:
+- **Ausweich-DNS.** Meldet die ASK-Seite `ERR_NAME_NOT_RESOLVED` oder `ERR_NAME_RESOLUTION_FAILED`, stellt die App Chromium auf DNS über HTTPS mit Quad9 um (`app.configureHostResolver`, Modus `automatic`, `https://dns.quad9.net/dns-query`) und lädt die Seite gleich neu. `automatic` heisst: zuerst Quad9, bei einem Fehler wieder das DNS von Windows, damit Namen im Netz der Schule weiter gehen. Das gilt für die ganze App, auch für ihren Browser. Lädt ASK danach, merkt sich die App das (`secureDns` in den Einstellungen) und schaltet es beim nächsten Start vor dem ersten Laden ein. Quad9 ist eine Stiftung mit Sitz in Zürich und speichert keine IP-Adressen; gewählt von der Projektleitung statt Cloudflare.
+- **Anmelden in einem eigenen Fenster.** «Anmelden» in den Einstellungen (Zeile «ASK-Konto», jetzt zuoberst), im Dialog «ASK» und in der Meldung «nicht erreichbar» öffnet die Anmeldung von ASK in einem eigenen Fenster mit derselben Sitzung wie die ASK-Seite (`persist:ask`). Sobald dort ein Token steht (auch nach dem Microsoft-Login, das ohne neues Laden geschieht, darum zusätzlich alle 1,5 Sekunden), prüft die App es bei ASK, schliesst das Fenster und lädt die ASK-Seite im Hauptfenster neu.
+- **Anmelden im Browser.** «Im Browser anmelden …» öffnet ASK im normalen Browser; dort kopiert man das JWT-Token (ASK: Einstellungen → Konto → API-Schlüssel) oder einen API-Schlüssel (`sk-…`) und fügt es in der App ein. ASK kann nach dem Login nicht zur App zurückleiten, darum das Kopieren. Die App prüft das Token mit `/api/v1/auths/` und speichert nur ein gültiges, verschlüsselt mit dem Windows-Konto wie das GitHub-Token (`askToken`). Es gilt, wenn die ASK-Seite der App kein Token hat oder nicht lädt. Antwortet ASK mit 401, löscht die App es und meldet ab; «Abmelden» löscht es ebenfalls, dazu jetzt auch localStorage von ASK (sonst bliebe das Token des Anmeldefensters liegen, wenn die Seite im Hauptfenster nicht lädt).
+- **Meldung.** «Nicht erreichbar» zeigt die Adresse, ob die App direkt oder über einen Proxy geht (`session.resolveProxy`) und bei einem Namensfehler den Hinweis auf Quad9. («Diese verwenden» für eine abweichende gespeicherte Adresse gab es nur in 0.3.7, siehe E58.)
+
+Nicht gewählt: Quad9 immer (schickt alle Namen der App an Quad9, auch wo das DNS von Windows geht); Modus `secure` (ohne Quad9 ginge dann gar nichts mehr, auch keine Namen im Netz der Schule); Rückleitung aus dem Browser über einen lokalen Port (bräuchte eine Änderung an ASK).
+
+Offen, nur mit dem echten ASK prüfbar: ob normale Konten im ASK der Schule das JWT-Token unter «API-Schlüssel» sehen, und ob der Ausweg auf dem Laptop des Lernenden hilft (falls dort ein Proxy nur für Edge eingestellt ist, hilft er nicht; dann zeigt die Meldung «Verbindung: direkt, ohne Proxy»).
+
+Tests: `tests/askapi.test.js` (Token bereinigen, einfügen, gespeichertes Token ohne Seite, abgelaufen, Abmelden, Ereignis für das Ausweich-DNS samt Proxy, Anmeldefenster). In der Oberfläche mit Beispieldaten: `?dns=1`.
+
+## E58 Immer die Adresse der Schule
+
+Die Ursache aus E57 war eine vertippte Adresse: Gespeichert war `ask-ict.tfbern.ch` statt `ask.ict-tfbern.ch`. Die ersten Versionen lieferten keine Adresse mit (`askUrl` leer in `resources/app-config.json`) und fragten beim ersten Start danach. Spätere Versionen nahmen die mitgelieferte Adresse nur, wenn keine gespeichert war; eine früher eingetippte blieb darum bei jedem Update stehen, auch eine falsche. Darum betraf es nur einzelne Lernende.
+
+Jetzt:
+- Liefert die App eine Adresse mit, gilt immer diese (`effectiveAskUrl` in `askapi.js`, angewendet beim Laden der Einstellungen). Eine andere gespeicherte Adresse wird beim Start ersetzt. Ausnahme: ein nachgebautes ASK auf diesem Rechner (`http://127.0.0.1` oder `localhost`), das die automatischen Tests auch in der installierten App eintragen; Lernende können so eine Adresse nicht eingeben (der Dialog verlangt `https://`). Ohne mitgelieferte Adresse (Entwicklung) bleibt der Dialog «Adresse von ASK» wie bisher.
+- «Diese verwenden» aus 0.3.7 entfällt, weil die gespeicherte Adresse nicht mehr abweichen kann.
+- Das Ausweich-DNS über Quad9 (E57) schaltet sich nur noch ein, wenn der Name der mitgelieferten Adresse nicht gefunden wird. Gemerkt wird es mit der Adresse (`secureDnsFor`) und gilt beim Start nur, wenn sie noch die der Schule ist. Das alte `secureDns` aus 0.3.7 wird beim Start gelöscht: Es konnte auch nach einer vertippten Adresse gesetzt worden sein. Braucht ein Laptop Quad9 wirklich, schaltet es sich beim nächsten Namensfehler von selbst wieder ein.
+
+Tests: `tests/askapi.test.js` (Adresse).
+
+## E59 Fortschrittsfenster des Installers
+
+Das Fenster beim Installieren und bei jedem Update sah aus wie Windows 98: «Installation von ASK», «Installation läuft, bitte warten...» in MS Sans Serif und ein grüner Balken. electron-builder zeigt es im Installer mit einem Klick (`oneClick`) mit seinem Plugin SpiderBanner; eigene Seiten oder Bilder gibt es dort nicht. Verglichen wurden drei Entwürfe (Canvas «ASK Installer Window»): das Fenster von Windows umgestaltet, linksbündig oder zentriert, und ein Startbild in ASK-Farbe wie beim Entpacken der einzelnen EXE. Gewählt von der Projektleitung: umgestaltet, linksbündig. Es bleibt ein Fenster von Windows, zeigt weiter den Fortschritt und braucht kein eigenes Plugin.
+
+`scripts/installer.nsh` setzt dafür `customCheckAppRunning`, die Stelle gleich nach `SpiderBanner::Show`, gestaltet dort das Fenster um und ruft danach dieselbe Prüfung auf wie electron-builder ohne diesen Haken (`IS_POWERSHELL_AVAILABLE`, `_CHECK_APP_RUNNING`):
+- Titelleiste «ASK», Titel in Segoe UI halbfett 11 Punkt, darunter eine zweite Zeile in 9 Punkt. Erstinstallation: «ASK wird installiert» / «Einen Moment bitte. ASK startet danach von selbst.» Update (`--updated`): «ASK wird aktualisiert» / «Chats und Einstellungen bleiben. ASK startet danach von selbst.»
+- Balken flach in ASK-Türkis `#0B6E75` auf `#D5DBDE`, ohne Rahmen und schmal (4 Dialog-Einheiten, etwa 6 Pixel). Dafür schaltet `SetWindowTheme` das Windows-Design am Balken ab, sonst gelten eigene Farben nicht.
+- Symbol, Texte und Balken neu gesetzt, in Dialog-Einheiten wie im Plugin selbst (`MapDialogRect`), damit es bei 125 und 150 % Skalierung gleich aussieht.
+
+Die Nummern der Steuerelemente stammen aus dem Dialog 104 in `SpiderBanner.dll` (nsis-resources 3.4.1): 1000 Titel, 1002 zweite Zeile, 1001 Balken, 1025 Symbol. In 1003 schreibt das Plugin die Statuszeile von NSIS; sie bleibt leer (`SetDetailsPrint none`) und wird ausgeblendet. Den grauen Hintergrund malt das Plugin; er bleibt. Ändert electron-builder das Plugin oder die Stelle, fällt das Fenster auf das alte Aussehen zurück, die Installation läuft gleich.
+
+Nicht gewählt: Startbild (kein Fortschritt sichtbar, bei langsamen Laptops wirkt es hängengeblieben, siehe E39); Installer mit Seiten (`oneClick: false`, mehr Klicks für Lernende); eigenes Plugin (müsste gebaut und gepflegt werden).
+
+Geprüft: Die Datei übersetzt mit makensis 3.0.4.1 (wie electron-builder) mit `-WX`, für Installer und Deinstaller. Aussehen nur unter Windows prüfbar (TESTPROTOKOLL, Updates).
+
 ## E60 Tauri 2 statt Electron, Hauptprozess in Rust
 
 Ersetzt E9 und den Teil von E42 zur Hülle. Die App läuft jetzt mit Tauri 2 (2.12) und WebView2 statt Electron. Der frühere Hauptprozess (`src/main/*.js`, rund 9’700 Zeilen Node.js) ist vollständig nach Rust portiert: die Logik ohne Fenster in den Crate `ask-core` (`src-tauri/core`, ein Modul pro früherer Datei, mit den portierten Unit-Tests), Fenster, Webansichten, Dialoge, Benachrichtigungen und Updates in die Tauri-Hülle (`src-tauri/src`). Node.js gibt es zur Laufzeit nicht mehr. Die Oberfläche (React, Vite) bleibt unverändert; `window.ask` kommt aus `src/renderer/src/bridge.js` statt aus dem Preload und ruft den einen Befehl `ipc(channel, args)` mit denselben Kanälen wie früher auf.

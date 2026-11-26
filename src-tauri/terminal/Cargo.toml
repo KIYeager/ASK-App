@@ -1,6 +1,6 @@
 [package]
 name = "ask-terminal"
-version = "0.3.6"
+version = "0.3.9"
 edition = "2021"
 rust-version = "1.90"
 description = "ASK Desktop: Terminal-Server (Ersatz für open-terminal, ohne Python)"

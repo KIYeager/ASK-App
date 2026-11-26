@@ -22,6 +22,7 @@ let state = {
   chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null, pinned: false, context: { tokens: 18400, estimated: false, limit: 131072 } },
 };
 if (params.get('offline')) state = { ...state, ask: { state: 'unbekannt', loadError: { code: -106, description: 'ERR_INTERNET_DISCONNECTED' } }, models: [], model: '' }; // ?offline=1
+if (params.get('dns')) state = { ...state, secureDns: true, askUrl: 'https://ask.ict-tfbern.ch', ask: { state: 'unbekannt', loadError: { code: -105, description: 'ERR_NAME_NOT_RESOLVED', url: 'https://ask.ict-tfbern.ch/', proxy: 'DIRECT' } }, models: [], model: '' }; // ?dns=1
 if (params.get('askfehler')) state = { ...state, ask: { state: 'fehler', user: 'Lea Muster', message: 'ASK bietet diesem Konto kein Modell an. Wer ASK betreut, muss deinem Konto zuerst ein Modell freigeben.' }, models: [], model: '' }; // ?askfehler=1
 if (params.get('leer')) state.chat = { id: 'neu1', title: '', running: false, goal: null };
 if (params.get('erst')) state = { ...state, folder: '', chat: { id: 'neu1', title: '', running: false } };
@@ -316,6 +317,8 @@ export function install() {
     importFiles: async () => ({ ok: true, paths: [] }),
     restartTerminal: async () => {}, terminalLogs: async () => 'open-terminal läuft auf 127.0.0.1', acceptWarning: async () => {},
     setAskUrl: async () => ({ ok: true }), connectAsk: async () => state.ask, logout: async () => {}, models: async () => state.models,
+    askLoginWindow: async () => true, askOpenBrowser: async () => {},
+    askUseToken: async (t) => (String(t).trim() ? { ok: true } : { ok: false, reason: 'Das sieht nicht wie ein Token aus. Kopiere es ganz, ohne Leerzeichen.' }),
     setModel: async (id) => { state = { ...state, model: id }; push(); }, setWebSearch: async (v) => { state = { ...state, webSearch: v }; push(); },
     setChatMemory: async (v) => { state = { ...state, chatMemory: v }; push(); }, setThinking: async (v) => { state = { ...state, thinking: v }; push(); },
     chatSend: async (text) => { demoRun(text); return { ok: true }; }, chatUndo: async () => ({ ok: true }), chatStop: async () => {}, chatStopChat: async () => true,

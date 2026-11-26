@@ -506,6 +506,10 @@ button.work-head:hover { background: var(--hover); }
 .ask-host { flex: 1; position: relative; }
 .ask-placeholder { position: absolute; inset: 0; display: flex; gap: 10px; align-items: center; justify-content: center; color: var(--muted); text-align: center; }
 .ask-placeholder p { margin: 0 0 8px; }
+.ask-placeholder > div { max-width: 600px; padding: 0 16px; }
+.login-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 4px 0 12px; }
+.steps { margin: 0 0 12px; padding-left: 20px; line-height: 1.5; }
+.steps li { margin-bottom: 6px; }
 .ask-error { width: 100%; margin-bottom: 10px; }
 .ask-error-box { border: 1px solid var(--bad); background: var(--bad-soft); border-radius: 10px; padding: 10px 14px; font-size: 13px; }
 .ask-error-box p { margin: 0 0 8px; }

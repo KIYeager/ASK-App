@@ -156,6 +156,8 @@ Voraussetzung: ein ASK-Konto mit Zugriff auf ein Modell (Qwen). Freigaben für T
 5. Auftrag: «Welche Dateien liegen in meinem Arbeitsordner?» Erwartet: Im Chat erscheint eine Zeile wie `● Ordner(.)` oder `● Befehl(dir)` mit der Ausgabe, danach eine kurze Antwort mit den Dateien.
 6. Erscheint stattdessen der Hinweis «ASK nimmt keine Werkzeugliste an …» oder schreibt das Modell nur Text ohne Werkzeugzeilen: notieren, welches Modell gewählt war und was es geschrieben hat. Fehlermeldungen von ASK (rot im Chat) bitte wörtlich notieren.
 
+7. Nur wenn die Anmeldeseite in der App nicht erscheint (ENTSCHEIDE E57): Text der Meldung notieren, besonders «Adresse» und «Verbindung». In den Einstellungen bei «ASK-Konto» auf «Anmelden» klicken. Erwartet: Ein Fenster «Bei ASK anmelden» geht auf; nach dem Login schliesst es sich und unten steht dein Name. Geht auch das Fenster nicht: «Im Browser …», ASK im Browser öffnen, dort Einstellungen → Konto → API-Schlüssel ansehen. Notieren, ob dort ein JWT-Token steht. Token einfügen. Erwartet: angemeldet, ein Auftrag läuft.
+
 ### B. Drei Beispielaufträge
 
 Die Beispieldateien liegen in `tests/beispiele/`. Vor jedem Auftrag einen neuen Projektordner anlegen und die Datei hineinkopieren. Bei jedem Auftrag die Seitenleiste beobachten (Aufgabenliste, Zuletzt geändert) und am Schluss das Ergebnis öffnen.
@@ -215,5 +217,6 @@ Durchgeführt am 25.11.2026 auf Windows 11 (Laptop des Entwicklers):
 4. Einen PR mit Label `beta` mergen. Erwartet: In ASK-Releases als Pre-release; ASK bietet nichts an. In den Einstellungen «Beta-Versionen erhalten» einschalten. Erwartet: «ASK <Version>-beta.1 (Beta) ist da».
 5. Mit der einzelnen EXE einer älteren Version: Erwartet «… ist da» mit «Download öffnen», das die Seite des Releases öffnet.
 6. Während eines laufenden Auftrags «Nach Updates suchen»: Erwartet keine Frage, bis der Auftrag fertig ist.
+8. Fortschrittsfenster (E59), beim Installieren aus Schritt 1 und beim Update aus Schritt 3. Erwartet: Titelleiste «ASK», daneben das Symbol, «ASK wird installiert» bzw. «ASK wird aktualisiert» halbfett, darunter eine kleinere zweite Zeile, ein schmaler türkiser Balken ohne Rahmen, der sich füllt; nichts abgeschnitten, auch bei 125 oder 150 % Skalierung. Am besten ein Bildschirmfoto zurückschicken.
 
 Bitte zurückmelden: ASK-Version, ob A4 bis A6 wie beschrieben liefen (vor allem, ob Werkzeugzeilen erscheinen), für B1 bis B3 das Ergebnis und wie viele Rückfragen oder Fehlversuche das Modell brauchte, Auffälligkeiten bei C und für D die Meldung bzw. die Datei aus D4, für E wo es hakte (Meldung im Reiter «Actions» oder in der App).
