@@ -219,12 +219,12 @@ impl SseParser {
 
 /// Wie `TextDecoder` mit `stream: true`: setzt Bytes zu Text zusammen, auch wenn ein Zeichen über zwei Teile geht.
 #[derive(Default)]
-struct Utf8Stream {
+pub(crate) struct Utf8Stream {
     rest: Vec<u8>,
 }
 
 impl Utf8Stream {
-    fn push(&mut self, bytes: &[u8]) -> String {
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> String {
         self.rest.extend_from_slice(bytes);
         let mut out = String::new();
         let mut start = 0;

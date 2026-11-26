@@ -1386,13 +1386,13 @@ pub(crate) mod test_http {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::test_http::*;
     use super::*;
     use std::collections::HashMap;
     use tokio::task::JoinHandle;
 
-    const TOKEN: &str = "gh-test-token";
+    pub(crate) const TOKEN: &str = "gh-test-token";
     const LOGIN: &str = "lea-test";
 
     fn sha1_hex(data: &[u8]) -> String {
@@ -1419,7 +1419,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct Mock {
+    pub(crate) struct Mock {
         state: Mutex<MockState>,
     }
 
@@ -1634,7 +1634,7 @@ mod tests {
         }
     }
 
-    async fn setup() -> (Arc<Mock>, GitHub, JoinHandle<()>) {
+    pub(crate) async fn setup() -> (Arc<Mock>, GitHub, JoinHandle<()>) {
         let mock = Arc::new(Mock::default());
         let m = mock.clone();
         let handler: Handler = Arc::new(move |req: Req| {
@@ -1651,7 +1651,7 @@ mod tests {
         (mock, gh, task)
     }
 
-    fn folder(files: &[(&str, &str)]) -> tempfile::TempDir {
+    pub(crate) fn folder(files: &[(&str, &str)]) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         for (p, text) in files {
             let full = dir.path().join(p);
@@ -1661,11 +1661,11 @@ mod tests {
         dir
     }
 
-    fn read(dir: &Path, p: &str) -> String {
+    pub(crate) fn read(dir: &Path, p: &str) -> String {
         std::fs::read_to_string(dir.join(p)).unwrap()
     }
 
-    fn write(dir: &Path, p: &str, text: &str) {
+    pub(crate) fn write(dir: &Path, p: &str, text: &str) {
         std::fs::write(dir.join(p), text).unwrap();
     }
 
