@@ -33,6 +33,7 @@ pub mod workspace;
 pub mod github;
 pub mod servers;
 pub mod terminal;
+pub mod updater;
 
 // Welle 2
 pub mod tools;
