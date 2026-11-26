@@ -1,5 +1,6 @@
-# Prüft jede Änderung: Lint und Unit-Tests auf Linux, Terminal- und Skill-Tests auf Windows.
-# Die End-to-End-Tests (Electron, gepackte App) laufen weiterhin von Hand, siehe docs/TESTPROTOKOLL.md.
+# Prüft jede Änderung: Lint und Unit-Tests auf Linux (Oberfläche, Skripte, Rust), Terminal-, Skill- und
+# Rust-Tests sowie ein Build der App auf Windows. Die End-to-End-Tests laufen weiterhin von Hand,
+# siehe docs/TESTPROTOKOLL.md.
 name: CI
 
 on:
@@ -24,10 +25,25 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # --ignore-scripts: Electron selbst (rund 100 MB) braucht es für Lint und Unit-Tests nicht
       - run: npm ci --ignore-scripts
       - run: npm run lint
       - run: npm test
+
+  rust:
+    name: Rust (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pakete für WebKitGTK (Tauri unter Linux, nur zum Kompilieren)
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
 
   python:
     name: Lint und Tests ohne Windows (Python)
@@ -62,3 +78,11 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
+      # Rust unter Windows (Pfade, Low Integrity, WebView2) und ein Build der App ohne Installer
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace
+      - run: npm run build:ui
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --release

@@ -1,7 +1,7 @@
 // Packt das mitgelieferte Python (Build-Ordner\python, von build-python.ps1) in ein einziges Archiv
-// Build-Ordner\python-pack\python.zip mit python.json (ENTSCHEIDE E39). electron-builder legt den Ordner
+// Build-Ordner\python-pack\python.zip mit python.json (ENTSCHEIDE E39). Tauri legt den Ordner
 // als resources\python-pack in die App; die App entpackt ihn beim ersten Start einer neuen Fassung
-// (src/main/python.js). Statt rund 12'000 Dateien schreibt ein Update so nur noch das Archiv neu.
+// (src-tauri/core/src/python.rs). Statt rund 12'000 Dateien schreibt ein Update so nur noch das Archiv neu.
 //
 // Die Fassung (id) hängt nur von build-python.ps1 und python/requirements.txt ab: Gleiches Python ergibt
 // dieselbe id, und installierte Apps entpacken nach einem Update nichts neu.
@@ -38,7 +38,7 @@ function countEntries(dir) {
   return { files, dirs };
 }
 
-function pack(buildDir = require('../src/main/build-dir').buildDir()) {
+function pack(buildDir = require('./build-dir').buildDir()) {
   const source = path.join(buildDir, 'python');
   const out = path.join(buildDir, 'python-pack');
   const zip = path.join(out, 'python.zip');

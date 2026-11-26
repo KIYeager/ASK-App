@@ -6,6 +6,7 @@ mod host;
 mod ipc;
 mod platform;
 mod protocol;
+mod updates;
 mod views;
 
 use ask_core::app::App;

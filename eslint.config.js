@@ -5,7 +5,7 @@ const react = require('eslint-plugin-react');
 const reactHooks = require('eslint-plugin-react-hooks');
 
 module.exports = [
-  { ignores: ['node_modules/', '.claude/', 'src/vendor/', 'build/', 'dist/', 'src/renderer/dist/'] },
+  { ignores: ['node_modules/', '.claude/', 'src/vendor/', 'build/', 'dist/', 'src/renderer/dist/', 'src-tauri/target/', 'src-tauri/gen/'] },
   js.configs.recommended,
   {
     files: ['**/*.js'],
@@ -17,10 +17,9 @@ module.exports = [
     },
   },
   {
-    files: ['src/renderer/**/*.js', 'src/main/render/**/*.js'],
+    files: ['src/renderer/**/*.js', 'src/render/**/*.js'],
     languageOptions: { sourceType: 'script', globals: { ...globals.browser, module: 'readonly', renderMarkdown: 'readonly', pdfjsLib: 'readonly' } },
   },
-  { files: ['src/preload/**/*.js'], languageOptions: { globals: { ...globals.node, ...globals.browser } } },
   // Oberfläche mit React und Vite (ENTSCHEIDE E42): ES-Module und JSX
   {
     files: ['src/renderer/src/**/*.{js,jsx,mjs}', 'vite.config.mjs'],

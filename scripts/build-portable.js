@@ -1,12 +1,11 @@
-// Baut die einzelne EXE ASK-<Version>.exe (ENTSCHEIDE E18): electron-builder erzeugt den
-// App-Ordner win-unpacked, makensis packt ihn mit dem Starter scripts/starter.nsi in eine EXE.
-// makensis läuft hier selbst, weil electron-builder es nach festen 4 Minuten abbricht.
+// Baut die einzelne EXE ASK-<Version>.exe (ENTSCHEIDE E18): scripts/dist.js legt den App-Ordner
+// <Build-Ordner>\dist\app an (ASK.exe mit Ressourcen), makensis packt ihn mit dem Starter scripts/starter.nsi
+// in eine EXE. makensis ist das NSIS, das Tauri für den Installer geladen hat, sonst eines aus PATH.
+// Die einzelne EXE braucht die WebView2-Laufzeit von Windows (auf Windows 10 und 11 vorhanden).
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { build, Platform, Arch } = require('electron-builder');
-const { getMakeNsisPath } = require('app-builder-lib/out/toolsets/windows');
-const config = require('../electron-builder.config');
+const { buildDir } = require('./build-dir');
 const { version } = require('../package.json');
 
 const repo = path.join(__dirname, '..');
@@ -18,11 +17,16 @@ function viVersion(v) {
   return `${m[1]}.${m[2]}.${m[3]}.${m[4] || 0}`;
 }
 
+function makensis() {
+  const tauri = path.join(process.env.LOCALAPPDATA || '', 'tauri', 'NSIS', 'makensis.exe');
+  return fs.existsSync(tauri) ? tauri : 'makensis';
+}
+
 async function main() {
-  require('./pack-python').pack(); // python-pack für die App (ENTSCHEIDE E39)
-  await build({ targets: Platform.WINDOWS.createTarget('dir', Arch.x64), config, publish: 'never' });
-  const appDir = path.join(config.directories.output, 'win-unpacked');
-  const outFile = path.join(config.directories.output, `ASK-${version}.exe`);
+  const dist = path.join(buildDir(), 'dist');
+  const appDir = path.join(dist, 'app');
+  if (!fs.existsSync(path.join(appDir, 'ASK.exe'))) throw new Error(`${appDir} fehlt. Zuerst «npm run dist».`);
+  const outFile = path.join(dist, `ASK-${version}.exe`);
   // Eigener Ordnername pro Build: Ein neuer Build entpackt sich neu, auch bei gleicher Version.
   const buildId = `${version}-${Date.now().toString(36)}`;
   const defines = {
@@ -34,13 +38,12 @@ async function main() {
     SPLASH: path.join(repo, 'resources', 'splash.bmp'),
     ICON: path.join(repo, 'resources', 'icon.ico'),
   };
-  const makensis = await getMakeNsisPath();
   const args = ['-V2', '-INPUTCHARSET', 'UTF8', ...Object.entries(defines).map(([k, v]) => `-D${k}=${v}`),
     path.join(__dirname, 'starter.nsi')];
   console.log(`Packe ${outFile} (Stand ${buildId}), das dauert einige Minuten ...`);
   const started = Date.now();
   await new Promise((resolve, reject) => {
-    const p = spawn(makensis.path, args, { env: { ...process.env, ...makensis.env }, stdio: 'inherit' });
+    const p = spawn(makensis(), args, { stdio: 'inherit' });
     p.on('error', reject);
     p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`makensis endete mit Code ${code}`))));
   });

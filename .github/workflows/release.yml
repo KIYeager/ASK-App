@@ -4,7 +4,8 @@
 #   (oder die aus der Zeile «Version: …» im PR), macht Commit und Tag auf main, dann baut «release».
 #   Label «kein-release»: nichts. Die Wahl prüft release-label.yml schon im PR.
 # - Tag von Hand: npm run release -- <Version> "Was ist neu" (scripts/release.js).
-# Braucht das Secret RELEASES_TOKEN: Fine-grained Token nur für ASK-Releases, Recht «Contents: Read and write».
+# Braucht das Secret RELEASES_TOKEN: Fine-grained Token nur für ASK-Releases, Recht «Contents: Read and write»,
+# und TAURI_SIGNING_PRIVATE_KEY (mit TAURI_SIGNING_PRIVATE_KEY_PASSWORD) zum Signieren der Updates (ENTSCHEIDE E57).
 name: Release
 
 on:
@@ -74,10 +75,12 @@ jobs:
         id: version
         env:
           HAS_TOKEN: ${{ secrets.RELEASES_TOKEN != '' }}
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG passt nicht zu package.json ($version)." }
           if ($env:HAS_TOKEN -ne 'true') { throw "Secret RELEASES_TOKEN fehlt (siehe README, Abschnitt «Neue Version veröffentlichen»)." }
+          if ($env:HAS_KEY -ne 'true') { throw "Secret TAURI_SIGNING_PRIVATE_KEY fehlt (siehe README, Abschnitt «Updates signieren»)." }
           "version=$version" >> $env:GITHUB_OUTPUT
           "beta=$(if ($version -match '-') { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
           "ASK_BUILD_DIR=$env:RUNNER_TEMP\ask-build" >> $env:GITHUB_ENV
@@ -87,15 +90,20 @@ jobs:
           node-version: 22
           cache: npm
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: npm-Pakete
-        run: |
-          npm ci --no-audit --no-fund
-          node node_modules/electron/install.js
+        run: npm ci --no-audit --no-fund
 
       - name: Lint und Tests
         run: |
           npm run lint
           npm test
+          cargo test --manifest-path src-tauri/Cargo.toml --workspace
 
       - name: Python-Paket aus dem Zwischenspeicher
         uses: actions/cache@v4
@@ -108,6 +116,9 @@ jobs:
         run: scripts\build-python.ps1 -BuildDir $env:ASK_BUILD_DIR
 
       - name: Installer bauen
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run dist
 
       - name: Einzelne EXE bauen
@@ -124,8 +135,9 @@ jobs:
           $portable = Join-Path $dist "ASK-$env:VERSION.exe"
           # Feste Namen für den Link «neueste Version» (releases/latest/download/ASK-Setup.exe)
           $out = Join-Path $env:RUNNER_TEMP 'upload'
-          New-Item -ItemType Directory -Force $out | Out-Null
-          Copy-Item $setup, "$setup.blockmap", (Join-Path $dist 'latest.yml'), $portable $out
+          $manifests = Join-Path $env:RUNNER_TEMP 'manifests'
+          New-Item -ItemType Directory -Force $out, $manifests | Out-Null
+          Copy-Item $setup, "$setup.sig", $portable $out
           Copy-Item $setup (Join-Path $out 'ASK-Setup.exe')
           Copy-Item $portable (Join-Path $out 'ASK.exe')
 
@@ -138,6 +150,12 @@ jobs:
           $notesFile = Join-Path $env:RUNNER_TEMP 'notes.md'
           Set-Content $notesFile -Encoding utf8 -Value $notes
 
+          # Update-Dateien: latest.yml (für die frühere Electron-Fassung) kommt in das Release selbst,
+          # latest.json und beta.json (Tauri) in das feste Release «updater» (ENTSCHEIDE E57)
+          node scripts/manifests.js $dist $env:VERSION $notesFile $manifests
+          if ($LASTEXITCODE -ne 0) { throw "Update-Dateien nicht erstellt" }
+          Copy-Item (Join-Path $manifests 'latest.yml') $out
+
           # Argumente als echte Liste: Ein einzelnes Element aus «if» wird in PowerShell zum Text, und
           # «@flags» mit einem Text gab gh ein einzelnes «-» als Datei (Fehler in v0.2.0).
           [string[]]$ghArgs = @('release', 'create', "v$env:VERSION", '--repo', 'KIYeager/ASK-Releases',
@@ -147,3 +165,14 @@ jobs:
           Write-Host "gh $($ghArgs -join ' ')"
           & gh $ghArgs
           if ($LASTEXITCODE -ne 0) { throw "gh release create fehlgeschlagen" }
+
+          # Release «updater» für die Tauri-Updates anlegen, falls es fehlt (nie «latest»), Dateien ersetzen
+          gh release view updater --repo KIYeager/ASK-Releases *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create updater --repo KIYeager/ASK-Releases --title 'Update-Dateien' --latest=false --prerelease `
+              --notes 'Nur für die automatischen Updates von ASK. Downloads stehen bei den Versionen.'
+            if ($LASTEXITCODE -ne 0) { throw "Release «updater» nicht angelegt" }
+          }
+          [string[]]$files = (Get-ChildItem $manifests -Filter '*.json' -File).FullName
+          gh release upload updater --repo KIYeager/ASK-Releases --clobber @files
+          if ($LASTEXITCODE -ne 0) { throw "Update-Dateien nicht hochgeladen" }
