@@ -103,6 +103,10 @@ Nach dem Umbau auf die eigene Chat-Oberfläche erneut gelaufen (18 Prüfungen, A
 
 Zum Vergleich das zuerst versuchte Target `portable` von electron-builder: 148 MB, aber jeder Start entpackte neu und brauchte 124 s (ENTSCHEIDE E18).
 
+### Eigene Dialoge, Menüs und Tabs (ENTSCHEIDE E56, von Hand)
+
+Vor dem Merge nur im Browser mit der Test-Attrappe (`npm run dev:ui`, Playwright) geprüft, hell und dunkel: Tabs (Ziehen, Mittelklick, Menü, Umbenennen, Tastenkürzel), Update-Dialog und Meldungen, Update-Karte, Projekt- und Ordner-Menü mit Untermenü per Maus und Tastatur, «Chat löschen» mit Fokus auf «Abbrechen», Einfügen ins Eingabefeld und Kopieren von markiertem Text. Danach als Beta 0.3.6-beta.1 in der installierten Windows-App ausprobiert: funktioniert (Rückmeldung am 26.11.2026), darum als 0.3.6 für alle freigegeben.
+
 ### Machbarkeitsversuche aus Phase 0 (von Hand)
 
 HTTPS-Seite in Electron auf http://127.0.0.1 mit CORS und Key-Einsetzung; Low IL ohne Admin (Kennzeichnen, Token absenken, Schreibschutz, Lauschen auf Loopback); Aufräumen über Job-Objekt; Kennzeichnung vererbt sich auf bestehende Dateien; Word per COM aus Low heraus geht nicht; Windows PowerShell 5.1 startet unter Low nicht (0x80131623); Git-Bash-Werkzeuge starten unter Low nicht.
