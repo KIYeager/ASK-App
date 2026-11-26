@@ -82,32 +82,7 @@ class AppWindow {
   }
 
   showContextMenu(params, wc = this.view.webContents) {
-    const items = [];
-    if (params.misspelledWord) {
-      for (const s of params.dictionarySuggestions.slice(0, 5)) {
-        items.push({ label: s, click: () => wc.replaceMisspelling(s) });
-      }
-      items.push({ label: 'Zum Wörterbuch hinzufügen',
-        click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) });
-      items.push({ type: 'separator' });
-    }
-    // Nur Webadressen ins System geben: file:, search-ms:, ms-msdt: und andere Protokolle starten unter Windows Programme
-    if (params.linkURL && /^https?:\/\//i.test(params.linkURL)) {
-      items.push({ label: 'Link im Browser öffnen', click: () => shell.openExternal(params.linkURL) });
-      items.push({ label: 'Link kopieren', click: () => clipboard.writeText(params.linkURL) });
-      items.push({ type: 'separator' });
-    }
-    if (params.isEditable) {
-      items.push({ label: 'Ausschneiden', role: 'cut', enabled: params.editFlags.canCut });
-      items.push({ label: 'Kopieren', role: 'copy', enabled: params.editFlags.canCopy });
-      items.push({ label: 'Einfügen', role: 'paste', enabled: params.editFlags.canPaste });
-      items.push({ label: 'Alles auswählen', role: 'selectAll' });
-    } else if (params.selectionText) {
-      items.push({ label: 'Kopieren', role: 'copy' });
-    }
-    if (params.mediaType === 'image' && params.srcURL) {
-      items.push({ label: 'Bild kopieren', click: () => wc.copyImageAt(params.x, params.y) });
-    }
+    const items = contextMenuItems(params, wc);
     if (items.length) Menu.buildFromTemplate(items).popup({ window: this.win });
   }
 
@@ -245,4 +220,37 @@ class AppWindow {
   }
 }
 
-module.exports = { AppWindow, ASK_PARTITION, BROWSER_PARTITION };
+// Einträge des Rechtsklick-Menüs für Text, Links und Bilder (ASK-Seite, Browser und die eigene Oberfläche, ENTSCHEIDE E56).
+// Mit click statt role, damit dieselben Einträge auch im Menü der Oberfläche funktionieren.
+function contextMenuItems(params, wc) {
+  const items = [];
+  if (params.misspelledWord) {
+    for (const s of params.dictionarySuggestions.slice(0, 5)) {
+      items.push({ label: s, click: () => wc.replaceMisspelling(s) });
+    }
+    items.push({ label: 'Zum Wörterbuch hinzufügen',
+      click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) });
+    items.push({ type: 'separator' });
+  }
+  // Nur Webadressen ins System geben: file:, search-ms:, ms-msdt: und andere Protokolle starten unter Windows Programme
+  if (params.linkURL && /^https?:\/\//i.test(params.linkURL)) {
+    items.push({ label: 'Link im Browser öffnen', click: () => shell.openExternal(params.linkURL) });
+    items.push({ label: 'Link kopieren', click: () => clipboard.writeText(params.linkURL) });
+    items.push({ type: 'separator' });
+  }
+  if (params.isEditable) {
+    items.push({ label: 'Ausschneiden', hint: 'Ctrl+X', enabled: params.editFlags.canCut, click: () => wc.cut() });
+    items.push({ label: 'Kopieren', hint: 'Ctrl+C', enabled: params.editFlags.canCopy, click: () => wc.copy() });
+    items.push({ label: 'Einfügen', hint: 'Ctrl+V', enabled: params.editFlags.canPaste, click: () => wc.paste() });
+    items.push({ label: 'Alles auswählen', hint: 'Ctrl+A', enabled: params.editFlags.canSelectAll !== false, click: () => wc.selectAll() });
+  } else if (params.selectionText) {
+    items.push({ label: 'Kopieren', hint: 'Ctrl+C', click: () => wc.copy() });
+  }
+  if (params.mediaType === 'image' && params.srcURL) {
+    items.push({ label: 'Bild kopieren', click: () => wc.copyImageAt(params.x, params.y) });
+  }
+  while (items.length && items[items.length - 1].type === 'separator') items.pop();
+  return items;
+}
+
+module.exports = { AppWindow, ASK_PARTITION, BROWSER_PARTITION, contextMenuItems };

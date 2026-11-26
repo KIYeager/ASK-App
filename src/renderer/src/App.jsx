@@ -16,7 +16,7 @@ import { baseName } from './lib/format.js';
 // Einträge eines Menüs aus dem Hauptprozess (nur Texte und Schlüssel) für PopMenu; ein Klick meldet den Schlüssel zurück
 function menuItems(list, pick) {
   return (list || []).map((it) => (it.separator ? { separator: true } : {
-    label: it.label, type: it.type, checked: it.checked, enabled: it.enabled, swatch: it.swatch,
+    label: it.label, type: it.type, checked: it.checked, enabled: it.enabled, swatch: it.swatch, hint: it.hint,
     submenu: it.submenu ? menuItems(it.submenu, pick) : undefined, run: () => pick(it.key),
   }));
 }
@@ -107,8 +107,18 @@ export default function App() {
   const uiMenuRef = useRef(null);
   uiMenuRef.current = uiMenu;
   const pointer = useRef({ x: 80, y: 60 });
-  const closeUiMenu = useCallback(() => { const m = uiMenuRef.current; if (m && !m.done) api().uiAnswer(m.id, null); uiMenuRef.current = null; setUiMenu(null); }, []);
-  const pickUiMenu = useCallback((key) => { const m = uiMenuRef.current; if (m) { m.done = true; api().uiAnswer(m.id, key); } }, []);
+  // Fokus und Markierung vor dem Menü: zurück, bevor die Wahl an den Hauptprozess geht, sonst fügt «Einfügen» ins Leere ein
+  const menuFocus = useRef(null);
+  const restoreFocus = () => {
+    const f = menuFocus.current;
+    menuFocus.current = null;
+    if (f?.text) { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(f.text); } // markierter Text im Chat
+    if (!f?.el?.isConnected) return;
+    f.el.focus({ preventScroll: true });
+    if (f.range && typeof f.el.setSelectionRange === 'function') { try { f.el.setSelectionRange(...f.range); } catch { /* Feld ohne Markierung */ } }
+  };
+  const closeUiMenu = useCallback(() => { const m = uiMenuRef.current; if (m && !m.done) { restoreFocus(); api().uiAnswer(m.id, null); } uiMenuRef.current = null; setUiMenu(null); }, []);
+  const pickUiMenu = useCallback((key) => { const m = uiMenuRef.current; if (m) { m.done = true; restoreFocus(); api().uiAnswer(m.id, key); } }, []);
   useEffect(() => {
     const note = (e) => {
       const btn = e.type === 'contextmenu' ? null : e.target.closest?.('button');
@@ -245,7 +255,16 @@ export default function App() {
       a.onMenuNewFolder(() => setDialog({ name: 'project' })),
       a.onMenuGithub(() => setDialog({ name: 'github' })),
       a.onUiAsk?.((q) => setUiAsk(q)),
-      a.onUiMenu?.((m) => setUiMenu({ ...m, ...pointer.current })),
+      a.onUiMenu?.((m) => {
+        const el = document.activeElement;
+        const sel = window.getSelection();
+        menuFocus.current = {
+          el: el && el !== document.body ? el : null,
+          range: el && 'selectionStart' in el && el.selectionStart != null ? [el.selectionStart, el.selectionEnd] : null,
+          text: sel && sel.rangeCount && !sel.isCollapsed ? sel.getRangeAt(0).cloneRange() : null,
+        };
+        setUiMenu({ ...m, ...pointer.current });
+      }),
       a.onFolderError((reason) => setDialog({ name: 'terminal', text: reason })),
       a.onBrowserState((s) => setBrowser((b) => ({ ...b, ...s }))),
       a.onServers?.((list) => setServers(list || [])),

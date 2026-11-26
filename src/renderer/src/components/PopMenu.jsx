@@ -3,7 +3,7 @@ import Icon from './Icon.jsx';
 
 // Kleines Menü an der Mausposition (Rechtsklick) oder unter einem Knopf: Pfeiltasten wählen, → öffnet ein Untermenü,
 // ← schliesst es, Esc und Klick daneben schliessen. Für Menüs der App und solche aus dem Hauptprozess (ENTSCHEIDE E56).
-// items: [{ label, run, danger?, separator?, type?: 'radio'|'checkbox', checked?, enabled?, swatch?, submenu? }]; null wird übersprungen.
+// items: [{ label, run, danger?, separator?, type?: 'radio'|'checkbox', checked?, enabled?, swatch?, hint?, submenu? }]; null wird übersprungen.
 export default function PopMenu({ x, y, label, items, onClose }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -64,6 +64,7 @@ function MenuList({ items, onClose, onBack }) {
               {marks ? <span className="mi-check">{marked && it.checked ? <Icon name="check" size={13} strokeWidth={2.2} /> : null}</span> : null}
               {it.swatch ? <span className="swatch" style={{ background: it.swatch }} /> : null}
               <span className="mi-label">{it.label}</span>
+              {it.hint ? <kbd className="mi-hint">{it.hint}</kbd> : null}
               {it.submenu ? <Icon name="chevRight" size={13} className="mi-more" /> : null}
             </button>
             {it.submenu && sub === i ? (

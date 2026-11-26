@@ -10,7 +10,7 @@ const { Terminal } = require('./terminal');
 const { AskSession, THINKING_LEVELS, sameOrigin } = require('./askapi');
 const { Agent, NEW } = require('./agent');
 const { Workspace } = require('./workspace');
-const { AppWindow, BROWSER_PARTITION } = require('./window');
+const { AppWindow, BROWSER_PARTITION, contextMenuItems } = require('./window');
 const { convertToPdf, officeInstalled } = require('./office');
 const { cleanupOldVersions, isPortable } = require('./portable');
 const { Updater } = require('./updater');
@@ -130,7 +130,7 @@ async function showBox(options) {
 }
 
 // Menü an der Maus (bzw. unter dem angeklickten Knopf), Einträge wie bei Menu.buildFromTemplate: label, click, type
-// (separator, radio, checkbox), checked, enabled, submenu; dazu swatch (Farbfeld). Die Oberfläche bekommt nur Texte
+// (separator, radio, checkbox), checked, enabled, submenu; dazu swatch (Farbfeld) und hint (Tastenkürzel, Windows liest es nicht). Die Oberfläche bekommt nur Texte
 // und Schlüssel und meldet den gewählten Schlüssel; click läuft hier.
 async function popupMenu(items) {
   if (!uiUsable()) { Menu.buildFromTemplate(items).popup({ window: appWindow.win }); return; }
@@ -139,7 +139,7 @@ async function popupMenu(items) {
     if (it.type === 'separator') return { separator: true };
     const key = `${prefix}${i}`;
     if (it.click) clicks.set(key, it);
-    return { key, label: it.label, type: it.type || 'normal', checked: !!it.checked, enabled: it.enabled !== false, swatch: it.swatch,
+    return { key, label: it.label, type: it.type || 'normal', checked: !!it.checked, enabled: it.enabled !== false, swatch: it.swatch, hint: it.hint,
       submenu: it.submenu ? plain(it.submenu, `${key}.`) : undefined };
   });
   const key = await uiRequest('ui:menu', { items: plain(items, '') }, null);
@@ -1251,6 +1251,12 @@ app.whenReady().then(() => {
       }
     });
   }
+  // Rechtsklick in der eigenen Oberfläche (Eingabefeld, markierter Text, Links, Bilder): Menü der App mit Rechtschreibvorschlägen.
+  // Wo die Oberfläche selbst ein Menü zeigt (Tabs, Chats, Dateien), verhindert sie das Ereignis, und es kommt nicht hier an.
+  appWindow.win.webContents.on('context-menu', (_e, params) => {
+    const items = contextMenuItems(params, appWindow.win.webContents);
+    if (items.length) popupMenu(items);
+  });
   // Oberfläche lädt neu oder Fenster zu: offene Dialoge gelten als abgebrochen
   appWindow.win.webContents.on('did-start-loading', () => { uiReady = false; uiAnswer(null); });
   appWindow.win.on('closed', () => {

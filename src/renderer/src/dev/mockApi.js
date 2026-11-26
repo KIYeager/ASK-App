@@ -258,6 +258,17 @@ const ghMock = {
 };
 
 export function install() {
+  // Rechtsklick ins Textfeld oder auf markierten Text: wie der Hauptprozess (context-menu → ui:menu)
+  document.addEventListener('contextmenu', (e) => {
+    if (e.defaultPrevented) return;
+    const editable = e.target.closest('textarea, input');
+    const text = String(window.getSelection());
+    if (!editable && !text) return;
+    e.preventDefault();
+    setTimeout(() => emit('ui:menu', { id: Date.now(), items: editable
+      ? [{ key: 'edit0', label: 'Ausschneiden', hint: 'Ctrl+X', enabled: true }, { key: 'edit1', label: 'Kopieren', hint: 'Ctrl+C', enabled: true }, { key: 'edit2', label: 'Einfügen', hint: 'Ctrl+V', enabled: true }, { key: 'edit3', label: 'Alles auswählen', hint: 'Ctrl+A', enabled: true }]
+      : [{ key: 'edit1', label: 'Kopieren', enabled: true }] }), 0);
+  });
   window.ask = {
     getState: async () => ({ ...state, servers }),
     onState: on('state'), onFiles: on('files'), onTasks: on('tasks'),
@@ -287,7 +298,13 @@ export function install() {
         kind: 'update', version: '0.2.4', current: '0.2.3', beta: false,
         intro: 'Du hast 0.2.3. ASK lädt das Update im Hintergrund (Balken oben in der App), du kannst weiterarbeiten. Danach startet ASK von selbst neu, ausser während eines Auftrags. Chats, Ordner und Einstellungen bleiben.',
         notes: '• Die Tabs oben sehen aufgeräumter aus und zeigen die Farbe des Projekts.\n• Tabs lassen sich verschieben, umbenennen und mit Ctrl+W schliessen.\n• Updates erscheinen in einem eigenen Fenster der App.' }),
-    onUiAsk: on('ui:ask'), onUiMenu: on('ui:menu'), uiAnswer: async (id, index) => console.log('uiAnswer', id, index), updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
+    onUiAsk: on('ui:ask'), onUiMenu: on('ui:menu'),
+    uiAnswer: async (id, value) => {
+      console.log('uiAnswer', id, value);
+      // wie webContents.paste()/copy() im Hauptprozess: wirkt auf das Feld mit dem Fokus
+      if (value === 'edit2') document.execCommand('insertText', false, 'EINGEFÜGT');
+      if (value === 'edit1') console.log('kopiert:', String(window.getSelection()) || document.activeElement?.value?.slice(document.activeElement.selectionStart, document.activeElement.selectionEnd));
+    }, updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
     setPrefs: async (v) => { state = { ...state, prefs: { ...state.prefs, ...v } }; push(); },
     usageGet: async (withAsk = true) => (withAsk ? (await wait(600), { ...mockUsage(), ask: params.get('ohneask') ? null : { webChats: 42, webChats30: 12 } }) : { ...mockUsage(), ask: null }),
     chatRewind: async () => ({ ok: true, text: 'Räum den Ordner auf', attachments: [] }),

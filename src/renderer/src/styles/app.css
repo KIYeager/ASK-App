@@ -706,6 +706,7 @@ button.work-head:hover { background: var(--hover); }
 .mi-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mi-check { width: 14px; flex: none; display: grid; place-items: center; color: var(--acc-text); }
 .mi-more { flex: none; color: var(--dim); margin-right: -4px; }
+.mi-hint { flex: none; font: 11.5px var(--sans); color: var(--dim); padding-left: 18px; background: none; border: 0; }
 .chat-menu .swatch { width: 10px; height: 10px; border-radius: 3px; }
 .chat-menu.sub { position: absolute; left: calc(100% + 6px); top: -6px; min-width: 180px; }
 .chat-menu.flip .chat-menu.sub { left: auto; right: calc(100% + 6px); }
