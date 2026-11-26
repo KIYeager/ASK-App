@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { app } = require('electron');
 const paths = require('./paths');
+const { effectiveAskUrl } = require('./askapi');
 
 const MAX_RECENT = 8;
 
@@ -50,7 +51,7 @@ function load() {
     stored = {};
   }
   data = { ...defaults, ...stored };
-  if (!data.askUrl && appConfig().askUrl) data.askUrl = appConfig().askUrl;
+  data.askUrl = effectiveAskUrl(data.askUrl, appConfig().askUrl); // ENTSCHEIDE E58
   if (!Array.isArray(data.recent)) data.recent = [];
   // Projekte (ein Projekt = ein Arbeitsordner). Ältere Einstellungen kennen nur «recent».
   if (!Array.isArray(data.projects)) {

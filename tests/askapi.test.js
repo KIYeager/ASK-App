@@ -1,7 +1,7 @@
 // Tests für das Lesen der Antworten von ASK und den Verlauf an das Modell (node --test tests/).
 const test = require('node:test');
 const assert = require('node:assert');
-const { AskSession, cleanToken, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, nearestEffort } = require('../src/main/askapi');
+const { AskSession, cleanToken, effectiveAskUrl, SseParser, ThinkSplitter, Completion, parseTextToolCalls, parseSources, webSearchAllowed, isStaleTerminal, nearestEffort } = require('../src/main/askapi');
 const { apiMessages, shortArgs, TIGHT, TOO_LONG } = require('../src/main/agent');
 const { parseArgs, clip, toolSpecs } = require('../src/main/tools');
 
@@ -505,4 +505,15 @@ test('Eigenes Anmeldefenster: Token nach der Anmeldung übernommen, «login-done
   assert.strictEqual(done, 1);
   assert.strictEqual(ask.status.state, 'angemeldet');
   stop();
+});
+
+test('Adresse von ASK: immer die mitgelieferte, ausser einem nachgebauten ASK auf diesem Rechner (E58)', () => {
+  const school = 'https://ask.ict-tfbern.ch';
+  assert.strictEqual(effectiveAskUrl('https://ask-ict.tfbern.ch', school), school, 'vertippt aus einer frühen Version');
+  assert.strictEqual(effectiveAskUrl('', school), school);
+  assert.strictEqual(effectiveAskUrl('https://andere.example.ch', school), school);
+  assert.strictEqual(effectiveAskUrl('http://127.0.0.1:18901', school), 'http://127.0.0.1:18901');
+  assert.strictEqual(effectiveAskUrl('http://localhost:5000', school), 'http://localhost:5000');
+  assert.strictEqual(effectiveAskUrl('http://127.0.0.1.evil.ch', school), school);
+  assert.strictEqual(effectiveAskUrl('https://eigene.example.ch', ''), 'https://eigene.example.ch', 'ohne mitgelieferte Adresse bleibt die eigene');
 });

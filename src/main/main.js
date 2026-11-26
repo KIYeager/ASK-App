@@ -99,9 +99,10 @@ const askTokenStore = {
   },
 };
 
-// Ausweich-DNS (ENTSCHEIDE E57): Findet die App den Namen von ASK nicht (der Browser aber schon), fragt Chromium
-// zuerst Quad9 über HTTPS und nur bei einem Fehler wieder das DNS von Windows. Gilt für die ganze App. Gemerkt wird
-// es erst, wenn ASK danach lädt; dann gilt es auch nach dem nächsten Start von Anfang an.
+// Ausweich-DNS (ENTSCHEIDE E57, E58): Findet die App den Namen von ASK nicht (der Browser aber schon), fragt Chromium
+// zuerst Quad9 über HTTPS und nur bei einem Fehler wieder das DNS von Windows. Gilt für die ganze App. Nur für die
+// mitgelieferte Adresse der Schule: Ein Tippfehler in einer anderen Adresse ist kein DNS-Problem. Gemerkt wird es
+// (mit der Adresse) erst, wenn ASK danach lädt; dann gilt es auch nach dem nächsten Start von Anfang an.
 const SECURE_DNS_SERVERS = ['https://dns.quad9.net/dns-query'];
 let secureDns = false;
 let secureDnsPending = false;
@@ -489,7 +490,6 @@ function state() {
   const s = settings.load();
   return {
     askUrl: s.askUrl,
-    askUrlDefault: settings.appConfig().askUrl || '',
     secureDns,
     folder: s.folder,
     recent: s.recent,
@@ -911,15 +911,6 @@ function setupIpc() {
     if (/^https:\/\//i.test(String(url || ''))) shell.openExternal(url);
   });
   ipcMain.handle('ask:use-token', (_e, token) => ask.useToken(String(token || '')));
-  // Gespeicherte Adresse weicht von der mitgelieferten ab (z. B. von Hand vertippt): zurück zur mitgelieferten
-  ipcMain.handle('ask:default-url', () => {
-    const url = settings.appConfig().askUrl;
-    if (!url) return false;
-    settings.set({ askUrl: url });
-    loadAsk();
-    pushState();
-    return true;
-  });
   ipcMain.handle('ask:models', async () => {
     try { await ask.loadModels(); } catch { /* Status zeigt den Fehler */ }
     pushState();
@@ -1251,12 +1242,12 @@ function wireEvents() {
     // Ausweich-DNS hat geholfen: ASK lädt jetzt, also auch beim nächsten Start gleich so
     if (secureDnsPending && !s.loadError && ['nicht-angemeldet', 'angemeldet'].includes(s.state) && !ask.loadFailed) {
       secureDnsPending = false;
-      settings.set({ secureDns: true });
+      settings.set({ secureDnsFor: new URL(settings.get('askUrl')).origin });
     }
     pushState();
   });
-  ask.on('name-not-resolved', () => {
-    if (!enableSecureDns()) return;
+  ask.on('name-not-resolved', (failed) => {
+    if (!sameOrigin(failed, settings.appConfig().askUrl) || !enableSecureDns()) return;
     secureDnsPending = true;
     pushState();
     // gleich nochmals laden, nicht erst nach 15 Sekunden
@@ -1309,7 +1300,10 @@ function skipTourForExistingUsers() {
 }
 
 app.whenReady().then(() => {
-  if (settings.get('secureDns')) enableSecureDns(); // vor dem ersten Laden (ENTSCHEIDE E57)
+  // vor dem ersten Laden (ENTSCHEIDE E57). «secureDns» aus 0.3.7 galt auch nach einer vertippten Adresse: verworfen (E58)
+  if (settings.get('secureDns') !== undefined) settings.set({ secureDns: undefined });
+  const dnsFor = settings.get('secureDnsFor');
+  if (dnsFor && sameOrigin(dnsFor, settings.appConfig().askUrl) && sameOrigin(dnsFor, settings.get('askUrl'))) enableSecureDns();
   skipTourForExistingUsers();
   applyTheme();
   setupProtocol();
