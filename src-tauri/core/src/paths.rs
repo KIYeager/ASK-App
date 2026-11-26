@@ -130,7 +130,7 @@ pub fn icon_file() -> PathBuf {
 
 /// Seite für das Zeichnen von PDF-Seiten (visual.rs)
 pub fn render_dir() -> PathBuf {
-    if is_packaged() { resources(&["render"]) } else { repo_root().join("src").join("main").join("render") }
+    if is_packaged() { resources(&["render"]) } else { repo_root().join("src").join("render") }
 }
 
 /// pdf.js (src/vendor/pdfjs)

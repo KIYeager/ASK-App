@@ -31,8 +31,10 @@ export function shortTime(ms) {
   return new Date(ms).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' });
 }
 
-// Datei des Arbeitsordners über das Protokoll askfile: (main.js). v: neue Fassung statt Zwischenspeicher
-export const fileUrl = (p, v = '') => `askfile://datei/${String(p).replaceAll('\\', '/').split('/').map(encodeURIComponent).join('/')}${v ? `?v=${v}` : ''}`;
+// Datei des Arbeitsordners über das Protokoll askfile: (src-tauri/src/protocol.rs). Unter Windows liefert Tauri
+// eigene Protokolle als http://askfile.localhost/ aus (bridge.js setzt das). v: neue Fassung statt Zwischenspeicher
+export const fileBase = () => (typeof window !== 'undefined' && window.__ASK_FILE_BASE__) || 'askfile://datei/';
+export const fileUrl = (p, v = '') => `${fileBase()}${String(p).replaceAll('\\', '/').split('/').map(encodeURIComponent).join('/')}${v ? `?v=${v}` : ''}`;
 
 // Kurzbezeichnung im farbigen Dateisymbol
 export const fileBadge = (name, dir = false) => (dir ? 'DIR' : (extOf(name) || 'Datei').slice(0, 4).toUpperCase());

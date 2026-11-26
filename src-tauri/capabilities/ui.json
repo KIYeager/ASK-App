@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "ui",
+  "description": "Nur die eigene Oberfläche (Webansicht «ui») darf den Hauptprozess aufrufen. Die ASK-Seite und der Browser der App laden fremde Seiten und bekommen keine Rechte.",
+  "windows": ["main"],
+  "webviews": ["ui"],
+  "local": true,
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-ipc"
+  ]
+}

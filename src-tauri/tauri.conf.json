@@ -1,0 +1,66 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ASK",
+  "mainBinaryName": "ASK",
+  "version": "../package.json",
+  "identifier": "ch.tfbern.ask",
+  "build": {
+    "beforeDevCommand": "npm run dev:ui",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build:ui",
+    "frontendDist": "../src/renderer/dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "img-src": "'self' askfile: http://askfile.localhost data: blob:",
+        "frame-src": "askfile: http://askfile.localhost",
+        "media-src": "askfile: http://askfile.localhost",
+        "style-src": "'self' 'unsafe-inline'",
+        "script-src": "'self'",
+        "connect-src": "'self' ipc: http://ipc.localhost"
+      },
+      "freezePrototype": false
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "TF Bern",
+    "copyright": "TF Bern",
+    "shortDescription": "ASK Desktop",
+    "longDescription": "ASK Desktop: Open WebUI der TF Bern mit lokalem Arbeitsordner",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico", "icons/icon.png"],
+    "resources": {
+      "../resources/skills/": "skills/",
+      "../resources/anweisungen/": "anweisungen/",
+      "../resources/app-config.json": "app-config.json",
+      "../resources/icon.ico": "icon.ico",
+      "../python/ask_terminal/*.py": "ask_terminal/",
+      "../src/render/": "render/",
+      "../src/vendor/": "vendor/"
+    },
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "languages": ["German"],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "",
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "ERSETZEN: öffentlicher Schlüssel aus «npx tauri signer generate» (README, Abschnitt «Updates signieren»)",
+      "endpoints": ["https://github.com/KIYeager/ASK-Releases/releases/download/updater/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  }
+}
