@@ -535,25 +535,38 @@ export default function App() {
   };
 
   const project = groups.find((g) => g.current);
+  // Tabs oben: der aktuelle Chat steht immer drin, ein neuer noch ohne Titel als «Neuer Chat»
+  const shownTabs = tabs.some((t) => t.id === chatId) ? tabs : [{ id: chatId, folder: state.folder, title: 'Neuer Chat' }, ...tabs];
+  const closeTab = (t, i) => {
+    setTabs((all) => all.filter((x) => x.id !== t.id));
+    if (t.id !== chatId) return;
+    const next = shownTabs[i + 1] || shownTabs[i - 1]; // aktiven Tab schliessen: zum Nachbarn wechseln
+    if (next) openChat(next.folder, next.id);
+  };
   const cols = [leftOpen ? `${clampWidth('chatbar', widths.chatbar || PANELS.chatbar.def)}px` : '0px', leftOpen ? '5px' : '0px', 'minmax(0, 1fr)',
     rightOpen ? '5px' : '0px', rightOpen ? `${clampWidth('sidebar', widths.sidebar || PANELS.sidebar.def)}px` : '0px'];
 
   return (
     <div className={`app${browserBig && rightOpen && tab === 'browser' ? ' browser-big' : ''}${verbose ? ' verbose' : ''}`}>
       <header className="topbar">
-        <div className="brand" style={{ width: leftOpen ? cols[0] : 'auto' }}>
+        <div className="brand" style={{ width: leftOpen ? `calc(${cols[0]} - 8px)` : 'auto' }}>
           <button type="button" id="chatbar-btn" className="icon-btn" title="Projekte ein- oder ausblenden" aria-label="Projekte ein- oder ausblenden"
             onClick={() => api().setChatbar(!leftOpen)}><Icon name="sidebar" size={17} /></button>
           <img src="./tf-mark.png" alt="" className="logo-mark" />
           <span className="wordmark">ASK</span>
         </div>
         <nav className="tabs" aria-label="Offene Chats">
-          {(tabs.some((t) => t.id === chatId) ? tabs : [{ id: chatId, folder: state.folder, title: 'Neuer Chat' }, ...tabs]).map((t) => (
+          {shownTabs.map((t, i) => (
             <span key={t.id} className={`tab${t.id === chatId ? ' on' : ''}`}>
-              <button type="button" className="tab-open" title={`${t.title}\n${t.folder}`} onClick={() => { if (t.id !== chatId) openChat(t.folder, t.id); }}>
-                <Icon name="chat" size={14} /><span className="ell">{t.title}</span>
+              <button type="button" className="tab-open" title={`${t.title}\n${t.folder}`} aria-current={t.id === chatId ? 'page' : undefined}
+                onClick={() => { if (t.id !== chatId) openChat(t.folder, t.id); }}>
+                <span className={`swatch${(t.id === chatId && running) || (state.running || []).some((r) => r.id === t.id) ? ' busy' : ''}`}
+                  style={{ background: groups.find((g) => g.folder.toLowerCase() === (t.folder || '').toLowerCase())?.color || 'var(--dim)' }} />
+                <span className="ell">{t.title}</span>
               </button>
-              {t.id !== chatId ? <button type="button" className="tab-x" aria-label={`${t.title} schliessen`} onClick={() => setTabs(tabs.filter((x) => x.id !== t.id))}><Icon name="close" size={12} /></button> : null}
+              {t.id !== chatId || shownTabs.length > 1 ? (
+                <button type="button" className="tab-x" aria-label={`${t.title} schliessen`} onClick={() => closeTab(t, i)}><Icon name="close" size={12} /></button>
+              ) : null}
             </span>
           ))}
           <button type="button" className="icon-btn tab-new" title="Neuer Chat (Ctrl+N)" aria-label="Neuer Chat" onClick={() => newChat()}><Icon name="plus" size={15} /></button>
