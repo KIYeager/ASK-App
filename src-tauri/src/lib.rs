@@ -123,6 +123,9 @@ pub fn run() {
 }
 
 fn setup(app: AppHandle) -> anyhow::Result<()> {
+    // setup läuft im Hauptthread ohne tokio; die Logik startet beim Anlegen schon Aufgaben
+    let runtime = tauri::async_runtime::handle();
+    let _guard = runtime.inner().enter();
     let packaged = !cfg!(debug_assertions);
     let resources_dir = if packaged {
         app.path().resource_dir()?

@@ -193,6 +193,21 @@ pub struct App {
     me: Weak<App>,
 }
 
+/// Laufzeit für Aufgaben: Rückrufe kommen auch aus anderen Threads (Beobachtung des Ordners, Klick auf eine
+/// Benachrichtigung), dort gibt es keine aktuelle tokio-Laufzeit.
+static RUNTIME: std::sync::OnceLock<tokio::runtime::Handle> = std::sync::OnceLock::new();
+
+fn spawn<F>(f: F) -> tokio::task::JoinHandle<F::Output>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) => h.spawn(f),
+        Err(_) => RUNTIME.get().expect("App::new in einer tokio-Laufzeit").spawn(f),
+    }
+}
+
 fn make_terminal() -> Terminal {
     let t = Terminal::native();
     // Installierte App und einzelne EXE: Python vor dem ersten Terminal-Start entpacken (ENTSCHEIDE E39)
@@ -210,7 +225,11 @@ fn make_terminal() -> Terminal {
 }
 
 impl App {
+    /// Muss in einer tokio-Laufzeit aufgerufen werden (die Hülle: tauri::async_runtime)
     pub fn new(o: AppOptions) -> Arc<Self> {
+        if let Ok(h) = tokio::runtime::Handle::try_current() {
+            let _ = RUNTIME.set(h);
+        }
         let test_mode = paths::test_mode();
         let env_on = |k: &str| std::env::var(k).map(|v| v == "1").unwrap_or(false);
         let client = Web::client_builder(test_mode).build().unwrap_or_default();
@@ -399,10 +418,10 @@ impl App {
             (st.terminal.clone(), st.workspace.clone(), st.runtimes.values().cloned().collect::<Vec<_>>())
         };
         workspace.close();
-        let mut waits = vec![tokio::spawn(terminal.stop())];
+        let mut waits = vec![spawn(terminal.stop())];
         for rt in rts {
             rt.workspace.close();
-            waits.push(tokio::spawn(async move { stop_runtime(&rt).await }));
+            waits.push(spawn(async move { stop_runtime(&rt).await }));
         }
         for w in waits {
             let _ = w.await;
@@ -447,7 +466,7 @@ impl App {
             match s.get("state").and_then(Value::as_str) {
                 Some("angemeldet") => {
                     let images = a.images.clone();
-                    tokio::spawn(async move { images.discover().await; });
+                    spawn(async move { images.discover().await; });
                 }
                 Some("nicht-angemeldet") => a.images.forget(),
                 _ => {}
@@ -907,7 +926,7 @@ impl App {
         rt.workspace.events.on("auftrag", move |file| {
             if let (Some(a), Some(rt)) = (me.upgrade(), w.upgrade()) {
                 let file = PathBuf::from(js_string(file));
-                tokio::spawn(async move { a.handle_order(file, rt.workspace.clone()).await });
+                spawn(async move { a.handle_order(file, rt.workspace.clone()).await });
             }
         });
         let (me, w) = (self.me.clone(), Arc::downgrade(rt));
@@ -960,7 +979,7 @@ impl App {
             }
             if !a.running() {
                 let app = app.clone();
-                tokio::spawn(async move { app.release_idle(); });
+                spawn(async move { app.release_idle(); });
             }
         });
     }
@@ -991,7 +1010,7 @@ impl App {
             app.host.focus_window();
             let visible = app.st.lock().agent.as_ref().zip(wa.upgrade()).is_some_and(|(x, a)| Arc::ptr_eq(x, &a));
             if !f.is_empty() && !visible {
-                tokio::spawn(async move { app.open_chat(&f, &id).await; });
+                spawn(async move { app.open_chat(&f, &id).await; });
             }
         }));
     }
@@ -1014,7 +1033,7 @@ impl App {
             rt.agents.lock().clear();
             rt.workspace.close();
             self.st.lock().runtimes.remove(&key);
-            tokio::spawn(async move { stop_runtime(&rt).await });
+            spawn(async move { stop_runtime(&rt).await });
         }
     }
 
@@ -1125,7 +1144,7 @@ impl App {
         // Alte Sicherungen aufräumen, mit derselben Instanz, die auch sichert, und nicht beim Öffnen bremsen
         let me = self.me.clone();
         let p = path.clone();
-        tokio::spawn(async move {
+        spawn(async move {
             tokio::time::sleep(Duration::from_secs(5)).await;
             if let Some(a) = me.upgrade() {
                 if same_path(&js_string(&settings::get("folder")), &p) {
@@ -1174,7 +1193,7 @@ impl App {
             system_prompt: Some(read_instruction("systemprompt.md", &folder, "allgemein")),
             execute_description: Some(read_instruction("befehle.md", &folder, "allgemein")),
         });
-        tokio::spawn(fut);
+        spawn(fut);
     }
 
     /// Auftrag des Modells aus .ask/auftraege/<id>.json: Datei mit Office in PDF umwandeln.
@@ -1238,7 +1257,7 @@ impl App {
         }
         if let Some(stopped) = stopped {
             let folder = f.to_string();
-            tokio::spawn(async move {
+            spawn(async move {
                 stopped.await;
                 let others: Vec<String> = settings::load()["projects"].as_array().map(|a| a.iter().map(|p| str_of(p, "folder")).collect()).unwrap_or_default();
                 let opts = crate::lowlabel::RestoreOptions { other_folders: others, ..Default::default() };
@@ -1276,7 +1295,7 @@ impl App {
         }
         let host = self.host.clone();
         let p = file.to_string_lossy().to_string();
-        tokio::spawn(async move { host.open_path(&p).await; });
+        spawn(async move { host.open_path(&p).await; });
     }
 
     /// Menü eines Projekts in der Seitenleiste (Rechtsklick oder «…»)
@@ -1388,7 +1407,7 @@ impl App {
         if on {
             // eine vorhandene Beta gleich anbieten
             let u = self.updater.clone();
-            tokio::spawn(async move { u.check(false).await; });
+            spawn(async move { u.check(false).await; });
         }
     }
 
@@ -1561,7 +1580,7 @@ impl App {
             "folder:new" => self.new_project(&sarg(a, 0)).await,
             "folder:open" => self.open_folder(&sarg(a, 0), "").await,
             "folder:forget" => json!(self.forget_folder(&sarg(a, 0))),
-            "project:menu" => { let me = self.clone(); let f = sarg(a, 0); tokio::spawn(async move { me.project_menu(&f).await; }); Value::Null }
+            "project:menu" => { let me = self.clone(); let f = sarg(a, 0); spawn(async move { me.project_menu(&f).await; }); Value::Null }
             "project:update" => { let ok = settings::update_project(&sarg(a, 0), &arg(a, 1)); self.push_state(); json!(ok) }
             "settings:set" => {
                 let v = arg(a, 0);
@@ -1602,7 +1621,7 @@ impl App {
                     Err(err) => fail(format!("Nicht kopiert: {err}")),
                 }
             }
-            "folder:menu" => { let me = self.clone(); tokio::spawn(async move { let items = me.folder_menu_items(); me.popup_menu(items).await; }); Value::Null }
+            "folder:menu" => { let me = self.clone(); spawn(async move { let items = me.folder_menu_items(); me.popup_menu(items).await; }); Value::Null }
             "folder:show" => { let f = js_string(&settings::get("folder")); if !f.is_empty() { self.host.open_path(&f).await; } Value::Null }
             "terminal:restart" => { self.start_terminal(); Value::Null }
             "terminal:logs" => json!(self.terminal().logs().join("\n")),
