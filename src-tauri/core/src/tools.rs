@@ -471,6 +471,35 @@ impl From<memorytools::ToolOutput> for ToolResult {
 // ---------- Befehle ausführen ----------
 
 /// Führt einen Befehl aus und liefert die Ausgabe laufend (`on_progress`). Stoppt über `signal`.
+/// Braucht der Befehl Python (python, py, pip, ein .py-Skript)?
+pub fn uses_python(command: &str) -> bool {
+    command.split(|c: char| c.is_whitespace() || matches!(c, '&' | '|' | '(' | ')' | ';' | '"'))
+        .map(|w| w.to_lowercase())
+        .any(|w| {
+            let w = w.rsplit(['\\', '/']).next().unwrap_or("").trim_end_matches(".exe").to_string();
+            matches!(w.as_str(), "python" | "python3" | "py" | "pip" | "pip3") || w.ends_with(".py")
+        })
+}
+
+/// Python entpackt die installierte App beim ersten Start im Hintergrund (ENTSCHEIDE E39, E58). Ein Befehl mit
+/// Python wartet darauf und zeigt den Fortschritt; alles andere läuft sofort.
+async fn wait_for_python(command: &str, ctx: &ToolCtx) -> Result<()> {
+    if !crate::paths::is_packaged() || !uses_python(command) {
+        return Ok(());
+    }
+    let runtime = crate::python::shared();
+    if runtime.ready() {
+        return Ok(());
+    }
+    let progress = ctx.on_progress.clone();
+    runtime.ensure(move |p| {
+        if let Some(f) = &progress {
+            f(&format!("Python wird eingerichtet (einmalig) … {p} %"));
+        }
+    }).await?;
+    Ok(())
+}
+
 async fn run_command(terminal: &dyn TerminalEndpoint, args: &Value, ctx: &ToolCtx) -> Result<ToolResult> {
     let command = str_of(args, "command").trim().to_string();
     if command.is_empty() {
@@ -480,6 +509,7 @@ async fn run_command(terminal: &dyn TerminalEndpoint, args: &Value, ctx: &ToolCt
     if !blocked.is_empty() {
         return Ok(ToolResult::new(false, blocked, "abgelehnt"));
     }
+    wait_for_python(&command, ctx).await?;
     let wait = num_of(args, "wait");
     let limit = (if wait == 0.0 { 120.0 } else { wait }).clamp(5.0, 600.0);
     let cancelled = || ctx.signal.as_ref().is_some_and(Signal::is_cancelled);
@@ -1263,6 +1293,7 @@ fn server_line(s: &crate::servers::ServerSnapshot) -> String {
 }
 
 async fn server_starten(ctx: &ToolCtx, a: &Value) -> Result<ToolResult> {
+    wait_for_python(&str_of(a, "befehl"), ctx).await?;
     let servers = servers_of(ctx)?;
     let command = {
         let b = or_empty(a, "befehl");
@@ -2411,5 +2442,15 @@ mod tests {
         assert_eq!(v.seen.lock().last().unwrap().2.seiten, json!("1-2"));
         let r = run_tool(None, "view_file", &json!({ "path": "a.png" }), &ToolCtx::default()).await;
         assert_eq!(r.output, "Fehler: Ansehen ist hier nicht verfügbar.");
+    }
+
+    #[test]
+    fn python_commands_are_recognised() {
+        for c in ["python auswertung.py", "py -3 a.py", "pip install x", "C:\\Pfad\\python.exe -m http.server", ".ask\\skripte\\x.py", "cd a && python b.py"] {
+            assert!(uses_python(c), "{c}");
+        }
+        for c in ["dir", "node server.js", "npm run dev", "type pythonnotizen.txt"] {
+            assert!(!uses_python(c), "{c}");
+        }
     }
 }

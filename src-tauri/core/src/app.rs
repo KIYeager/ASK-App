@@ -209,19 +209,9 @@ where
 }
 
 fn make_terminal() -> Terminal {
-    let t = Terminal::native();
-    // Installierte App und einzelne EXE: Python vor dem ersten Terminal-Start entpacken (ENTSCHEIDE E39)
-    if paths::is_packaged() {
-        t.set_prepare(Some(Arc::new(|report: crate::terminal::ReportFn| {
-            Box::pin(async move {
-                crate::python::shared()
-                    .ensure(move |percent| report(if percent >= 100 { String::new() } else { format!("Python wird eingerichtet (einmalig) … {percent} %") }))
-                    .await
-                    .map(|_| ())
-            })
-        })));
-    }
-    t
+    // Der Terminal-Server braucht kein Python mehr (ENTSCHEIDE E58). Python für die Skripte des Modells entpackt
+    // die installierte App im Hintergrund (App::start); Befehle mit Python warten darauf (tools.rs).
+    Terminal::native()
 }
 
 impl App {
@@ -382,6 +372,14 @@ impl App {
         }
         crate::portable::cleanup_old_versions();
         self.updater.start();
+        // Installierte App und einzelne EXE: Python einmal entpacken (ENTSCHEIDE E39), ohne den Start aufzuhalten
+        if paths::is_packaged() {
+            spawn(async {
+                if let Err(e) = crate::python::shared().ensure_quiet().await {
+                    eprintln!("Python nicht eingerichtet: {e}");
+                }
+            });
+        }
     }
 
     /// Beim Beenden den laufenden Auftrag stoppen und abwarten, bis er gespeichert ist (höchstens 5 s)
