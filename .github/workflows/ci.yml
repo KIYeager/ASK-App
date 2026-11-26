@@ -69,8 +69,6 @@ jobs:
           cache-dependency-path: python/requirements.txt
       - run: 'pip install --only-binary=:all: -r python/requirements.txt'
       - run: python -m unittest tests/test_streams.py tests/test_skills.py -v
-      # Startet das Terminal mit niedriger Integritätsstufe in einem Ordner mit Umlaut
-      - run: python -m unittest tests/test_terminal.py -v
       # Unit-Tests auch unter Windows (Pfade, Kurznamen wie RUNNER~1): sonst fällt das erst im Release auf
       - uses: actions/setup-node@v4
         with:
@@ -86,3 +84,6 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace
       - run: npm run build:ui
       - run: cargo build --manifest-path src-tauri/Cargo.toml --release
+      # Zuletzt, damit Rust-Tests und Build auch melden, wenn das Terminal scheitert.
+      # Startet das Terminal mit niedriger Integritätsstufe in einem Ordner mit Umlaut
+      - run: python -m unittest tests/test_terminal.py -v
