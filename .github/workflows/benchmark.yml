@@ -1,0 +1,73 @@
+# Vergleich Electron gegen Tauri auf einem Windows-Rechner von GitHub (ENTSCHEIDE E57): Startzeiten bis zur
+# Oberfläche und bis «Terminal läuft», Arbeitsspeicher, Grössen. Von Hand starten: Actions, «Benchmark»,
+# «Run workflow». Ergebnis in der Zusammenfassung des Laufs und als Datei benchmark.json.
+# Die Rechner von GitHub haben keine Grafikkarte und schwanken etwas: Das ist ein Vergleich, keine Zahl für Laptops.
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      electron:
+        description: 'Electron-Fassung aus ASK-Releases (Tag)'
+        default: 'v0.3.6'
+      runs:
+        description: 'Starts pro App (nach einem Aufwärmstart)'
+        default: '10'
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      ASK_BUILD_DIR: ${{ runner.temp }}\ask-build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci --no-audit --no-fund
+      - name: Python-Paket aus dem Zwischenspeicher
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\ask-build\cache
+          key: python-${{ hashFiles('scripts/build-python.ps1') }}
+      - name: Python bauen
+        shell: powershell
+        run: scripts\build-python.ps1 -BuildDir $env:ASK_BUILD_DIR
+      - name: Tauri-Fassung bauen (ohne Signatur)
+        run: npm run dist -- --ohne-signatur
+      - name: Electron-Fassung laden und installieren
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.electron }}
+        run: |
+          $v = $env:TAG.TrimStart('v')
+          gh release download $env:TAG --repo KIYeager/ASK-Releases --pattern "ASK-Setup-$v.exe" --dir $env:RUNNER_TEMP
+          Start-Process (Join-Path $env:RUNNER_TEMP "ASK-Setup-$v.exe") -ArgumentList '/S' -Wait
+          if (-not (Test-Path "$env:LOCALAPPDATA\Programs\ask-desktop\ASK.exe")) { throw "Electron-Fassung nicht installiert" }
+      - name: Messen
+        env:
+          TAG: ${{ inputs.electron }}
+        run: |
+          $v = $env:TAG.TrimStart('v')
+          $dist = Join-Path $env:ASK_BUILD_DIR 'dist'
+          $setup = (Get-ChildItem $dist -Filter 'ASK-Setup-*.exe' | Select-Object -First 1).FullName
+          node scripts/benchmark.js --electron "$env:LOCALAPPDATA\Programs\ask-desktop\ASK.exe" --tauri (Join-Path $dist 'app\ASK.exe') `
+            --runs ${{ inputs.runs }} --out benchmark.json --sizes `
+            "Installer Electron=$(Join-Path $env:RUNNER_TEMP "ASK-Setup-$v.exe")" "Installer Tauri=$setup" `
+            "Installiert Electron=$env:LOCALAPPDATA\Programs\ask-desktop" "App-Ordner Tauri=$(Join-Path $dist 'app')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark
+          path: benchmark.json

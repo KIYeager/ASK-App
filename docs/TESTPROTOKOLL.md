@@ -127,6 +127,7 @@ Echtes ASK (Version, Freigaben, Anmeldung über Microsoft-Konto in der App), ech
 6. Benachrichtigung mit Klick öffnet den Chat; Zoom (Ctrl +/-/0), Ctrl+R, Ctrl+Shift+I/J.
 7. Updates: nächste Beta wird angeboten, signiert geladen, installiert, ASK startet neu.
 8. Einzelne EXE: entpackt sich, startet, meldet neue Versionen nur mit «Download öffnen».
+9. Geschwindigkeit: Workflow «Benchmark» (Actions, «Run workflow») vergleicht die Electron-Fassung mit dem aktuellen Stand: Zeit bis zur Oberfläche und bis «Terminal läuft», Arbeitsspeicher, Grössen (`scripts/benchmark.js`). Ergebnis hier eintragen.
 
 ### Tests wiederholen
 
