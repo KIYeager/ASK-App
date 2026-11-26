@@ -71,7 +71,7 @@ fn extension(path: &str) -> Option<String> {
 pub fn extract(path: &str) -> Res<String> {
     let ext = extension(path).unwrap_or_default();
     match ext.as_str() {
-        "pdf" => extract_pdf(path),
+        "pdf" => extract_pdf_safe(path),
         "docx" => extract_docx(&std::fs::read(path)?),
         "xlsx" => extract_xlsx(&std::fs::read(path)?),
         "pptx" => extract_pptx(&std::fs::read(path)?),
@@ -948,6 +948,14 @@ fn extract_eml(data: &[u8]) -> Res<String> {
 }
 
 // ---------- PDF ----------
+
+/// Wie `extract_pdf`, aber ein Fehler im PDF-Parser (Panic bei kaputten oder ungewöhnlichen Dateien) wird zur
+/// Fehlermeldung statt den ganzen Terminal-Server zu beenden. Das Release-Profil wickelt dafür ab (kein `panic = "abort"`).
+fn extract_pdf_safe(path: &str) -> Res<String> {
+    let p = path.to_string();
+    std::panic::catch_unwind(move || extract_pdf(&p))
+        .unwrap_or_else(|_| Err(DocError::new("PDF nicht lesbar: Die Datei hat einen Aufbau, den der Leser nicht versteht.")))
+}
 
 /// Text aller Seiten (lopdf, reines Rust). Seiten ohne lesbaren Text geben eine leere Zeile.
 fn extract_pdf(path: &str) -> Res<String> {
