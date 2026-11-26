@@ -1101,6 +1101,30 @@ impl Visual {
     }
 }
 
+/// Werkzeuge view_file und browser (tools.rs) über `Visual`
+#[async_trait]
+impl crate::tools::VisualTools for Visual {
+    async fn view(&self, folder: &str, path: &str, opts: crate::tools::VisualOpts) -> Result<Value> {
+        let seiten = match &opts.seiten {
+            Value::Null => String::new(),
+            v => crate::util::js_string(v),
+        };
+        Visual::view(self, Path::new(folder), path, ViewOptions { seiten, chat: opts.chat, on_live: opts.on_live, signal: opts.signal }).await
+    }
+
+    async fn browse(&self, folder: &str, ziel: &str, opts: crate::tools::VisualOpts) -> Result<Value> {
+        let aktionen = opts.aktionen.as_array().cloned().unwrap_or_default();
+        Visual::browse(self, Path::new(folder), ziel, BrowseOptions {
+            aktionen,
+            warten: opts.warten,
+            chat: opts.chat,
+            on_live: opts.on_live,
+            signal: opts.signal,
+            local_ports: Some(opts.local_ports),
+        }).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
