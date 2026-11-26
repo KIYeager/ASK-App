@@ -43,9 +43,20 @@ function Todo({ tasks, open, onToggle }) {
   );
 }
 
+// Was die Stufen bedeuten, in einer Zeile unter den Balken
+const THINK_INFO = {
+  standard: 'Das Modell entscheidet selbst, wie lange es überlegt.',
+  tief: 'Schnelle Antworten, kaum Überlegen.',
+  mittel: 'Ausgewogen, passt für die meisten Aufträge.',
+  hoch: 'Gründlicher, die Antwort dauert länger.',
+  maximal: 'So gründlich wie möglich, deutlich langsamer.',
+};
+const THINK_STEPS = THINK_LEVELS.slice(1); // tief bis maximal
+
 function ThinkPicker({ level, onChange }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const range = useRef(null);
   useEffect(() => {
     if (!open) return undefined;
     const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
@@ -54,23 +65,44 @@ function ThinkPicker({ level, onChange }) {
     document.addEventListener('keydown', esc, true);
     return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc, true); };
   }, [open]);
-  const idx = Math.max(1, THINK_LEVELS.indexOf(level));
+  const auto = level === 'standard';
+  const idx = THINK_STEPS.indexOf(level); // -1 bei Standard
+  const pos = idx < 0 ? 1 : idx; // Standard: Regler bei «Mittel», aber grau
+  useEffect(() => { if (open) range.current?.focus(); }, [open]);
+  const set = (i) => onChange(THINK_STEPS[Math.min(THINK_STEPS.length - 1, Math.max(0, i))]);
   return (
     <div className="think-wrap" ref={ref}>
-      <button type="button" id="think-btn" className={`chip${level !== 'standard' ? ' on' : ''}`} onClick={() => setOpen(!open)}
+      <button type="button" id="think-btn" className={`chip${!auto ? ' on' : ''}`} onClick={() => setOpen(!open)}
         title="Denkaufwand des Modells (/denken)" aria-expanded={open}>
         <Icon name="spark" size={14} /> <span id="think-label" className="chip-label">{THINK_NAMES[level] || 'Standard'}</span>
       </button>
       {open ? (
-        <div id="think-pop" className={`popover think-pop${level === 'standard' ? ' standard' : ''}`}>
-          <div className="think-head"><span>Denkaufwand</span><span className="think-value">{THINK_NAMES[level]}</span></div>
-          <div className="think-scale"><span>Tief</span><span>Maximal</span></div>
-          <input id="think-range" type="range" min="1" max="4" step="1" value={idx} aria-label="Denkaufwand"
-            onChange={(e) => onChange(THINK_LEVELS[Number(e.target.value)])} autoFocus />
-          <div className="think-foot">
-            <button id="think-standard" type="button" className="link" onClick={() => onChange('standard')}>Standard</button>
-            <span className="muted">· das Modell entscheidet selbst</span>
+        <div id="think-pop" className={`popover think-pop${auto ? ' auto' : ''}`} role="dialog" aria-label="Denkaufwand">
+          <div className="think-head">
+            <span>Denkaufwand</span>
+            <button id="think-standard" type="button" role="switch" aria-checked={auto} className={`think-switch${auto ? ' on' : ''}`}
+              onClick={() => onChange(auto ? 'mittel' : 'standard')} title="Das Modell entscheidet selbst">
+              <span className="think-switch-text">Automatisch</span><span className="think-switch-track" aria-hidden="true"><span /></span>
+            </button>
           </div>
+          <div className="think-slider" style={{ '--f': auto ? 0 : pos / (THINK_STEPS.length - 1) }}>
+            <input id="think-range" ref={range} type="range" min="0" max={THINK_STEPS.length - 1} step="1" value={pos}
+              aria-label="Denkaufwand" aria-valuetext={auto ? 'Automatisch' : THINK_NAMES[level]}
+              onChange={(e) => set(Number(e.target.value))}
+              // Bei «Automatisch» ändert ein Klick auf den Regler an derselben Stelle den Wert nicht: trotzdem diese Stufe wählen
+              onPointerUp={(e) => { if (auto) set(Number(e.currentTarget.value)); }}
+              onKeyDown={(e) => { if (auto && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); set(pos); } }} />
+            <div className="think-dots" aria-hidden="true">
+              {THINK_STEPS.map((l, i) => <span key={l} className={!auto && i <= pos ? 'on' : ''} style={{ '--i': i / (THINK_STEPS.length - 1) }} />)}
+            </div>
+            <div className="think-ticks">
+              {THINK_STEPS.map((l, i) => (
+                <button key={l} type="button" tabIndex={-1} className={!auto && i === pos ? 'sel' : ''}
+                  style={{ '--i': i / (THINK_STEPS.length - 1) }} onClick={() => { set(i); range.current?.focus(); }}>{THINK_NAMES[l]}</button>
+              ))}
+            </div>
+          </div>
+          <p id="think-info" className="think-info">{THINK_INFO[level] || THINK_INFO.standard}</p>
         </div>
       ) : null}
     </div>

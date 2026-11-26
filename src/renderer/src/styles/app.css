@@ -409,13 +409,49 @@ button.work-head:hover { background: var(--hover); }
 .send.stop { background: var(--text); color: var(--pane); }
 .hintline { font-size: 11px; text-align: center; color: var(--dim); }
 .think-wrap { position: relative; }
-.think-pop { position: absolute; bottom: calc(100% + 8px); left: 0; width: 270px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-.think-head { display: flex; justify-content: space-between; font-weight: 600; }
-.think-value { color: var(--acc-text); }
-.think-scale { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); }
-.think-pop input[type=range] { width: 100%; accent-color: var(--acc); }
-.think-pop.standard input[type=range] { opacity: .45; }
-.think-foot { font-size: 12px; display: flex; gap: 6px; align-items: center; }
+.think-pop { position: absolute; bottom: calc(100% + 8px); left: 0; width: 286px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 12px; }
+.think-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+/* «Automatisch» als Schalter */
+.think-switch { display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; padding: 2px 0; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.think-switch:hover { color: var(--text); }
+.think-switch-track { position: relative; width: 30px; height: 18px; border-radius: 999px; background: var(--line-2); transition: background .15s; }
+.think-switch-track span { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--pane); box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+.think-switch.on { color: var(--acc-text); }
+.think-switch.on .think-switch-track { background: var(--acc); }
+.think-switch.on .think-switch-track span { transform: translateX(12px); }
+.think-switch:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; border-radius: 6px; }
+/* Regler mit vier Stufen: Spur füllt sich bis zum Knopf, Punkte an den Stufen, Namen darunter (auch zum Klicken).
+   --f: Anteil 0..1 der gefüllten Spur; der Knopf (20 px) läuft von 10 px bis 100 % - 10 px. */
+.think-slider { --thumb: 20px; position: relative; padding-top: 2px; }
+.think-slider input[type=range] { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 24px; margin: 0; background: transparent; cursor: pointer; position: relative; z-index: 1; }
+.think-slider input[type=range]:focus { outline: none; }
+.think-slider input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--acc-line), var(--acc)) 0 0 / calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--f)) 100% no-repeat, var(--line); }
+.think-slider input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: var(--thumb); height: var(--thumb); margin-top: -7px; border-radius: 50%;
+  background: var(--pane); border: 3px solid var(--acc); box-shadow: 0 0 0 5px var(--acc-soft), 0 1px 4px rgba(0, 0, 0, .25); transition: transform .12s, box-shadow .12s; }
+.think-slider input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.08); }
+.think-slider input[type=range]:active::-webkit-slider-thumb { transform: scale(1.14); box-shadow: 0 0 0 8px var(--acc-soft), 0 1px 4px rgba(0, 0, 0, .25); }
+.think-slider input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--pane), 0 0 0 5px var(--acc), 0 1px 4px rgba(0, 0, 0, .25); }
+/* dieselbe Gestalt für Firefox (Oberfläche im Browser entwickeln) */
+.think-slider input[type=range]::-moz-range-track { height: 6px; border-radius: 999px; background: var(--line); }
+.think-slider input[type=range]::-moz-range-progress { height: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--acc-line), var(--acc)); }
+.think-slider input[type=range]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--pane); border: 3px solid var(--acc); box-shadow: 0 0 0 5px var(--acc-soft); }
+.think-dots, .think-ticks { position: absolute; left: calc(var(--thumb) / 2); right: calc(var(--thumb) / 2); }
+.think-dots { top: 14px; height: 0; pointer-events: none; z-index: 0; }
+.think-dots span { position: absolute; left: calc(var(--i) * 100%); width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--line-2); }
+.think-dots span.on { background: var(--acc-soft); }
+.think-ticks { position: relative; left: auto; right: auto; margin: 6px calc(var(--thumb) / 2) 0; height: 18px; }
+.think-ticks button { position: absolute; left: calc(var(--i) * 100%); transform: translateX(-50%); border: 0; background: none; padding: 0 2px; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.think-ticks button:first-child { transform: translateX(calc(-1 * var(--thumb) / 2)); }
+.think-ticks button:last-child { transform: translateX(calc(-100% + var(--thumb) / 2)); }
+.think-ticks button:hover { color: var(--text); }
+.think-ticks button.sel { color: var(--acc-text); font-weight: 600; }
+/* «Automatisch»: Spur leer, Knopf grau ohne Hof */
+.think-pop.auto .think-slider input[type=range]::-webkit-slider-thumb { border-color: var(--line-2); box-shadow: 0 1px 3px rgba(0, 0, 0, .2); }
+.think-pop.auto .think-slider input[type=range]:hover::-webkit-slider-thumb { border-color: var(--acc-line); }
+.think-pop.auto .think-slider input[type=range]::-moz-range-progress { background: none; }
+.think-pop.auto .think-slider input[type=range]::-moz-range-thumb { border-color: var(--line-2); box-shadow: none; }
+.think-info { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45; min-height: 2.9em; }
 
 /* ---------- Rechts: Dateien, Vorschau, Browser ---------- */
 .sidebar { background: var(--side); display: grid; grid-template-rows: 42px minmax(0, 1fr); min-height: 0; min-width: 0; overflow: hidden; }
