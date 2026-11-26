@@ -3,6 +3,7 @@
 //! - «ui»: die eigene Oberfläche (React), füllt das Fenster
 //! - «ask»: die ASK-Seite, nur für die Anmeldung sichtbar (eigener Datenordner wie die Partition persist:ask)
 //! - «browser»: Browser der App (E27, E29), eigener Datenordner wie persist:ask-browser, erst bei Bedarf
+//!
 //! Die Oberfläche meldet Lage und Sichtbarkeit der Bereiche in CSS-Pixeln; hier werden sie mit dem
 //! Zoom der Oberfläche umgerechnet.
 
@@ -279,8 +280,5 @@ fn is_local_dev_url(u: &str) -> bool {
 
 /// Adresse der eigenen Oberfläche (gebaut: tauri://localhost bzw. http://tauri.localhost, Entwicklung: Vite)
 fn is_own_ui(url: &url::Url) -> bool {
-    match url.host_str() {
-        Some("localhost" | "tauri.localhost" | "127.0.0.1") => true,
-        _ => false,
-    }
+    matches!(url.host_str(), Some("localhost" | "tauri.localhost" | "127.0.0.1"))
 }

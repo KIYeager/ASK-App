@@ -294,10 +294,12 @@ pub type LiveFn = Arc<dyn Fn(Value) + Send + Sync>;
 
 /// Repositories, in die ohne Rückfrage hochgeladen wird (Häkchen im Dialog, zurücksetzen im GitHub-Dialog).
 /// Gross- und Kleinschreibung zählen nicht. Mit `with_store` gespeichert (main.js: Einstellung `githubTrusted`).
+type SaveTrust = Arc<dyn Fn(&[String]) + Send + Sync>;
+
 #[derive(Default)]
 pub struct GithubTrust {
     list: Mutex<Vec<String>>,
-    save: Option<Arc<dyn Fn(&[String]) + Send + Sync>>,
+    save: Option<SaveTrust>,
 }
 
 impl GithubTrust {

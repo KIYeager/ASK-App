@@ -1,5 +1,7 @@
 //! ASK Desktop: Tauri-Hülle (Fenster, Webansichten, Dialoge, Benachrichtigungen, Updates).
 //! Die Logik liegt in ask-core (src-tauri/core); die Oberfläche in src/renderer.
+//! Die App gibt es nur für Windows; unter Linux (Entwicklung) sind die WebView2-Teile leer.
+#![cfg_attr(not(windows), allow(dead_code, unused_imports, unused_variables))]
 
 mod askview;
 mod cdp;

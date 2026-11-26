@@ -187,7 +187,7 @@ pub struct App {
     file_base: String,
     test_mode: bool,
     st: Mutex<St>,
-    snapshots: Mutex<HashMap<String, Snapshots>>,
+    snapshots: Mutex<HashMap<String, Arc<Snapshots>>>,
     ui: Mutex<Ui>,
     orders: Mutex<HashSet<PathBuf>>,
     me: Weak<App>,
@@ -318,10 +318,6 @@ impl App {
                 me: me.clone(),
             }
         })
-    }
-
-    fn this(&self) -> Arc<App> {
-        self.me.upgrade().expect("App lebt")
     }
 
     fn send(&self, channel: &str, payload: Value) {
@@ -749,7 +745,7 @@ impl App {
 
     // ---- Projekte, Laufzeiten, Agenten -----------------------------------------------------------------------
 
-    fn snapshots_for(&self, folder: &str) -> Option<Snapshots> {
+    fn snapshots_for(&self, folder: &str) -> Option<Arc<Snapshots>> {
         if folder.is_empty() {
             return None;
         }
@@ -757,7 +753,7 @@ impl App {
         let mut map = self.snapshots.lock();
         if !map.contains_key(&key) {
             let store = project_file(folder, "sicherung", ".ask/sicherung");
-            map.insert(key.clone(), Snapshots::new(PathBuf::from(folder), Some(store)));
+            map.insert(key.clone(), Arc::new(Snapshots::new(PathBuf::from(folder), Some(store))));
         }
         map.get(&key).cloned()
     }
@@ -770,9 +766,9 @@ impl App {
         let auto = self.test_mode && env_on("ASK_TEST_AUTOCONFIRM");
         let rt_weak = rt.map(Arc::downgrade);
         let ws = rt.map(|r| r.workspace.clone());
-        let mut o = AgentOptions::new(self.ask.clone(), Arc::new(terminal));
-        o.get_folder = Arc::new({ let f = f.clone(); move || f.clone() });
-        o.get_model = Arc::new({ let me = me.clone(); move || me.upgrade().map(|a| a.current_model()).unwrap_or_default() });
+        let mut o = AgentOptions::new(self.ask.clone() as Arc<dyn ChatApi>, { let f = f.clone(); move || f.clone() },
+            { let me = me.clone(); move || me.upgrade().map(|a| a.current_model()).unwrap_or_default() });
+        o.terminal = Some(Arc::new(terminal) as Arc<dyn TerminalEndpoint>);
         o.get_system_prompt = Arc::new({
             let (me, f) = (me.clone(), f.clone());
             move |chat: &str| {
@@ -790,7 +786,7 @@ impl App {
         o.web = Some(self.web.clone());
         o.images = Some(self.images.clone());
         o.confirm = Some(self.confirm_fn());
-        o.get_image_url = Some(Arc::new({ let f = f.clone(); move |path: &str| image_url(Path::new(&f), path, Some(&native_resize)) }));
+        o.get_image_url = Some(Arc::new({ let f = f.clone(); move |att: &Value| image_url(Path::new(&f), &str_of(att, "path"), Some(&native_resize)) }));
         o.get_vision = Arc::new({ let me = me.clone(); move || me.upgrade().and_then(|a| { let m = a.current_model(); a.ask.models().into_iter().find(|x| x.id == m).and_then(|x| x.vision) }) });
         o.get_snapshots = Arc::new({ let (me, f) = (me.clone(), f.clone()); move || me.upgrade().and_then(|a| a.snapshots_for(&f)) });
         o.knowledge = Some(self.knowledge.for_agent());
@@ -814,9 +810,9 @@ impl App {
         o.file_exists = Arc::new(move |rel: &str| ws.as_ref().is_some_and(|w| w.resolve(rel).is_some()));
         if auto {
             // In automatischen Tests: Rückfragen erlauben, Fragen mit der ersten Antwort beantworten
-            o.auto_approve = Some(Arc::new(|_v| Box::pin(async { "yes".to_string() })));
-            o.auto_answer = Some(Arc::new(|q: Value| Box::pin(async move {
-                q.get("optionen").and_then(Value::as_array).and_then(|a| a.first()).map(js_string).unwrap_or_else(|| "ja".into())
+            o.auto_approve = Some(Arc::new(|_risk| Box::pin(async { "yes".to_string() })));
+            o.auto_answer = Some(Arc::new(|_frage: String, optionen: Vec<String>| Box::pin(async move {
+                Some(optionen.first().cloned().unwrap_or_else(|| "ja".into()))
             })));
         }
         // Kontextfenster: was ASK zum Modell angibt, sonst was ASK einmal in einer Fehlermeldung genannt hat
@@ -935,7 +931,7 @@ impl App {
                 app.host.flash_frame(true);
             }
             if kind == "user" {
-                a.set_turn_started(now_ms());
+                a.turn_started.store(now_ms(), std::sync::atomic::Ordering::SeqCst);
             }
             app.notify(&a, &f, ev);
             let mut payload = ev.clone();
@@ -980,7 +976,7 @@ impl App {
         if self.host.window_focused() && visible {
             return;
         }
-        if kind == "done" && (now_ms() - a.turn_started() < NOTIFY_MIN_MS || a.pending_questions() > 0 || a.pending_approvals() > 0) {
+        if kind == "done" && (now_ms() - a.turn_started.load(std::sync::atomic::Ordering::SeqCst) < NOTIFY_MIN_MS || a.pending_questions() > 0 || a.pending_approvals() > 0) {
             return;
         }
         let title = { let t = a.chat_title(); if t.is_empty() { "Neuer Chat".to_string() } else { t } };

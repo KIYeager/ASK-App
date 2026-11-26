@@ -160,7 +160,7 @@ pub async fn can_go(wv: &Webview<Wry>) -> (bool, bool) {
 /// Meldung zu einem Ladefehler von WebView2 (wie errorDescription in Electron)
 pub fn web_error_text(status: i32) -> String {
     match status {
-        1 | 2 | 3 | 4 | 5 | 6 => "Das Zertifikat der Seite ist ungültig".into(),
+        1..=6 => "Das Zertifikat der Seite ist ungültig".into(),
         7 => "Zeitüberschreitung".into(),
         8 | 11 => "Keine Verbindung zum Server".into(),
         9 => "Verbindung abgebrochen".into(),

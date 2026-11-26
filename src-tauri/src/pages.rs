@@ -20,13 +20,14 @@ use tauri::webview::{NewWindowResponse, WebviewWindowBuilder};
 use tauri::{Manager, WebviewUrl, Webview, Wry};
 
 /// Ladezähler und letzter Ladefehler je Webansicht (Bezeichnung)
-static LOADS: LazyLock<Mutex<HashMap<String, (u64, Option<LoadError>)>>> = LazyLock::new(Default::default);
+type ByLabel<T> = LazyLock<Mutex<HashMap<String, T>>>;
+static LOADS: ByLabel<(u64, Option<LoadError>)> = LazyLock::new(Default::default);
 static LOADED: LazyLock<tokio::sync::Notify> = LazyLock::new(tokio::sync::Notify::new);
 /// Abonnenten der Seitenereignisse je Webansicht
-static LISTENERS: LazyLock<Mutex<HashMap<String, Vec<(u64, PageListener)>>>> = LazyLock::new(Default::default);
+static LISTENERS: ByLabel<Vec<(u64, PageListener)>> = LazyLock::new(Default::default);
 static SEQ: AtomicU64 = AtomicU64::new(1);
 /// Neuestes Bild des Screencasts je unsichtbarem Fenster: (JPEG, neu seit dem letzten take_paint)
-static PAINTS: LazyLock<Mutex<HashMap<String, (Vec<u8>, bool)>>> = LazyLock::new(Default::default);
+static PAINTS: ByLabel<(Vec<u8>, bool)> = LazyLock::new(Default::default);
 /// Name der DevTools-Bindung, über die Seiten Eingaben der Person melden (zufällig, damit Seiten sie nicht kennen)
 static INPUT_BINDING: LazyLock<String> = LazyLock::new(|| format!("__askEingabe{:016x}", rand_u64()));
 
@@ -59,7 +60,7 @@ fn input_script(binding: &str) -> String {
 }
 
 /// Nur der Ordner, den visual.rs freigegeben hat, ist für Navigationen der unsichtbaren Fenster erlaubt
-static FILE_ROOTS: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
+static FILE_ROOTS: ByLabel<String> = LazyLock::new(Default::default);
 
 /// Navigation fertig (Fehler: None = geladen)
 pub fn page_loaded(label: &str, error: Option<LoadError>) {
