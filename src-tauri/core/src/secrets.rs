@@ -2,7 +2,7 @@
 //! `safeStorage` von Electron. Gespeichert als «dpapi:<Base64>». Die Electron-Fassung schrieb
 //! «<Base64 von v10 + Nonce + AES-GCM>»; den Schlüssel dazu hat Chromium mit DPAPI in «Local State»
 //! (%APPDATA%\ASK) abgelegt. Solche Werte liest `unprotect` noch, damit nach dem Wechsel zu Tauri
-//! niemand GitHub neu verbinden muss (ENTSCHEIDE E57).
+//! niemand GitHub neu verbinden muss (ENTSCHEIDE E60).
 //! Unter Linux (nur Entwicklung) gibt es kein DPAPI: dort «plain:<Base64>».
 
 use base64::engine::general_purpose::STANDARD as B64;

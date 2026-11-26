@@ -209,7 +209,7 @@ where
 }
 
 fn make_terminal() -> Terminal {
-    // Der Terminal-Server braucht kein Python mehr (ENTSCHEIDE E58). Python für die Skripte des Modells entpackt
+    // Der Terminal-Server braucht kein Python mehr (ENTSCHEIDE E61). Python für die Skripte des Modells entpackt
     // die installierte App im Hintergrund (App::start); Befehle mit Python warten darauf (tools.rs).
     Terminal::native()
 }
@@ -271,7 +271,7 @@ impl App {
                 if ask_r.models().iter().any(|mm| mm.id == wanted) { wanted } else { m4.upgrade().map(|a| a.current_model()).unwrap_or_default() }
             }, None).into_fn();
 
-            // Updates (ENTSCHEIDE E37, E57): fragt vor dem Herunterladen und vor dem Neustart, nie während eines Auftrags.
+            // Updates (ENTSCHEIDE E37, E60): fragt vor dem Herunterladen und vor dem Neustart, nie während eines Auftrags.
             let cfg = if env_on("ASK_NO_UPDATES") { Value::Null } else { settings::app_config()["updates"].clone() };
             let config = match (cfg.get("owner").and_then(Value::as_str), cfg.get("repo").and_then(Value::as_str)) {
                 (Some(o), Some(r)) if !o.is_empty() && !r.is_empty() => Some((o.to_string(), r.to_string())),

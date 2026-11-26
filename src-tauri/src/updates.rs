@@ -1,4 +1,4 @@
-//! Updates mit tauri-plugin-updater (ENTSCHEIDE E57): signierte Pakete aus dem öffentlichen Repository
+//! Updates mit tauri-plugin-updater (ENTSCHEIDE E60): signierte Pakete aus dem öffentlichen Repository
 //! KIYeager/ASK-Releases. Der Release-Workflow legt dort im Release «updater» zwei Dateien ab:
 //! latest.json (nur normale Versionen) und beta.json (die neueste, auch Vorabversionen). Den Ablauf
 //! (Fragen, Countdown, Aufschieben) steuert ask_core::updater.

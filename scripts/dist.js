@@ -1,4 +1,4 @@
-// Baut den Installer ASK-Setup-<Version>.exe mit Tauri (ENTSCHEIDE E57): Oberfläche (Vite), Rust-Hülle,
+// Baut den Installer ASK-Setup-<Version>.exe mit Tauri (ENTSCHEIDE E60): Oberfläche (Vite), Rust-Hülle,
 // NSIS-Installer pro Nutzer, dazu die Signatur für Updates (.sig). Das mitgelieferte Python kommt als
 // python-pack aus dem Build-Ordner dazu (ENTSCHEIDE E39); der Pfad steht nicht in tauri.conf.json, weil er je
 // Rechner anders ist, sondern in einer Zusatzkonfiguration für diesen Build.

@@ -1,5 +1,5 @@
 # Gesperrte Versionen für das mitgelieferte Python 3.14.8 (pip freeze). Nur noch die Werkzeugkiste des Modells
-# (Word, Excel, PowerPoint, PDF, Auswertungen, Diagramme): Den Terminal-Server macht die App selbst (ENTSCHEIDE E58).
+# (Word, Excel, PowerPoint, PDF, Auswertungen, Diagramme): Den Terminal-Server macht die App selbst (ENTSCHEIDE E61).
 certifi==2026.10.19
 charset-normalizer==3.5.2
 contourpy==1.4.0

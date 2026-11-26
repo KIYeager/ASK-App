@@ -1,4 +1,4 @@
-// Vergleich Electron-Fassung gegen Tauri-Fassung (ENTSCHEIDE E57): Startzeiten, Speicher, Grössen.
+// Vergleich Electron-Fassung gegen Tauri-Fassung (ENTSCHEIDE E60): Startzeiten, Speicher, Grössen.
 // Läuft unter Windows (Workflow .github/workflows/benchmark.yml oder von Hand). Beide Apps werden nacheinander
 // gestartet, jede zuerst einmal zum Aufwärmen (Python entpacken, WebView2 laden; nicht gezählt), danach `runs` Mal.
 // Gemessen ab dem Start des Prozesses:

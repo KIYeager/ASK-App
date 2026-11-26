@@ -1,4 +1,4 @@
-# Vergleich Electron gegen Tauri auf einem Windows-Rechner von GitHub (ENTSCHEIDE E57): Startzeiten bis zur
+# Vergleich Electron gegen Tauri auf einem Windows-Rechner von GitHub (ENTSCHEIDE E60): Startzeiten bis zur
 # Oberfläche und bis «Terminal läuft», Arbeitsspeicher, Grössen. Starten: im Pull Request das Label «benchmark»
 # setzen, oder nach dem Merge unter Actions, «Benchmark», «Run workflow». Ergebnis in der Zusammenfassung des Laufs und als Datei benchmark.json.
 # Die Rechner von GitHub haben keine Grafikkarte und schwanken etwas: Das ist ein Vergleich, keine Zahl für Laptops.

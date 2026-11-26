@@ -1,4 +1,4 @@
-; Ergänzungen zum NSIS-Installer von Tauri (bundle.windows.nsis.installerHooks), ENTSCHEIDE E39 und E57.
+; Ergänzungen zum NSIS-Installer von Tauri (bundle.windows.nsis.installerHooks), ENTSCHEIDE E39 und E60.
 ; Nur ASCII: makensis liest die Datei ohne BOM.
 
 !macro NSIS_HOOK_PREINSTALL

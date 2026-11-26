@@ -5,7 +5,7 @@
 #   Label «kein-release»: nichts. Die Wahl prüft release-label.yml schon im PR.
 # - Tag von Hand: npm run release -- <Version> "Was ist neu" (scripts/release.js).
 # Braucht das Secret RELEASES_TOKEN: Fine-grained Token nur für ASK-Releases, Recht «Contents: Read and write»,
-# und TAURI_SIGNING_PRIVATE_KEY (mit TAURI_SIGNING_PRIVATE_KEY_PASSWORD) zum Signieren der Updates (ENTSCHEIDE E57).
+# und TAURI_SIGNING_PRIVATE_KEY (mit TAURI_SIGNING_PRIVATE_KEY_PASSWORD) zum Signieren der Updates (ENTSCHEIDE E60).
 name: Release
 
 on:
@@ -151,7 +151,7 @@ jobs:
           Set-Content $notesFile -Encoding utf8 -Value $notes
 
           # Update-Dateien: latest.yml (für die frühere Electron-Fassung) kommt in das Release selbst,
-          # latest.json und beta.json (Tauri) in das feste Release «updater» (ENTSCHEIDE E57)
+          # latest.json und beta.json (Tauri) in das feste Release «updater» (ENTSCHEIDE E60)
           node scripts/manifests.js $dist $env:VERSION $notesFile $manifests
           if ($LASTEXITCODE -ne 0) { throw "Update-Dateien nicht erstellt" }
           Copy-Item (Join-Path $manifests 'latest.yml') $out

@@ -1,5 +1,5 @@
 //! Hauptfenster mit drei Webansichten (Tauri «multiwebview», Feature `unstable`), wie in Electron mit
-//! `WebContentsView` (ENTSCHEIDE E9, E42, E57):
+//! `WebContentsView` (ENTSCHEIDE E9, E42, E60):
 //! - «ui»: die eigene Oberfläche (React), füllt das Fenster
 //! - «ask»: die ASK-Seite, nur für die Anmeldung sichtbar (eigener Datenordner wie die Partition persist:ask)
 //! - «browser»: Browser der App (E27, E29), eigener Datenordner wie persist:ask-browser, erst bei Bedarf

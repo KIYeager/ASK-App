@@ -434,7 +434,7 @@ Tabs: Der aktive Tab liegt auf der Trennlinie und geht ohne Linie in den Chat ü
 
 Schmaler Chat (unter 500 Pixel Eingabefeld): Web, Denkaufwand und Modus zeigen nur ihr Symbol und der Kontext nur den Ring, damit Modellwahl und Senden in der Zeile bleiben; die Namen stehen im Tooltip.
 
-## E57 Tauri 2 statt Electron, Hauptprozess in Rust
+## E60 Tauri 2 statt Electron, Hauptprozess in Rust
 
 Ersetzt E9 und den Teil von E42 zur Hülle. Die App läuft jetzt mit Tauri 2 (2.12) und WebView2 statt Electron. Der frühere Hauptprozess (`src/main/*.js`, rund 9’700 Zeilen Node.js) ist vollständig nach Rust portiert: die Logik ohne Fenster in den Crate `ask-core` (`src-tauri/core`, ein Modul pro früherer Datei, mit den portierten Unit-Tests), Fenster, Webansichten, Dialoge, Benachrichtigungen und Updates in die Tauri-Hülle (`src-tauri/src`). Node.js gibt es zur Laufzeit nicht mehr. Die Oberfläche (React, Vite) bleibt unverändert; `window.ask` kommt aus `src/renderer/src/bridge.js` statt aus dem Preload und ruft den einen Befehl `ipc(channel, args)` mit denselben Kanälen wie früher auf.
 
@@ -448,7 +448,7 @@ Wie die Gründe aus E9 und E42 gelöst sind:
 
 Weiteres: Benachrichtigungen mit Klick über `tauri-winrt-notification`; das Kontextmenü in ASK und im Browser ist das von WebView2 (mit Rechtschreibprüfung), nicht mehr ein eigenes; Ctrl +/-/0, Ctrl+R und die Entwicklerwerkzeuge (Ctrl+Shift+I für ASK, Ctrl+Shift+J für die App) gehen über ein kleines Skript in der Oberfläche. Grösse: Installer ohne Chromium rund 85 MB kleiner; das mitgelieferte Python (rund 290 MB) bleibt der grösste Teil. Die End-to-End-Tests (`tests/e2e`) steuerten Electron direkt und sind noch nicht auf Tauri umgestellt; bis dahin gilt die Prüfliste im Testprotokoll von Hand.
 
-## E58 Terminal-Server in Rust, Python nur noch für das Modell
+## E61 Terminal-Server in Rust, Python nur noch für das Modell
 
 Das mitgelieferte Python hatte zwei Aufgaben: den lokalen Terminal-Server (open-terminal 0.14.2 mit FastAPI, uvicorn, pydantic und dem Jupyter-Paketstapel, dazu der Starter `python/ask_terminal`) und die Werkzeugkiste des Modells (pandas, matplotlib, python-docx, openpyxl, python-pptx, pypdf, reportlab). Der Server läuft jetzt in Rust (Crate `ask-terminal`, `src-tauri/terminal`), gestartet als `ASK.exe --terminal`: dieselbe HTTP-Schnittstelle, die die Werkzeuge schon benutzen (`/health`, `/execute`, `/files/…`), nur auf 127.0.0.1, mit Key, Ordnersperre, Low Integrity und Job-Objekt wie bisher. Den Starter (Ordner als Low kennzeichnen, Token absenken, Job-Objekt, Key über stdin) macht die App selbst (`terminal.rs`). Notebooks (E12), WebSockets und die übrigen Schnittstellen von open-terminal braucht die App nicht und gibt es nicht mehr. Neu prüft der Server zusätzlich den `Host`-Header (Schutz vor DNS-Rebinding) und nimmt nur Verbindungen von 127.0.0.1 an. `read_file` liest Dokumente wie bisher als Text (Word mit Inhaltssteuerelementen, Kopf- und Fusszeilen; Excel, PowerPoint, RTF, OpenDocument, E-Mail, alte .xls), in reinem Rust. PDF liest jetzt `lopdf` statt pypdf: Bei ungewöhnlichen Schriften kann der Text schlechter sein, und eine Datei, an der der Leser scheitert, gibt eine Fehlermeldung statt den Server zu beenden.
 

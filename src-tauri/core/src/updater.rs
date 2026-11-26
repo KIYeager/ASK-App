@@ -1,4 +1,4 @@
-//! Updates aus dem öffentlichen Release-Repository (ENTSCHEIDE E37, E40, E57). Die installierte App fragt
+//! Updates aus dem öffentlichen Release-Repository (ENTSCHEIDE E37, E40, E60). Die installierte App fragt
 //! einmal vor dem Herunterladen (Dialog in der App, E56), zeigt den Download als Karte unten links und
 //! startet danach mit 10 s Countdown von selbst neu («Jetzt» oder «Später» in der Karte); die einzelne EXE
 //! kann sich nicht selbst ersetzen und zeigt nur einen Hinweis mit Link zur neuen Version. Mit

@@ -481,7 +481,7 @@ pub fn uses_python(command: &str) -> bool {
         })
 }
 
-/// Python entpackt die installierte App beim ersten Start im Hintergrund (ENTSCHEIDE E39, E58). Ein Befehl mit
+/// Python entpackt die installierte App beim ersten Start im Hintergrund (ENTSCHEIDE E39, E61). Ein Befehl mit
 /// Python wartet darauf und zeigt den Fortschritt; alles andere läuft sofort.
 async fn wait_for_python(command: &str, ctx: &ToolCtx) -> Result<()> {
     if !crate::paths::is_packaged() || !uses_python(command) {

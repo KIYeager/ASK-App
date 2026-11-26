@@ -1,4 +1,4 @@
-// Update-Dateien für eine neue Version (ENTSCHEIDE E37, E57), aufgerufen vom Release-Workflow:
+// Update-Dateien für eine neue Version (ENTSCHEIDE E37, E60), aufgerufen vom Release-Workflow:
 // - latest.json / beta.json für die Tauri-Fassung (tauri-plugin-updater): Version, Text, Signatur, Adresse.
 //   Sie liegen im Release «updater» von ASK-Releases und werden bei jeder Version ersetzt. beta.json zeigt
 //   immer auf die neueste Version (auch normale), latest.json nur auf normale.
