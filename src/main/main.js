@@ -88,38 +88,63 @@ const github = new GitHub({
 });
 
 // Rückfrage vor Aktionen nach aussen (GitHub anlegen, hochladen). Mit options.checkbox ein Häkchen im
-// Dialog; dann { ok, checked } statt true/false. In automatischen Tests: ja (Häkchen mit ASK_TEST_REMEMBER).
+// Dialog; dann { ok, checked } statt true/false. options.danger: «Ja» rot (Löschen, nicht rückgängig). In automatischen Tests: ja (Häkchen mit ASK_TEST_REMEMBER).
 async function confirm(message, detail, options = {}) {
   const answer = (ok, checked) => (options.checkbox ? { ok, checked } : ok);
   if (testMode && process.env.ASK_TEST_AUTOCONFIRM === '1') return answer(true, process.env.ASK_TEST_REMEMBER === '1');
   if (!appWindow) return answer(false, false);
-  const res = await dialog.showMessageBox(appWindow.win, { type: 'question', buttons: ['Ja', 'Nein'], defaultId: 0, cancelId: 1, message, detail,
+  const res = await showBox({ type: options.danger ? 'warning' : 'question', buttons: ['Ja', 'Nein'], defaultId: 0, cancelId: 1, message, detail,
+    ...(options.danger ? { dangerId: 0 } : {}),
     ...(options.checkbox ? { checkboxLabel: options.checkbox, checkboxChecked: false } : {}) });
   return answer(res.response === 0, res.response === 0 && !!res.checkboxChecked);
 }
 
-// Dialog in der eigenen Oberfläche statt im Fenster von Windows (gleiche Optionen wie dialog.showMessageBox,
-// gibt den Index des Knopfs zurück, -1 bzw. cancelId beim Schliessen). Solange die Oberfläche nicht geladen ist: Windows-Dialog.
-const uiAsks = new Map();
-let uiAskSeq = 0;
+// Dialoge und Menüs in der eigenen Oberfläche statt von Windows (ENTSCHEIDE E56). showBox nimmt die Optionen
+// von dialog.showMessageBox (dazu dangerId für einen roten Knopf, für Updates kind 'update' usw.) und gibt wie dieses
+// { response, checkboxChecked }; Schliessen ohne Wahl gibt cancelId. Solange die Oberfläche nicht geladen ist: Windows.
+const uiWaits = new Map(); // id → { resolve, cancel }
+let uiSeq = 0;
 let uiReady = false;
-function askInApp(options) {
-  const win = appWindow?.win;
-  if (!win || win.isDestroyed()) return Promise.resolve(-1);
-  if (!uiReady || win.webContents.isLoading()) return dialog.showMessageBox(win, options).then((r) => r.response);
-  const id = ++uiAskSeq;
+const uiUsable = () => !!appWindow?.win && !appWindow.win.isDestroyed() && uiReady && !appWindow.win.webContents.isLoading();
+function uiRequest(channel, payload, cancel) {
+  const id = ++uiSeq;
   return new Promise((resolve) => {
-    uiAsks.set(id, { resolve, cancel: Number.isInteger(options.cancelId) ? options.cancelId : -1 });
-    appWindow.send('ui:ask', { id, ...options });
-    if (!win.isFocused()) win.flashFrame(true);
+    uiWaits.set(id, { resolve, cancel });
+    appWindow.send(channel, { id, ...payload });
+    if (!appWindow.win.isFocused()) appWindow.win.flashFrame(true);
   });
 }
-function answerUiAsks(id, index) {
-  for (const [key, a] of uiAsks) {
+function uiAnswer(id, value) { // id null: alle offenen (Oberfläche lädt neu, Fenster zu)
+  for (const [key, w] of uiWaits) {
     if (id != null && key !== id) continue;
-    uiAsks.delete(key);
-    a.resolve(Number.isInteger(index) ? index : a.cancel);
+    uiWaits.delete(key);
+    w.resolve(value === undefined ? w.cancel : value);
   }
+}
+async function showBox(options) {
+  const win = appWindow?.win;
+  if (!win || win.isDestroyed()) return { response: Number.isInteger(options.cancelId) ? options.cancelId : -1, checkboxChecked: false };
+  if (!uiUsable()) return dialog.showMessageBox(win, options);
+  const cancel = { response: Number.isInteger(options.cancelId) ? options.cancelId : (options.buttons?.length || 1) - 1, checkboxChecked: false };
+  return uiRequest('ui:ask', options, cancel);
+}
+
+// Menü an der Maus (bzw. unter dem angeklickten Knopf), Einträge wie bei Menu.buildFromTemplate: label, click, type
+// (separator, radio, checkbox), checked, enabled, submenu; dazu swatch (Farbfeld). Die Oberfläche bekommt nur Texte
+// und Schlüssel und meldet den gewählten Schlüssel; click läuft hier.
+async function popupMenu(items) {
+  if (!uiUsable()) { Menu.buildFromTemplate(items).popup({ window: appWindow.win }); return; }
+  const clicks = new Map();
+  const plain = (list, prefix) => list.map((it, i) => {
+    if (it.type === 'separator') return { separator: true };
+    const key = `${prefix}${i}`;
+    if (it.click) clicks.set(key, it);
+    return { key, label: it.label, type: it.type || 'normal', checked: !!it.checked, enabled: it.enabled !== false, swatch: it.swatch,
+      submenu: it.submenu ? plain(it.submenu, `${key}.`) : undefined };
+  });
+  const key = await uiRequest('ui:menu', { items: plain(items, '') }, null);
+  const it = key && clicks.get(String(key));
+  if (it) it.click({ ...it, checked: it.type === 'checkbox' ? !it.checked : true });
 }
 
 // Repositories, in die ohne Rückfrage hochgeladen wird (Häkchen im Dialog, zurücksetzen im GitHub-Dialog)
@@ -162,7 +187,7 @@ const updater = new Updater({
   busy: () => anyRunning(),
   ask: async (options) => {
     if (testMode || !appWindow) return -1;
-    return askInApp(options);
+    return (await showBox(options)).response;
   },
   openExternal: (url) => shell.openExternal(url),
   beforeInstall: async () => {
@@ -681,7 +706,7 @@ function projectMenu(folder) {
   const items = [];
   if (exists) items.push({ label: 'Neuer Chat', click: () => openChat(folder, NEW).then((res) => { if (res && res.ok === false && res.reason) appWindow.send('folder:error', res.reason); }) });
   items.push({ label: 'Umbenennen …', click: () => appWindow.send('project:rename', folder) });
-  items.push({ label: 'Farbe', submenu: settings.PROJECT_COLORS.map((c) => ({ label: COLOR_NAMES[c] || c, type: 'radio', checked: project.color === c,
+  items.push({ label: 'Farbe', submenu: settings.PROJECT_COLORS.map((c) => ({ label: COLOR_NAMES[c] || c, type: 'radio', checked: project.color === c, swatch: c,
     click: () => { settings.updateProject(folder, { color: c }); appWindow.send('chat:groups-changed'); } })) });
   items.push({ type: 'separator' });
   if (exists) {
@@ -696,7 +721,7 @@ function projectMenu(folder) {
       appWindow.send('chat:groups-changed');
     }
   } });
-  Menu.buildFromTemplate(items).popup({ window: appWindow.win });
+  popupMenu(items);
 }
 
 const COLOR_NAMES = { '#0082B4': 'TF Blau', '#F28855': 'Orange', '#4EB68E': 'Grün', '#EE716D': 'Rot', '#60C5E2': 'Hellblau', '#A2CE8D': 'Hellgrün', '#A5ACAE': 'Grau' };
@@ -734,7 +759,7 @@ async function setBeta(on, tell = false) {
   settings.set({ betaUpdates: !!on });
   pushState();
   if (tell && appWindow && !testMode) {
-    await dialog.showMessageBox(appWindow.win, { type: 'info', buttons: ['OK'],
+    await showBox({ type: 'info', buttons: ['OK'],
       message: on ? 'Beta-Versionen an' : 'Beta-Versionen aus',
       detail: on ? 'ASK bietet dir auch Vorabversionen zum Testen an. Sie können Fehler haben.'
         : 'ASK bietet dir nur noch normale Versionen an. Eine installierte Beta bleibt, bis eine neuere normale Version kommt.' });
@@ -753,7 +778,13 @@ function setupIpc() {
     return res.ok ? { ok: true, path: path.relative(workspace.root, res.target) } : res;
   });
   ipcMain.handle('state:get', () => { uiReady = true; return state(); });
-  ipcMain.handle('ui:answer', (_e, id, index) => { answerUiAsks(Number(id), Number.isInteger(index) ? index : null); appWindow?.win.flashFrame(false); });
+  ipcMain.handle('ui:answer', (_e, id, value) => {
+    appWindow?.win.flashFrame(false);
+    // Dialog: { response, checkboxChecked }; Menü: Schlüssel des Eintrags oder null
+    if (value && typeof value === 'object' && Number.isInteger(value.response)) uiAnswer(Number(id), { response: value.response, checkboxChecked: !!value.checkboxChecked });
+    else if (value && typeof value === 'object') uiAnswer(Number(id));
+    else uiAnswer(Number(id), typeof value === 'string' ? value : null);
+  });
   ipcMain.handle('folder:choose', async () => {
     const suggested = path.join(process.env.USERPROFILE || app.getPath('home'), 'ASK-Projekte');
     const res = await dialog.showOpenDialog(appWindow.win, {
@@ -806,7 +837,7 @@ function setupIpc() {
     }
   });
   ipcMain.handle('folder:menu', () => {
-    Menu.buildFromTemplate(folderMenuItems()).popup({ window: appWindow.win });
+    popupMenu(folderMenuItems());
   });
   ipcMain.on('folder:choose-from-menu', () => appWindow.send('menu:choose-folder'));
   ipcMain.handle('folder:show', () => {
@@ -955,8 +986,8 @@ function setupIpc() {
   ipcMain.handle('chat:groups', () => chatGroups());
   ipcMain.handle('chat:open', (_e, folder, id) => openChat(folder, id));
   ipcMain.handle('chat:delete', async (_e, folder, id, title) => {
-    const res = await dialog.showMessageBox(appWindow.win, {
-      type: 'question', buttons: ['Löschen', 'Abbrechen'], defaultId: 1, cancelId: 1,
+    const res = await showBox({
+      type: 'question', buttons: ['Löschen', 'Abbrechen'], defaultId: 1, cancelId: 1, dangerId: 0,
       message: 'Chat löschen?', detail: `«${title}» wird aus ${folder} entfernt. Die Dateien im Ordner bleiben.`,
     });
     const rt = runtimes.get(path.resolve(String(folder || '')).toLowerCase());
@@ -1019,7 +1050,7 @@ function setupIpc() {
   });
   // Anmeldungen im Browser der App löschen (Cookies, Speicher); nach Rückfrage
   ipcMain.handle('browser:clear', async () => {
-    if (!(await confirm('Anmeldungen im Browser löschen?', 'Du wirst im Browser der App überall abgemeldet. ASK und dein Chrome sind davon nicht betroffen.'))) return false;
+    if (!(await confirm('Anmeldungen im Browser löschen?', 'Du wirst im Browser der App überall abgemeldet. ASK und dein Chrome sind davon nicht betroffen.', { danger: true }))) return false;
     await session.fromPartition(BROWSER_PARTITION).clearStorageData();
     if (appWindow.browser) appWindow.browser.webContents.reload();
     return true;
@@ -1051,7 +1082,7 @@ function setupIpc() {
     const full = workspace.resolve(rel);
     if (!full) return 'nicht gefunden';
     if (!SAFE_OPEN_EXT.has(path.extname(full).toLowerCase())) {
-      const res = testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? { response: 0 } : await dialog.showMessageBox(appWindow.win, {
+      const res = testMode && process.env.ASK_TEST_AUTOCONFIRM === '1' ? { response: 0 } : await showBox({
         type: 'warning', buttons: ['Im Explorer zeigen', 'Trotzdem öffnen', 'Abbrechen'], defaultId: 0, cancelId: 2,
         message: `«${path.basename(full)}» öffnen?`,
         detail: 'Diese Datei kann ein Programm oder Skript sein. Beim Öffnen läuft sie mit deinen Rechten auf dem ganzen Laptop, '
@@ -1221,9 +1252,9 @@ app.whenReady().then(() => {
     });
   }
   // Oberfläche lädt neu oder Fenster zu: offene Dialoge gelten als abgebrochen
-  appWindow.win.webContents.on('did-start-loading', () => { uiReady = false; answerUiAsks(null, null); });
+  appWindow.win.webContents.on('did-start-loading', () => { uiReady = false; uiAnswer(null); });
   appWindow.win.on('closed', () => {
-    answerUiAsks(null, null);
+    uiAnswer(null);
     appWindow = null;
     visual.closeRenderer(); // unsichtbare Fenster halten die App sonst offen
     app.quit();

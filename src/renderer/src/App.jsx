@@ -4,6 +4,7 @@ import Icon from './components/Icon.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Tabs from './components/Tabs.jsx';
 import AppAsk from './components/AppAsk.jsx';
+import PopMenu from './components/PopMenu.jsx';
 import Composer from './components/Composer.jsx';
 import RightPanel, { norm } from './components/RightPanel.jsx';
 import Dialogs, { activeDialog } from './components/Dialogs.jsx';
@@ -11,6 +12,14 @@ import { useSkillCommands } from './components/Knowledge.jsx';
 import { Turn } from './components/Chat.jsx';
 import { applyEvent, buildTurns, emptyChat, fromTranscript, lastTasks } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
+
+// Einträge eines Menüs aus dem Hauptprozess (nur Texte und Schlüssel) für PopMenu; ein Klick meldet den Schlüssel zurück
+function menuItems(list, pick) {
+  return (list || []).map((it) => (it.separator ? { separator: true } : {
+    label: it.label, type: it.type, checked: it.checked, enabled: it.enabled, swatch: it.swatch,
+    submenu: it.submenu ? menuItems(it.submenu, pick) : undefined, run: () => pick(it.key),
+  }));
+}
 
 // Karte unten links während eines Updates: Download, Countdown, «Jetzt neu starten», «Später» (ENTSCHEIDE E40).
 // Schwebt über der Projektleiste, damit sie weder Tabs noch Chat verschiebt und nie unter Browser oder ASK-Seite liegt.
@@ -92,7 +101,24 @@ export default function App() {
   const [uiAsk, setUiAsk] = useState(null); // Dialog des Hauptprozesses, z. B. «Update ist da»
   const uiAskRef = useRef(null);
   uiAskRef.current = uiAsk;
-  const answerUiAsk = useCallback((index) => { const q = uiAskRef.current; if (q) api().uiAnswer(q.id, index); uiAskRef.current = null; setUiAsk(null); }, []);
+  const answerUiAsk = useCallback((value) => { const q = uiAskRef.current; if (q) api().uiAnswer(q.id, value); uiAskRef.current = null; setUiAsk(null); }, []);
+  // Menü des Hauptprozesses (Projekt, Ordner): an der Stelle des letzten Rechtsklicks bzw. unter dem angeklickten Knopf
+  const [uiMenu, setUiMenu] = useState(null);
+  const uiMenuRef = useRef(null);
+  uiMenuRef.current = uiMenu;
+  const pointer = useRef({ x: 80, y: 60 });
+  const closeUiMenu = useCallback(() => { const m = uiMenuRef.current; if (m && !m.done) api().uiAnswer(m.id, null); uiMenuRef.current = null; setUiMenu(null); }, []);
+  const pickUiMenu = useCallback((key) => { const m = uiMenuRef.current; if (m) { m.done = true; api().uiAnswer(m.id, key); } }, []);
+  useEffect(() => {
+    const note = (e) => {
+      const btn = e.type === 'contextmenu' ? null : e.target.closest?.('button');
+      if (btn) { const r = btn.getBoundingClientRect(); pointer.current = { x: r.left, y: r.bottom + 4, right: r.right }; }
+      else pointer.current = { x: e.clientX, y: e.clientY };
+    };
+    document.addEventListener('pointerdown', note, true);
+    document.addEventListener('contextmenu', note, true);
+    return () => { document.removeEventListener('pointerdown', note, true); document.removeEventListener('contextmenu', note, true); };
+  }, []);
   const closedTabs = useRef([]); // zuletzt geschlossene Tabs, für Ctrl+Shift+T
   const [widths, setWidths] = useState(loadWidths);
   const [follow, setFollow] = useState(true);
@@ -219,6 +245,7 @@ export default function App() {
       a.onMenuNewFolder(() => setDialog({ name: 'project' })),
       a.onMenuGithub(() => setDialog({ name: 'github' })),
       a.onUiAsk?.((q) => setUiAsk(q)),
+      a.onUiMenu?.((m) => setUiMenu({ ...m, ...pointer.current })),
       a.onFolderError((reason) => setDialog({ name: 'terminal', text: reason })),
       a.onBrowserState((s) => setBrowser((b) => ({ ...b, ...s }))),
       a.onServers?.((list) => setServers(list || [])),
@@ -319,7 +346,7 @@ export default function App() {
   }, [waiting]);
   const leftOpen = state?.chatbarOpen !== false;
   const rightOpen = state?.sidebarOpen !== false;
-  const browserActive = rightOpen && tab === 'browser' && !dialogName && !needsLogin;
+  const browserActive = rightOpen && tab === 'browser' && !dialogName && !needsLogin && !uiMenu; // Menüs lägen sonst unter der Browser-Ansicht
 
   // ---------- Aktionen ----------
 
@@ -492,12 +519,12 @@ export default function App() {
       api().setAskBounds({ x: r.x, y: r.y, width: r.width, height: r.height });
     };
     report();
-    api().setAskVisible(needsLogin && showAskPage && !dialogName && !loadFailed);
+    api().setAskVisible(needsLogin && showAskPage && !dialogName && !loadFailed && !uiMenu);
     const ro = new ResizeObserver(report);
     if (askHost.current) ro.observe(askHost.current);
     window.addEventListener('resize', report);
     return () => { ro.disconnect(); window.removeEventListener('resize', report); };
-  }, [needsLogin, showAskPage, dialogName, loadFailed]);
+  }, [needsLogin, showAskPage, dialogName, loadFailed, uiMenu]);
 
   // ---------- Breiten ----------
 
@@ -730,6 +757,8 @@ export default function App() {
 
       <Dialogs state={state} dialog={dialog} setDialog={setDialog} selected={selected} startError={startError} onVerbose={setVerboseSaved} />
       {uiAsk ? <AppAsk key={uiAsk.id} ask={uiAsk} onAnswer={answerUiAsk} /> : null}
+      {uiMenu ? <PopMenu key={uiMenu.id} x={uiMenu.right && uiMenu.right > window.innerWidth - 280 ? uiMenu.right - 260 : uiMenu.x} y={uiMenu.y} label="Menü"
+        onClose={closeUiMenu} items={menuItems(uiMenu.items, pickUiMenu)} /> : null}
     </div>
   );
 }

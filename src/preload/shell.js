@@ -104,7 +104,8 @@ contextBridge.exposeInMainWorld('ask', {
   showFile: (rel) => ipcRenderer.invoke('file:show', rel),
   updateAction: () => ipcRenderer.invoke('update:action'),
   onUiAsk: on('ui:ask'),
-  uiAnswer: (id, index) => ipcRenderer.invoke('ui:answer', id, index),
+  onUiMenu: on('ui:menu'),
+  uiAnswer: (id, value) => ipcRenderer.invoke('ui:answer', id, value),
   updateLater: () => ipcRenderer.invoke('update:later'),
   setBetaUpdates: (on, tell) => ipcRenderer.invoke('update:beta', on, tell),
   // Gedächtnis und eigene Skills (src/main/knowledge.js)
