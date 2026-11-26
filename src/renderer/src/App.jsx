@@ -698,15 +698,30 @@ export default function App() {
                   {loadFailed ? (
                     <div id="ask-unreachable">
                       <p>ASK ist nicht erreichbar ({loadFailed.description}).</p>
-                      <p>Internetverbindung prüfen und dann erneut laden. Die App versucht es auch von selbst wieder.</p>
-                      <button type="button" className="btn primary" onClick={() => api().reloadAsk()}>Erneut laden</button>
+                      {[-105, -137].includes(loadFailed.code) ? (
+                        <p>Die App findet die Adresse von ASK nicht.{state.secureDns ? ' Sie versucht es jetzt über ein verschlüsseltes DNS (Quad9).' : ''} Geht ASK im Browser, kannst du dich auch dort anmelden.</p>
+                      ) : <p>Internetverbindung prüfen und dann erneut laden. Die App versucht es auch von selbst wieder.</p>}
+                      <div className="login-actions">
+                        <button type="button" className="btn primary" onClick={() => api().reloadAsk()}>Erneut laden</button>
+                        <button id="unreachable-window" type="button" className="btn" onClick={() => api().askLoginWindow()}>In eigenem Fenster anmelden</button>
+                        <button id="unreachable-browser" type="button" className="btn" onClick={() => setDialog({ name: 'ask-token' })}>Im Browser anmelden …</button>
+                      </div>
+                      <p className="muted small">Adresse: {loadFailed.url || state.askUrl}{loadFailed.proxy ? ` · Verbindung: ${loadFailed.proxy === 'DIRECT' ? 'direkt, ohne Proxy' : loadFailed.proxy}` : ''}</p>
+                      {state.askUrlDefault && state.askUrl !== state.askUrlDefault ? (
+                        <p className="muted small">Gespeichert ist eine andere Adresse als die der Schule ({state.askUrlDefault}).{' '}
+                          <button id="unreachable-default-url" type="button" className="link" onClick={() => api().askDefaultUrl()}>Diese verwenden</button></p>
+                      ) : null}
                     </div>
                   ) : slow ? (
                     <div id="ask-slow">
                       <p><span className="spin" aria-hidden="true" /> {ask.state === 'pruefen' ? 'Anmeldung wird geprüft …' : 'Verbinde mit ASK …'}</p>
                       <p>Das dauert ungewöhnlich lange. Internetverbindung prüfen und die Seite neu laden.</p>
                       {ask.detail ? <p className="muted small">{ask.detail}</p> : null}
-                      <button type="button" className="btn primary" onClick={() => { setSlow(false); api().reloadAsk(); }}>Seite neu laden</button>
+                      <div className="login-actions">
+                        <button type="button" className="btn primary" onClick={() => { setSlow(false); api().reloadAsk(); }}>Seite neu laden</button>
+                        <button type="button" className="btn" onClick={() => api().askLoginWindow()}>In eigenem Fenster anmelden</button>
+                        <button type="button" className="btn" onClick={() => setDialog({ name: 'ask-token' })}>Im Browser anmelden …</button>
+                      </div>
                     </div>
                   ) : <><span className="spin" aria-hidden="true" /> {ask.state === 'pruefen' ? 'Anmeldung wird geprüft …' : 'Verbinde mit ASK …'}</>}
                 </div>

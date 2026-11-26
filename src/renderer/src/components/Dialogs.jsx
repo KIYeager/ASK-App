@@ -89,7 +89,7 @@ function ProjectDialog({ state, first, error: startError, onResult, onClose }) {
   );
 }
 
-function AskDialog({ state, onClose }) {
+function AskDialog({ state, onClose, onToken }) {
   const a = state.ask || {};
   return (
     <Dialog id="dlg-ask" title="ASK" onClose={onClose} actions={(
@@ -105,7 +105,53 @@ function AskDialog({ state, onClose }) {
           <p>Angemeldet als {a.user || '(unbekannt)'}. {state.models.length} Modell(e) verfügbar.</p>
           <p>Die App schickt deine Aufträge direkt an das gewählte Modell. Befehle und Dateizugriffe führt sie selbst auf diesem Laptop aus, nur im Arbeitsordner.</p>
         </>
-      ) : a.state === 'fehler' ? <p>ASK meldet einen Fehler: {a.message || 'unbekannt'}</p> : <p>Nicht angemeldet. Die Anmeldeseite von ASK erscheint im Hauptfenster.</p>}
+      ) : a.state === 'fehler' ? <p>ASK meldet einen Fehler: {a.message || 'unbekannt'}</p> : (
+        <>
+          <p>Nicht angemeldet. Die Anmeldeseite von ASK erscheint im Hauptfenster. Erscheint sie nicht, melde dich in einem eigenen Fenster oder im Browser an.</p>
+          <div className="checks">
+            <button type="button" id="ask-login-window" className="btn small" onClick={() => api().askLoginWindow()}>In eigenem Fenster anmelden</button>
+            <button type="button" id="ask-login-browser" className="btn small" onClick={onToken}>Im Browser anmelden …</button>
+          </div>
+        </>
+      )}
+    </Dialog>
+  );
+}
+
+// Anmelden über den normalen Browser (ENTSCHEIDE E57): ASK dort öffnen, das Token kopieren und hier einfügen.
+// Für den Fall, dass die ASK-Seite in der App nicht lädt, im Browser aber schon.
+function TokenDialog({ state, onClose }) {
+  const [token, setToken] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const done = state.ask?.state === 'angemeldet';
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    const res = await api().askUseToken(token);
+    setBusy(false);
+    if (res?.ok) { setToken(''); onClose(); } else setError(res?.reason || 'Anmelden hat nicht geklappt.');
+  };
+  return (
+    <Dialog id="dlg-ask-token" title="Im Browser anmelden" onClose={onClose} actions={(
+      <>
+        <button type="button" className="btn" onClick={onClose}>{done ? 'Schliessen' : 'Abbrechen'}</button>
+        <button id="token-ok" type="button" className="btn primary" disabled={busy || !token.trim()} onClick={submit}>{busy ? 'Prüfe …' : 'Anmelden'}</button>
+      </>
+    )}>
+      <ol className="steps">
+        <li>ASK im Browser öffnen und dort anmelden.{' '}
+          <button id="token-open" type="button" className="link" onClick={() => api().askOpenBrowser()}>ASK im Browser öffnen</button></li>
+        <li>In ASK unten links auf deinen Namen klicken, dann <strong>Einstellungen</strong> → <strong>Konto</strong>.
+          Bei <strong>API-Schlüssel</strong> auf «Anzeigen» klicken und das <strong>JWT-Token</strong> kopieren (oder einen API-Schlüssel, falls du einen hast).</li>
+        <li>Hier einfügen und «Anmelden» drücken.</li>
+      </ol>
+      <input id="token-input" type="password" placeholder="Token einfügen" autoComplete="off" spellCheck={false} value={token} autoFocus
+        onChange={(e) => setToken(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} aria-label="Token von ASK" />
+      {error ? <p id="token-error" className="error">{error}</p> : null}
+      <p className="muted small">Das Token ist wie ein Passwort: nicht weitergeben. Die App speichert es verschlüsselt auf diesem Laptop.
+        Läuft es ab, meldet die App dich ab, und du fügst ein neues ein. «Abmelden» löscht es.</p>
     </Dialog>
   );
 }
@@ -201,10 +247,20 @@ function Segmented({ value, options, onChange, name }) {
   );
 }
 
-function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal, onUsage, onTour, onMemory, onSkills }) {
+function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal, onUsage, onTour, onMemory, onSkills, onAskToken }) {
   const u = state.update || {};
   return (
     <Dialog id="dlg-settings" title="Einstellungen" onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Fertig</button>}>
+      <div className="setting">
+        <div><div className="s-title">ASK-Konto</div><div className="s-text">{state.ask?.state === 'angemeldet' ? `Angemeldet als ${state.ask.user || '(unbekannt)'} · ${state.askUrl}`
+          : 'Nicht angemeldet. «Anmelden» öffnet die Anmeldung von ASK in einem eigenen Fenster. Lädt ASK nur im Browser, nimm «Im Browser».'}</div></div>
+        {state.ask?.state === 'angemeldet' ? <button type="button" className="btn" onClick={async () => { onClose(); await api().logout(); }}><Icon name="logout" size={15} /> Abmelden</button> : (
+          <div className="checks">
+            <button type="button" id="settings-login" className="btn" onClick={() => api().askLoginWindow()}>Anmelden</button>
+            <button type="button" id="settings-login-browser" className="btn small" onClick={onAskToken}>Im Browser …</button>
+          </div>
+        )}
+      </div>
       <div className="setting">
         <div><div className="s-title">Darstellung</div><div className="s-text">Hell, Dunkel oder wie in Windows eingestellt.</div></div>
         <Segmented name="Darstellung" value={state.theme || 'system'} onChange={(theme) => api().setSettings({ theme })}
@@ -247,10 +303,6 @@ function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal, onUsa
       <div className="setting">
         <div><div className="s-title">Skills</div><div className="s-text">Eigene Anleitungen für wiederkehrende Aufträge, aufrufen mit /name (/skills).</div></div>
         <button type="button" id="settings-skills" className="btn" onClick={onSkills}>Skills …</button>
-      </div>
-      <div className="setting">
-        <div><div className="s-title">ASK-Konto</div><div className="s-text">{state.ask?.state === 'angemeldet' ? `Angemeldet als ${state.ask.user || '(unbekannt)'} · ${state.askUrl}` : 'Nicht angemeldet'}</div></div>
-        {state.ask?.state === 'angemeldet' ? <button type="button" className="btn" onClick={async () => { onClose(); await api().logout(); }}><Icon name="logout" size={15} /> Abmelden</button> : null}
       </div>
       <div className="setting">
         <div><div className="s-title">GitHub</div><div className="s-text">Projekte von GitHub holen und hochladen.</div></div>
@@ -417,12 +469,13 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
       {name === 'url' ? <UrlDialog state={state} /> : null}
       {name === 'start' ? <ProjectDialog state={state} first error={startError} /> : null}
       {name === 'project' ? <ProjectDialog state={state} onResult={close} onClose={close} /> : null}
-      {name === 'ask' ? <AskDialog state={state} onClose={close} /> : null}
+      {name === 'ask' ? <AskDialog state={state} onClose={close} onToken={() => setDialog({ name: 'ask-token' })} /> : null}
       {name === 'terminal' ? <TerminalDialog state={state} text={dialog.text} onClose={close} /> : null}
       {name === 'github' ? <GithubDialog onClose={close} /> : null}
       {name === 'settings' ? <SettingsDialog state={state} onClose={close} onGithub={() => setDialog({ name: 'github' })} onVerbose={onVerbose}
         onTerminal={() => setDialog({ name: 'terminal' })} onUsage={() => setDialog({ name: 'usage' })} onTour={() => setDialog({ name: 'tour' })}
-        onMemory={() => setDialog({ name: 'memory' })} onSkills={() => setDialog({ name: 'skills' })} /> : null}
+        onMemory={() => setDialog({ name: 'memory' })} onSkills={() => setDialog({ name: 'skills' })} onAskToken={() => setDialog({ name: 'ask-token' })} /> : null}
+      {name === 'ask-token' ? <TokenDialog state={state} onClose={close} /> : null}
       {name === 'usage' ? <UsageDialog onClose={close} /> : null}
       {name === 'memory' ? <MemoryDialog state={state} onClose={close} /> : null}
       {name === 'skills' ? <SkillsDialog onClose={close} /> : null}

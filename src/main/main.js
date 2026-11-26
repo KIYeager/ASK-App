@@ -87,6 +87,36 @@ const github = new GitHub({
   fetchImpl: (url, options) => net.fetch(url, options), // Netzwerk von Chromium, nutzt den Proxy von Windows
 });
 
+// Token aus dem Browser für ASK (ENTSCHEIDE E57), verschlüsselt wie das GitHub-Token
+const askTokenStore = {
+  get() {
+    const stored = settings.get('askToken');
+    if (!stored) return '';
+    try { return safeStorage.decryptString(Buffer.from(stored, 'base64')); } catch { return ''; }
+  },
+  set(token) {
+    settings.set({ askToken: token ? safeStorage.encryptString(token).toString('base64') : '' });
+  },
+};
+
+// Ausweich-DNS (ENTSCHEIDE E57): Findet die App den Namen von ASK nicht (der Browser aber schon), fragt Chromium
+// zuerst Quad9 über HTTPS und nur bei einem Fehler wieder das DNS von Windows. Gilt für die ganze App. Gemerkt wird
+// es erst, wenn ASK danach lädt; dann gilt es auch nach dem nächsten Start von Anfang an.
+const SECURE_DNS_SERVERS = ['https://dns.quad9.net/dns-query'];
+let secureDns = false;
+let secureDnsPending = false;
+function enableSecureDns() {
+  if (secureDns) return false;
+  try {
+    app.configureHostResolver({ secureDnsMode: 'automatic', secureDnsServers: SECURE_DNS_SERVERS });
+  } catch (err) {
+    console.error(`Ausweich-DNS nicht möglich: ${err.message}`);
+    return false;
+  }
+  secureDns = true;
+  return true;
+}
+
 // Rückfrage vor Aktionen nach aussen (GitHub anlegen, hochladen). Mit options.checkbox ein Häkchen im
 // Dialog; dann { ok, checked } statt true/false. options.danger: «Ja» rot (Löschen, nicht rückgängig). In automatischen Tests: ja (Häkchen mit ASK_TEST_REMEMBER).
 async function confirm(message, detail, options = {}) {
@@ -459,6 +489,8 @@ function state() {
   const s = settings.load();
   return {
     askUrl: s.askUrl,
+    askUrlDefault: settings.appConfig().askUrl || '',
+    secureDns,
     folder: s.folder,
     recent: s.recent,
     warningAccepted: s.warningAccepted,
@@ -866,6 +898,28 @@ function setupIpc() {
   });
   ipcMain.handle('ask:connect', () => ask.check(true));
   ipcMain.handle('ask:logout', () => ask.logout());
+  // Anmelden, wenn die ASK-Seite im Hauptfenster nicht erscheint (ENTSCHEIDE E57): eigenes Fenster oder Token aus dem Browser
+  ipcMain.handle('ask:login-window', () => {
+    const url = settings.get('askUrl');
+    if (!url || !appWindow) return false;
+    const win = appWindow.openAskLogin(url);
+    if (win) ask.watchLoginWindow(win.webContents);
+    return true;
+  });
+  ipcMain.handle('ask:open-browser', () => {
+    const url = settings.get('askUrl');
+    if (/^https:\/\//i.test(String(url || ''))) shell.openExternal(url);
+  });
+  ipcMain.handle('ask:use-token', (_e, token) => ask.useToken(String(token || '')));
+  // Gespeicherte Adresse weicht von der mitgelieferten ab (z. B. von Hand vertippt): zurück zur mitgelieferten
+  ipcMain.handle('ask:default-url', () => {
+    const url = settings.appConfig().askUrl;
+    if (!url) return false;
+    settings.set({ askUrl: url });
+    loadAsk();
+    pushState();
+    return true;
+  });
   ipcMain.handle('ask:models', async () => {
     try { await ask.loadModels(); } catch { /* Status zeigt den Fehler */ }
     pushState();
@@ -1194,7 +1248,28 @@ function wireEvents() {
   ask.on('status', (s) => {
     if (s.state === 'angemeldet') images.discover();
     else if (s.state === 'nicht-angemeldet') images.forget();
+    // Ausweich-DNS hat geholfen: ASK lädt jetzt, also auch beim nächsten Start gleich so
+    if (secureDnsPending && !s.loadError && ['nicht-angemeldet', 'angemeldet'].includes(s.state) && !ask.loadFailed) {
+      secureDnsPending = false;
+      settings.set({ secureDns: true });
+    }
     pushState();
+  });
+  ask.on('name-not-resolved', () => {
+    if (!enableSecureDns()) return;
+    secureDnsPending = true;
+    pushState();
+    // gleich nochmals laden, nicht erst nach 15 Sekunden
+    const url = settings.get('askUrl');
+    const wc = appWindow?.view.webContents;
+    if (url && wc && !wc.isDestroyed()) setTimeout(() => wc.loadURL(url).catch(() => {}), 500);
+  });
+  // Im eigenen Anmeldefenster angemeldet: Fenster zu, ASK-Seite im Hauptfenster neu laden (hat jetzt das Token)
+  ask.on('login-done', () => {
+    appWindow?.closeAskLogin();
+    const url = settings.get('askUrl');
+    const wc = appWindow?.view.webContents;
+    if (url && wc && !wc.isDestroyed()) wc.loadURL(url).catch(() => {});
   });
   updater.on('changed', () => {
     pushState();
@@ -1234,11 +1309,13 @@ function skipTourForExistingUsers() {
 }
 
 app.whenReady().then(() => {
+  if (settings.get('secureDns')) enableSecureDns(); // vor dem ersten Laden (ENTSCHEIDE E57)
   skipTourForExistingUsers();
   applyTheme();
   setupProtocol();
   setupIpc();
   appWindow = new AppWindow();
+  ask.setTokenStore(askTokenStore); // erst jetzt: safeStorage braucht die bereite App
   ask.attach(appWindow.view);
   wireEvents();
   loadAsk();
