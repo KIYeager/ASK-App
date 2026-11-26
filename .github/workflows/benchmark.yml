@@ -27,10 +27,10 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    env:
-      ASK_BUILD_DIR: ${{ runner.temp }}\ask-build
     steps:
       - uses: actions/checkout@v4
+      # runner.temp gibt es erst in den Schritten, nicht in env des Jobs
+      - run: '"ASK_BUILD_DIR=$env:RUNNER_TEMP\ask-build" >> $env:GITHUB_ENV'
       - uses: actions/setup-node@v4
         with:
           node-version: 22
