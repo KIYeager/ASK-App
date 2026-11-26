@@ -1,5 +1,7 @@
 # Testprotokoll
 
+> **Tauri-Fassung (ENTSCHEIDE E57, ab 0.3.7):** Die Unit-Tests der App sind nach Rust portiert (`src-tauri/core`, `npm run test:rust`); `npm test` prüft nur noch Oberfläche und Skripte. Der frühere Test im Entwicklungsmodus (`tests/e2e/run.js`, `app-test.js`) lud sich in den Electron-Hauptprozess und ist entfallen. `packaged-test.js` und `portable-test.js` steuern die App weiter über das DevTools-Protokoll, jetzt über WebView2 (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=…`), und sind mit der Tauri-Fassung **noch nicht gelaufen**. Teil 1 unten beschreibt die Tests der Electron-Fassung. Vor der ersten Vollversion mit Tauri von Hand prüfen, siehe «Prüfliste Tauri» am Ende von Teil 1.
+
 Stand 28.10.2026, Version 0.1.0 mit eigener Chat-Oberfläche (ENTSCHEIDE E19). Testrechner: Windows 11 Pro 26200, Standardkonto ohne Admin-Rechte, Microsoft 365 (Word, Excel, PowerPoint) installiert, kein WSL, keine Windows Sandbox, kein Docker. Electron 44.6.0, Python 3.14.8 (mitgeliefert), open-terminal 0.14.2.
 
 Ein ASK-Login stand für die Tests nicht zur Verfügung. Wo ASK nötig ist, stand ein Nachbau der benötigten Open-WebUI-Schnittstellen zur Verfügung (`tests/e2e/mock-ask.js`): Anmeldeseite, `/api/v1/auths/`, `/api/models` und `/api/chat/completions` mit einem Skript-«Modell», das Antworten und Werkzeugaufrufe wie Open WebUI streamt. Der zweite Teil dieses Dokuments beschreibt die Tests, die du mit dem echten ASK machen musst.
@@ -115,16 +117,27 @@ HTTPS-Seite in Electron auf http://127.0.0.1 mit CORS und Key-Einsetzung; Low IL
 
 Echtes ASK (Version, Freigaben, Anmeldung über Microsoft-Konto in der App), echtes GitHub (Token-Rechte, Proxy der Schule, grosse Repositories), Anmeldung auf echten Webseiten im Browser der App (auch Popups von Microsoft und Google), das Zeitlimit bei einer wirklich hängenden Seite (nur der Stopp ist getestet), die Websuche von ASK über die Schnittstelle (Freigabe für normale Konten, Antwortzeit) und DuckDuckGo hinter dem Proxy der Schule, Bilder an das echte Modell in ASK (Grösse, ob ASK `image_url` über die Schnittstelle und mitten im Werkzeug-Ablauf weitergibt, wie gut Qwen Fehler auf Seitenbildern und Bildschirmfotos erkennt), das Verhalten von Qwen3.8 Flash Next, ein Schullaptop mit Intune, AppLocker oder SmartScreen-Richtlinien, ein Rechner ohne Office (die Umwandlung sollte dann «Office ist nicht installiert» melden), Benutzernamen mit Umlauten, Bildschirmskalierung über 150 %. Die einzelne EXE auf einem Schullaptop (Startdauer mit dessen Virenscanner, AppLocker für `%LOCALAPPDATA%\ASK-Desktop\app`).
 
+### Prüfliste Tauri (von Hand, Windows)
+
+1. Über eine installierte Electron-Fassung (0.3.6) mit der Beta aktualisieren: Der neue Installer läuft, die alte App ist danach weg (kein Eintrag «ASK Desktop» unter Apps, kein `%LOCALAPPDATA%\Programs\ask-desktop`), ASK startet von selbst wieder.
+2. Projekte, Chats, Einstellungen, Gedächtnis und Skills sind da; GitHub ist noch verbunden (Token aus der Electron-Fassung übernommen).
+3. Einmal bei ASK anmelden (auch über Microsoft), Modelle erscheinen, ein Auftrag mit Befehl, Rückfrage und Frage läuft durch.
+4. Browser-Bereich: Seite öffnen, das Modell klickt, tippt und macht ein Bildschirmfoto; mit minimiertem Fenster im unsichtbaren Fenster.
+5. `view_file` mit PDF, Word, Bild; Vorschau rechts für Bild, PDF, Text.
+6. Benachrichtigung mit Klick öffnet den Chat; Zoom (Ctrl +/-/0), Ctrl+R, Ctrl+Shift+I/J.
+7. Updates: nächste Beta wird angeboten, signiert geladen, installiert, ASK startet neu.
+8. Einzelne EXE: entpackt sich, startet, meldet neue Versionen nur mit «Download öffnen».
+
 ### Tests wiederholen
 
 ```
 $env:ASK_BUILD_DIR = Get-Content .ask-build-dir   # von scripts\setup.ps1 geschrieben
 npm run lint
 npm test
+npm run test:rust
 & "$env:ASK_BUILD_DIR\python\python.exe" -m unittest tests\test_terminal.py tests\test_skills.py tests\test_streams.py
-npm run test:e2e
-node tests\e2e\packaged-test.js "$env:ASK_BUILD_DIR\dist\win-unpacked\ASK.exe" "$env:USERPROFILE\ASK-Test"
-node tests\e2e\portable-test.js "$env:ASK_BUILD_DIR\dist\ASK-0.1.0.exe" "$env:USERPROFILE\ASK-Test"
+node tests\e2e\packaged-test.js "$env:ASK_BUILD_DIR\dist\app\ASK.exe" "$env:USERPROFILE\ASK-Test"
+node tests\e2e\portable-test.js "$env:ASK_BUILD_DIR\dist\ASK-<Version>.exe" "$env:USERPROFILE\ASK-Test"
 ```
 
 Die End-to-End-Tests legen Ordner unter `%USERPROFILE%\ASK-Test-e2e` bzw. dem angegebenen Ordner an. `packaged-test.js` und `portable-test.js` sichern vorhandene Einstellungen in `%APPDATA%\ASK` und stellen sie danach wieder her. `portable-test.js` entpackt den Stand der EXE neu und lässt ihn danach liegen.
