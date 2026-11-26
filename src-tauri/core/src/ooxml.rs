@@ -70,11 +70,11 @@ fn read_entry(archive: &mut ZipArchive<Cursor<&[u8]>>, index: usize) -> Check<Ve
 /// XML als Text; UTF-16 erkennt man an der Marke am Anfang (sonst sähe die Prüfung nur Bytes)
 fn xml_text(data: &[u8]) -> String {
     if data.len() >= 2 && data[0] == 0xff && data[1] == 0xfe {
-        let units: Vec<u16> = data[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = data[2..].as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
         return String::from_utf16_lossy(&units);
     }
     if data.len() >= 2 && data[0] == 0xfe && data[1] == 0xff {
-        let units: Vec<u16> = data[2..].chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = data[2..].as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes(*c)).collect();
         return String::from_utf16_lossy(&units);
     }
     String::from_utf8_lossy(data).to_string()
