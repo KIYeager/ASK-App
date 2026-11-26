@@ -38,7 +38,6 @@ contextBridge.exposeInMainWorld('ask', {
   askLoginWindow: () => ipcRenderer.invoke('ask:login-window'),
   askOpenBrowser: () => ipcRenderer.invoke('ask:open-browser'),
   askUseToken: (token) => ipcRenderer.invoke('ask:use-token', token),
-  askDefaultUrl: () => ipcRenderer.invoke('ask:default-url'),
   models: () => ipcRenderer.invoke('ask:models'),
   setModel: (id) => ipcRenderer.invoke('model:set', id),
   setWebSearch: (on) => ipcRenderer.invoke('web:set', on),

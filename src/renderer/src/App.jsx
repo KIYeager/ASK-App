@@ -707,10 +707,6 @@ export default function App() {
                         <button id="unreachable-browser" type="button" className="btn" onClick={() => setDialog({ name: 'ask-token' })}>Im Browser anmelden …</button>
                       </div>
                       <p className="muted small">Adresse: {loadFailed.url || state.askUrl}{loadFailed.proxy ? ` · Verbindung: ${loadFailed.proxy === 'DIRECT' ? 'direkt, ohne Proxy' : loadFailed.proxy}` : ''}</p>
-                      {state.askUrlDefault && state.askUrl !== state.askUrlDefault ? (
-                        <p className="muted small">Gespeichert ist eine andere Adresse als die der Schule ({state.askUrlDefault}).{' '}
-                          <button id="unreachable-default-url" type="button" className="link" onClick={() => api().askDefaultUrl()}>Diese verwenden</button></p>
-                      ) : null}
                     </div>
                   ) : slow ? (
                     <div id="ask-slow">
