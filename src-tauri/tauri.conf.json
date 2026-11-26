@@ -39,7 +39,6 @@
       "../resources/anweisungen/": "anweisungen/",
       "../resources/app-config.json": "app-config.json",
       "../resources/icon.ico": "icon.ico",
-      "../python/ask_terminal/*.py": "ask_terminal/",
       "../src/render/": "render/",
       "../src/vendor/": "vendor/"
     },

@@ -434,7 +434,7 @@ mod tests {
     fn skript_ist_als_utf16_base64_kodiert() {
         use base64::Engine;
         let bytes = base64::engine::general_purpose::STANDARD.decode(encoded_script()).unwrap();
-        let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
         assert_eq!(String::from_utf16(&units).unwrap(), SCRIPT);
     }
 }

@@ -369,7 +369,7 @@ fn decode_text(buf: &[u8], charset: &str) -> String {
             .collect(),
         "utf-16le" => {
             let body = buf.strip_prefix(&[0xFF, 0xFE]).unwrap_or(buf);
-            let units: Vec<u16> = body.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            let units: Vec<u16> = body.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
             String::from_utf16_lossy(&units)
         }
         _ => String::from_utf8_lossy(buf.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(buf)).to_string(),
