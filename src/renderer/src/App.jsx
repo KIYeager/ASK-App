@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import { api } from './api.js';
 import Icon from './components/Icon.jsx';
 import Sidebar from './components/Sidebar.jsx';
+import Tabs from './components/Tabs.jsx';
+import AppAsk from './components/AppAsk.jsx';
 import Composer from './components/Composer.jsx';
 import RightPanel, { norm } from './components/RightPanel.jsx';
 import Dialogs, { activeDialog } from './components/Dialogs.jsx';
@@ -10,28 +12,36 @@ import { Turn } from './components/Chat.jsx';
 import { applyEvent, buildTurns, emptyChat, fromTranscript, lastTasks } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
 
-// Balken oben während eines Updates: Download, Countdown, «Jetzt neu starten», «Später» (ENTSCHEIDE E40)
+// Karte unten links während eines Updates: Download, Countdown, «Jetzt neu starten», «Später» (ENTSCHEIDE E40).
+// Schwebt über der Projektleiste, damit sie weder Tabs noch Chat verschiebt und nie unter Browser oder ASK-Seite liegt.
 function UpdateBar({ u }) {
   const st = u?.state || '';
   if (!['lädt', 'neustart', 'geladen', 'installiert'].includes(st)) return null;
   const name = `ASK ${u.version}${/-/.test(u.version) ? ' (Beta)' : ''}`;
+  let title = `${name} ist bereit`;
   let text = '';
   let fill = null;
   let now = true;
   let later = false;
-  if (st === 'lädt') { text = `Update auf ${name} wird geladen … ${u.percent} %. Du kannst weiterarbeiten.`; fill = u.percent; now = false; }
-  else if (st === 'neustart') { text = `${name} ist geladen. ASK startet in ${u.countdown} s neu.`; fill = Math.round(((10 - u.countdown) / 10) * 100); later = true; }
-  else if (st === 'installiert') { text = `ASK schliesst sich und installiert ${name}. Gleich ist ASK wieder da.`; now = false; }
-  else if (u.postponed) text = `${name} ist geladen und installiert sich, wenn du ASK schliesst.`;
-  else text = `${name} ist geladen. ASK startet neu, sobald der Auftrag fertig ist.`;
+  if (st === 'lädt') { title = `Update auf ${name}`; text = `Wird geladen … ${u.percent} %. Du kannst weiterarbeiten.`; fill = u.percent; now = false; }
+  else if (st === 'neustart') { text = `ASK startet in ${u.countdown} s neu.`; fill = Math.round(((10 - u.countdown) / 10) * 100); later = true; }
+  else if (st === 'installiert') { title = `${name} wird installiert`; text = 'ASK schliesst sich. Gleich ist ASK wieder da.'; now = false; }
+  else if (u.postponed) text = 'Installiert sich, wenn du ASK schliesst.';
+  else text = 'ASK startet neu, sobald der Auftrag fertig ist.';
   return (
-    <div id="update-bar" className="update-bar" role="status">
-      <Icon name="down" size={15} />
-      <span id="update-bar-text" className="ell">{text}</span>
-      {fill !== null ? <span id="update-bar-track" className="update-track"><span id="update-bar-fill" style={{ width: `${fill}%` }} /></span> : null}
-      <span className="spacer" />
-      {now ? <button id="update-bar-now" type="button" className="btn small primary" onClick={() => api().updateAction()}>Jetzt neu starten</button> : null}
-      {later ? <button id="update-bar-later" type="button" className="btn small" onClick={() => api().updateLater()}>Später</button> : null}
+    <div id="update-bar" className={`update-bar${st === 'lädt' ? ' loading' : ''}`} role="status">
+      <span className="update-icon" aria-hidden="true"><Icon name={st === 'lädt' || st === 'installiert' ? 'down' : 'reload'} size={16} strokeWidth={2} /></span>
+      <div className="update-main">
+        <strong className="ell">{title}</strong>
+        <span id="update-bar-text">{text}</span>
+        {fill !== null ? <span id="update-bar-track" className="update-track"><span id="update-bar-fill" style={{ width: `${fill}%` }} /></span> : null}
+        {now || later ? (
+          <span className="update-acts">
+            {later ? <button id="update-bar-later" type="button" className="btn small" onClick={() => api().updateLater()}>Später</button> : null}
+            {now ? <button id="update-bar-now" type="button" className="btn small primary" onClick={() => api().updateAction()}>Jetzt neu starten</button> : null}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -79,6 +89,11 @@ export default function App() {
   const [browserBig, setBrowserBig] = useState(false);
   const [servers, setServers] = useState([]); // Entwicklungsserver des sichtbaren Projekts
   const [tabs, setTabs] = useState([]);
+  const [uiAsk, setUiAsk] = useState(null); // Dialog des Hauptprozesses, z. B. «Update ist da»
+  const uiAskRef = useRef(null);
+  uiAskRef.current = uiAsk;
+  const answerUiAsk = useCallback((index) => { const q = uiAskRef.current; if (q) api().uiAnswer(q.id, index); uiAskRef.current = null; setUiAsk(null); }, []);
+  const closedTabs = useRef([]); // zuletzt geschlossene Tabs, für Ctrl+Shift+T
   const [widths, setWidths] = useState(loadWidths);
   const [follow, setFollow] = useState(true);
   const [showJump, setShowJump] = useState(false);
@@ -203,6 +218,7 @@ export default function App() {
       a.onMenuChooseFolder(() => openFolder(() => a.chooseFolder())),
       a.onMenuNewFolder(() => setDialog({ name: 'project' })),
       a.onMenuGithub(() => setDialog({ name: 'github' })),
+      a.onUiAsk?.((q) => setUiAsk(q)),
       a.onFolderError((reason) => setDialog({ name: 'terminal', text: reason })),
       a.onBrowserState((s) => setBrowser((b) => ({ ...b, ...s }))),
       a.onServers?.((list) => setServers(list || [])),
@@ -287,7 +303,8 @@ export default function App() {
       || (changed.find((p) => norm(p) === rel) ? { path: changed.find((p) => norm(p) === rel), name: baseName(rel) } : null);
   }, [allFiles, files, lastChanges]);
 
-  const dialogName = activeDialog(state, dialog);
+  // Eigener Dialog des Hauptprozesses (Updates) zählt wie ein Dialog: Browser und ASK-Seite treten zurück
+  const dialogName = uiAsk ? 'app-ask' : activeDialog(state, dialog);
   const ask = state?.ask || {};
   const needsLogin = !!state?.askUrl && !!state?.warningAccepted && ['nicht-angemeldet', 'unbekannt', 'pruefen'].includes(ask.state);
   const showAskPage = ask.state === 'nicht-angemeldet';
@@ -425,6 +442,14 @@ export default function App() {
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 't') { e.preventDefault(); composer.current?.toggleTodo(); }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'o') { e.preventDefault(); setVerboseSaved(!verbose); }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'n') { e.preventDefault(); newChat(); }
+      // Tabs: Ctrl+W schliesst, Ctrl+Tab wechselt, Ctrl+1 bis 9 springt, Ctrl+Shift+T holt den zuletzt geschlossenen zurück
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'w') { e.preventDefault(); if (!dialog) closeTab(shownTabs.find((t) => t.id === chatId)); }
+      if (e.ctrlKey && !e.altKey && e.key === 'Tab') { e.preventDefault(); switchTab(e.shiftKey ? -1 : 1); }
+      if (e.ctrlKey && e.shiftKey && !e.altKey && k === 't') { e.preventDefault(); reopenTab(); }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
+        const t = e.key === '9' ? shownTabs[shownTabs.length - 1] : shownTabs[Number(e.key) - 1];
+        if (t) { e.preventDefault(); if (t.id !== chatId && !t.placeholder) openChat(t.folder, t.id); }
+      }
       if (e.key === 'Escape') {
         if (dialog) { setDialog(null); return; }
         if (browserBig) { setBrowserBig(false); return; }
@@ -536,18 +561,46 @@ export default function App() {
 
   const project = groups.find((g) => g.current);
   // Tabs oben: der aktuelle Chat steht immer drin, ein neuer noch ohne Titel als «Neuer Chat»
-  const shownTabs = tabs.some((t) => t.id === chatId) ? tabs : [{ id: chatId, folder: state.folder, title: 'Neuer Chat' }, ...tabs];
-  const closeTab = (t, i) => {
-    setTabs((all) => all.filter((x) => x.id !== t.id));
-    if (t.id !== chatId) return;
-    const next = shownTabs[i + 1] || shownTabs[i - 1]; // aktiven Tab schliessen: zum Nachbarn wechseln
-    if (next) openChat(next.folder, next.id);
+  const shownTabs = tabs.some((t) => t.id === chatId) ? tabs : [{ id: chatId, folder: state.folder, title: 'Neuer Chat', placeholder: true }, ...tabs];
+  const closeTabs = (list, keep) => {
+    const ids = new Set(list.filter((t) => !t.placeholder).map((t) => t.id));
+    closedTabs.current = [...list.filter((t) => !t.placeholder), ...closedTabs.current].slice(0, 10);
+    setTabs((all) => all.filter((x) => !ids.has(x.id)));
+    if (list.some((t) => t.id === chatId) && keep && keep.id !== chatId) openChat(keep.folder, keep.id);
+  };
+  const closeTab = (t, i = shownTabs.findIndex((x) => x.id === t.id)) => {
+    if (shownTabs.length < 2) return;
+    closeTabs([t], t.id === chatId ? shownTabs[i + 1] || shownTabs[i - 1] : null); // aktiven Tab schliessen: zum Nachbarn wechseln
+  };
+  const reopenTab = () => {
+    const t = closedTabs.current.shift();
+    if (t) openChat(t.folder, t.id);
+  };
+  const moveTab = (id, overId, after) => setTabs((all) => {
+    const moving = all.find((x) => x.id === id);
+    if (!moving) return all;
+    const rest = all.filter((x) => x.id !== id);
+    const at = rest.findIndex((x) => x.id === overId);
+    if (at < 0) return all;
+    rest.splice(after ? at + 1 : at, 0, moving);
+    return rest;
+  });
+  const renameTab = async (t, title) => {
+    await api().chatRename(t.folder, t.id, title);
+    setTabs((all) => all.map((x) => (x.id === t.id ? { ...x, title } : x)));
+    loadChats();
+  };
+  const switchTab = (delta) => {
+    if (shownTabs.length < 2) return;
+    const i = shownTabs.findIndex((x) => x.id === chatId);
+    const t = shownTabs[(i + delta + shownTabs.length) % shownTabs.length];
+    if (t && !t.placeholder) openChat(t.folder, t.id);
   };
   const cols = [leftOpen ? `${clampWidth('chatbar', widths.chatbar || PANELS.chatbar.def)}px` : '0px', leftOpen ? '5px' : '0px', 'minmax(0, 1fr)',
     rightOpen ? '5px' : '0px', rightOpen ? `${clampWidth('sidebar', widths.sidebar || PANELS.sidebar.def)}px` : '0px'];
 
   return (
-    <div className={`app${browserBig && rightOpen && tab === 'browser' ? ' browser-big' : ''}${verbose ? ' verbose' : ''}`}>
+    <div className={`app${browserBig && rightOpen && tab === 'browser' ? ' browser-big' : ''}${verbose ? ' verbose' : ''}`} style={{ '--left-w': leftOpen ? cols[0] : '324px' }}>
       <header className="topbar">
         <div className="brand" style={{ width: leftOpen ? `calc(${cols[0]} - 8px)` : 'auto' }}>
           <button type="button" id="chatbar-btn" className="icon-btn" title="Projekte ein- oder ausblenden" aria-label="Projekte ein- oder ausblenden"
@@ -555,22 +608,11 @@ export default function App() {
           <img src="./tf-mark.png" alt="" className="logo-mark" />
           <span className="wordmark">ASK</span>
         </div>
-        <nav className="tabs" aria-label="Offene Chats">
-          {shownTabs.map((t, i) => (
-            <span key={t.id} className={`tab${t.id === chatId ? ' on' : ''}`}>
-              <button type="button" className="tab-open" title={`${t.title}\n${t.folder}`} aria-current={t.id === chatId ? 'page' : undefined}
-                onClick={() => { if (t.id !== chatId) openChat(t.folder, t.id); }}>
-                <span className={`swatch${(t.id === chatId && running) || (state.running || []).some((r) => r.id === t.id) ? ' busy' : ''}`}
-                  style={{ background: groups.find((g) => g.folder.toLowerCase() === (t.folder || '').toLowerCase())?.color || 'var(--dim)' }} />
-                <span className="ell">{t.title}</span>
-              </button>
-              {t.id !== chatId || shownTabs.length > 1 ? (
-                <button type="button" className="tab-x" aria-label={`${t.title} schliessen`} onClick={() => closeTab(t, i)}><Icon name="close" size={12} /></button>
-              ) : null}
-            </span>
-          ))}
-          <button type="button" className="icon-btn tab-new" title="Neuer Chat (Ctrl+N)" aria-label="Neuer Chat" onClick={() => newChat()}><Icon name="plus" size={15} /></button>
-        </nav>
+        <Tabs tabs={shownTabs} chatId={chatId} onNew={() => newChat()} onOpen={(t) => openChat(t.folder, t.id)}
+          colorOf={(t) => groups.find((g) => g.folder.toLowerCase() === (t.folder || '').toLowerCase())?.color || 'var(--dim)'}
+          isBusy={(t) => (t.id === chatId && running) || (state.running || []).some((r) => r.id === t.id)}
+          onStop={(t) => (t.id === chatId ? composer.current?.stop() : api().chatStopChat(t.folder, t.id))}
+          onClose={closeTab} onCloseMany={closeTabs} onMove={moveTab} onRename={renameTab} />
         <span className="spacer" />
         <button type="button" id="folder-btn" className="crumb" hidden={leftOpen} title={state.folder ? `${state.folder}\nKlicken für weitere Projekte und Aktionen` : 'Projekt wählen'}
           onClick={() => api().folderMenu()} disabled={!state.warningAccepted || !state.askUrl}>
@@ -687,6 +729,7 @@ export default function App() {
       </main>
 
       <Dialogs state={state} dialog={dialog} setDialog={setDialog} selected={selected} startError={startError} onVerbose={setVerboseSaved} />
+      {uiAsk ? <AppAsk key={uiAsk.id} ask={uiAsk} onAnswer={answerUiAsk} /> : null}
     </div>
   );
 }

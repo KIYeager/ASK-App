@@ -98,6 +98,30 @@ async function confirm(message, detail, options = {}) {
   return answer(res.response === 0, res.response === 0 && !!res.checkboxChecked);
 }
 
+// Dialog in der eigenen Oberfläche statt im Fenster von Windows (gleiche Optionen wie dialog.showMessageBox,
+// gibt den Index des Knopfs zurück, -1 bzw. cancelId beim Schliessen). Solange die Oberfläche nicht geladen ist: Windows-Dialog.
+const uiAsks = new Map();
+let uiAskSeq = 0;
+let uiReady = false;
+function askInApp(options) {
+  const win = appWindow?.win;
+  if (!win || win.isDestroyed()) return Promise.resolve(-1);
+  if (!uiReady || win.webContents.isLoading()) return dialog.showMessageBox(win, options).then((r) => r.response);
+  const id = ++uiAskSeq;
+  return new Promise((resolve) => {
+    uiAsks.set(id, { resolve, cancel: Number.isInteger(options.cancelId) ? options.cancelId : -1 });
+    appWindow.send('ui:ask', { id, ...options });
+    if (!win.isFocused()) win.flashFrame(true);
+  });
+}
+function answerUiAsks(id, index) {
+  for (const [key, a] of uiAsks) {
+    if (id != null && key !== id) continue;
+    uiAsks.delete(key);
+    a.resolve(Number.isInteger(index) ? index : a.cancel);
+  }
+}
+
 // Repositories, in die ohne Rückfrage hochgeladen wird (Häkchen im Dialog, zurücksetzen im GitHub-Dialog)
 const githubTrust = {
   list: () => (Array.isArray(settings.get('githubTrusted')) ? settings.get('githubTrusted') : []),
@@ -138,7 +162,7 @@ const updater = new Updater({
   busy: () => anyRunning(),
   ask: async (options) => {
     if (testMode || !appWindow) return -1;
-    return (await dialog.showMessageBox(appWindow.win, options)).response;
+    return askInApp(options);
   },
   openExternal: (url) => shell.openExternal(url),
   beforeInstall: async () => {
@@ -728,7 +752,8 @@ function setupIpc() {
     const res = await convertToPdf(workspace.root, source, { fresh: !!preview });
     return res.ok ? { ok: true, path: path.relative(workspace.root, res.target) } : res;
   });
-  ipcMain.handle('state:get', () => state());
+  ipcMain.handle('state:get', () => { uiReady = true; return state(); });
+  ipcMain.handle('ui:answer', (_e, id, index) => { answerUiAsks(Number(id), Number.isInteger(index) ? index : null); appWindow?.win.flashFrame(false); });
   ipcMain.handle('folder:choose', async () => {
     const suggested = path.join(process.env.USERPROFILE || app.getPath('home'), 'ASK-Projekte');
     const res = await dialog.showOpenDialog(appWindow.win, {
@@ -1195,7 +1220,10 @@ app.whenReady().then(() => {
       }
     });
   }
+  // Oberfläche lädt neu oder Fenster zu: offene Dialoge gelten als abgebrochen
+  appWindow.win.webContents.on('did-start-loading', () => { uiReady = false; answerUiAsks(null, null); });
   appWindow.win.on('closed', () => {
+    answerUiAsks(null, null);
     appWindow = null;
     visual.closeRenderer(); // unsichtbare Fenster halten die App sonst offen
     app.quit();

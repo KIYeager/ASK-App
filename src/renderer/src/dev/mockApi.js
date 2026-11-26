@@ -271,7 +271,13 @@ export function install() {
     forgetFolder: async () => true, folderMenu: async () => {}, showFolder: async () => {}, projectMenu: async (f) => emit('project:rename', f),
     projectUpdate: async (folder, patch) => { const p = projects.find((x) => x.folder === folder); if (p && patch.name) p.name = patch.name; return true; },
     setSettings: async (v) => { state = { ...state, ...v }; push(); },
-    updateAction: async () => {}, updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
+    updateAction: async () => emit('ui:ask', params.get('meldung')
+      ? { id: Date.now(), type: 'warning', message: 'Die Suche nach Updates hat nicht geklappt.', detail: 'Ist der Laptop mit dem Internet verbunden?\n\nnet::ERR_INTERNET_DISCONNECTED', buttons: ['OK'] }
+      : { id: Date.now(), type: 'question', message: 'ASK 0.2.4 ist da. Jetzt aktualisieren?', buttons: ['Jetzt aktualisieren', 'Später'], defaultId: 0, cancelId: 1,
+        kind: 'update', version: '0.2.4', current: '0.2.3', beta: false,
+        intro: 'Du hast 0.2.3. ASK lädt das Update im Hintergrund (Balken oben in der App), du kannst weiterarbeiten. Danach startet ASK von selbst neu, ausser während eines Auftrags. Chats, Ordner und Einstellungen bleiben.',
+        notes: '• Die Tabs oben sehen aufgeräumter aus und zeigen die Farbe des Projekts.\n• Tabs lassen sich verschieben, umbenennen und mit Ctrl+W schliessen.\n• Updates erscheinen in einem eigenen Fenster der App.' }),
+    onUiAsk: on('ui:ask'), uiAnswer: async (id, index) => console.log('uiAnswer', id, index), updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
     setPrefs: async (v) => { state = { ...state, prefs: { ...state.prefs, ...v } }; push(); },
     usageGet: async (withAsk = true) => (withAsk ? (await wait(600), { ...mockUsage(), ask: params.get('ohneask') ? null : { webChats: 42, webChats30: 12 } }) : { ...mockUsage(), ask: null }),
     chatRewind: async () => ({ ok: true, text: 'Räum den Ordner auf', attachments: [] }),

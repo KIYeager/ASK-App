@@ -57,6 +57,14 @@ test('neue Version: eine Frage, Download, Countdown, dann Neustart mit Fortschri
   assert.strictEqual(calls.dialogs.length, 1); // nur «Jetzt aktualisieren?», keine zweite Frage
   assert.match(calls.dialogs[0].message, /ASK 0\.2\.0 ist da/);
   assert.match(calls.dialogs[0].detail, /• Neu: Updates/);
+  // Angaben für den eigenen Dialog der App (E56): Version, Text ohne Neuerungen, Neuerungen getrennt
+  const card = calls.dialogs[0];
+  assert.strictEqual(card.kind, 'update');
+  assert.strictEqual(card.version, '0.2.0');
+  assert.strictEqual(card.beta, false);
+  assert.match(card.notes, /• Neu: Updates/);
+  assert.doesNotMatch(card.intro, /Neu: Updates/);
+  assert.strictEqual(card.cancelId, 1);
   assert.strictEqual(calls.downloads, 1);
   assert.strictEqual(u.snapshot().state, 'neustart');
   assert.strictEqual(u.snapshot().countdown, 10);

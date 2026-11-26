@@ -417,3 +417,13 @@ Grosse Suchen füllten den Verlauf eines Chats mit Dateiinhalten, die danach nie
 - **Anzeige.** Jeder Hilfsagent ist eine Zeile in der Karte der Arbeitsschritte; während er arbeitet, steht dort sein letzter Schritt, ein Klick zeigt alle Schritte und das Ergebnis.
 
 Tests: `tests/helpers.test.js`.
+
+## E56 Eigene Dialoge für Updates, Tabs, Update-Karte
+
+Die Fragen und Meldungen zu Updates kamen als Dialog von Windows: grau, ohne Gestaltung, die Neuerungen als Fliesstext. Jetzt schickt der Hauptprozess sie an die Oberfläche (`ui:ask`), die sie als eigenen Dialog zeigt (`src/renderer/src/components/AppAsk.jsx`): Symbol, «ASK 0.3.6 ist da», alte → neue Version, Beta-Marke, die Neuerungen als Liste. Die Knöpfe und ihre Bedeutung bleiben gleich, der Updater bekommt weiter den Index des Knopfs; Esc und Klick daneben gelten als «Später» (`cancelId`). Ist die Oberfläche noch nicht geladen (vor dem ersten `state:get`) oder lädt sie neu, nimmt die App den Dialog von Windows; lädt sie neu oder schliesst das Fenster, während ein Dialog offen ist, gilt er als abgebrochen. Ist das Fenster nicht im Vordergrund, blinkt es in der Taskleiste. Wie die anderen Dialoge blendet er Browser und ASK-Seite aus, die sonst darüber lägen. Die übrigen Rückfragen (GitHub, Ordner) bleiben vorerst Dialoge von Windows.
+
+Der Balken während des Downloads lag zwischen Kopfzeile und Chat und verschob beides; der aktive Tab hing dann über dem Balken. Er ist jetzt eine Karte unten links über der Projektleiste: Dort liegen nie Browser oder ASK-Seite, und sie verschiebt nichts. Der Eintrag «Update …» unten in der Leiste steht nur noch, solange das Update angeboten, aber nicht geladen wird; danach zeigt die Karte den Stand.
+
+Tabs: Der aktive Tab liegt auf der Trennlinie und geht ohne Linie in den Chat über, die anderen sind ruhige Pillen mit × beim Darüberfahren. Statt der Sprechblase zeigt ein Punkt die Projektfarbe, weil Tabs aus verschiedenen Projekten nebeneinander stehen können. Auch der aktive Tab lässt sich schliessen (die App wechselt zum Nachbarn); der einzige Tab nicht. Ziehen, Mittelklick, Doppelklick, Rechtsklick-Menü und Tastenkürzel wie in Browsern; das Menü teilt sich die Komponente `PopMenu` mit dem Chat-Menü der linken Leiste. Ctrl+W war frei (das unsichtbare Menü belegt es nicht), Ctrl+T bleibt die Aufgabenliste, darum Ctrl+Shift+T für «wieder öffnen».
+
+Schmaler Chat (unter 500 Pixel Eingabefeld): Web, Denkaufwand und Modus zeigen nur ihr Symbol und der Kontext nur den Ring, damit Modellwahl und Senden in der Zeile bleiben; die Namen stehen im Tooltip.
