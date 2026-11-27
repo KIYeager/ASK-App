@@ -533,3 +533,15 @@ Der Text kommt beim Bauen in die App: Der Release-Workflow liest ihn vor dem Bau
 ## E65 Vorlagen der TF Bern aus C:\Vorlagen
 
 Auf den Laptops der Schule liegen alle Vorlagen der TF Bern in `C:\Vorlagen`, für Lernende nur zum Lesen. Gibt es den Ordner, darf das Terminal dort auflisten, lesen und suchen (`list_files`, `find_files`, `read_file`, `search_text`), schreiben weiterhin nur im Arbeitsordner (`FileApi::with_read_only`, Einstellung `read_only` des Terminal-Servers). Der Systemprompt nennt den Ordner, die Vorlagen darin (bis 80 Dateien, Office und PDF, drei Ebenen tief) und wie man eine .dotx/.xltx/.potx für python-docx, openpyxl und python-pptx in eine normale Datei kopiert. Befehle, die nur `C:\Vorlagen` nennen (etwa eine Vorlage kopieren), gelten bei den Rückfragen nicht als «ausserhalb des Ordners». Ohne den Ordner ändert sich nichts.
+
+## E66 Schnellere CI und Releases
+
+Gemessen an PR #21: Die CI unter Windows brauchte rund 9 Minuten (davon 3,5 Minuten Release-Build), der Release nach dem Merge rund 16 Minuten (davon 6 Minuten dieselben Tests wie in der CI und 8 Minuten Installer, weil der Rust-Zwischenspeicher eines Releases im Bereich des PRs liegt und für den nächsten Release nicht gefunden wurde).
+
+Jetzt:
+- Tests und Clippy ohne Debug-Infos (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`); unter Windows sind die PDB-Dateien teuer.
+- Der Release-Build in der CI läuft nur noch auf `main` (nach dem Merge). In PRs prüfen Tests und Clippy das Kompilieren.
+- Ein gemeinsamer Rust-Zwischenspeicher unter Windows (`shared-key: windows`): Die CI auf `main` füllt ihn mit Debug- und Release-Build, Release-Workflow und Installer-Vorschau lesen ihn nur. Die Umgebungsvariablen oben stehen darum in allen drei Workflows gleich, sonst passt der Schlüssel nicht.
+- Der Release nach einem Merge lässt «Lint und Tests» aus; die CI hat sie im PR bestanden (Pflicht vor dem Merge). Ein Tag von Hand prüft weiterhin.
+
+Nicht geändert: `lto = true` und `codegen-units = 1` im Release-Profil (kleinere EXE); «thin» LTO wäre beim Bauen schneller, die EXE etwas grösser.

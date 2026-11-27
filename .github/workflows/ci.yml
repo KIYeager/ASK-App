@@ -15,6 +15,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Schneller kompilieren (ENTSCHEIDE E66): ohne Debug-Infos in Tests und Clippy (unter Windows sind PDB teuer)
+env:
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
 jobs:
   node:
     name: Lint und Unit-Tests (Node)
@@ -77,12 +82,18 @@ jobs:
       - run: npm test
       # Rust unter Windows (Pfade, Low Integrity, WebView2) und ein Build der App ohne Installer
       - uses: dtolnay/rust-toolchain@stable
+      # Gemeinsamer Zwischenspeicher mit dem Release-Workflow (shared-key): Der Build auf main hält ihn warm
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          shared-key: windows
       # Enthält den Terminal-Server: Low Integrity der Befehle, Ordner mit Umlaut, OEM-Ausgabe, Job-Objekt
       # (src-tauri/terminal und src-tauri/tests/terminal_e2e.rs)
       - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
-      - run: npm run build:ui
-      - run: cargo build --manifest-path src-tauri/Cargo.toml --release
+      # Release-Build nur auf main: Er füllt den Zwischenspeicher, aus dem der Release-Workflow baut; in PRs
+      # prüfen Tests und Clippy das Kompilieren schon, der Release baut ohnehin selbst
+      - if: github.event_name == 'push'
+        run: npm run build:ui
+      - if: github.event_name == 'push'
+        run: cargo build --manifest-path src-tauri/Cargo.toml --release
