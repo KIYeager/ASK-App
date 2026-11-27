@@ -23,6 +23,8 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'OK  ' : 'FEHLER'} ${name}${!ok && detail ? `\n      ${detail}` : ''}`);
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Oberfläche der Tauri-Fassung: http://tauri.localhost/ (WebView2, mit WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS steuerbar)
+const isUi = (u) => /^https?:\/\/tauri\.localhost\//.test(String(u));
 
 async function until(label, fn, timeout = 60000) {
   const end = Date.now() + timeout;
@@ -72,7 +74,7 @@ async function evaluate(match, expression) {
   ws.close();
   return result;
 }
-const shell = (expr) => evaluate((u) => u.endsWith('index.html'), expr);
+const shell = (expr) => evaluate((u) => isUi(u), expr);
 
 // Neuer Chat, Auftrag an das Mock-Modell; es führt «echo hallo aus ASK» aus und meldet «Fertig».
 async function chatRoundtrip() {
@@ -99,7 +101,7 @@ function listening(port) {
 }
 
 function launch() {
-  const child = spawn(exe, [`--remote-debugging-port=${debugPort}`], { stdio: 'ignore', env: { ...process.env, ASK_NO_UPDATES: '1' } });
+  const child = spawn(exe, [], { stdio: 'ignore', env: { ...process.env, ASK_NO_UPDATES: '1', WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` } });
   return child;
 }
 

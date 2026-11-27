@@ -27,6 +27,8 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'OK  ' : 'FEHLER'} ${name}${detail ? `\n      ${detail}` : ''}`);
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Oberfläche der Tauri-Fassung: http://tauri.localhost/ (WebView2, mit WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS steuerbar)
+const isUi = (u) => /^https?:\/\/tauri\.localhost\//.test(String(u));
 const ps = (command) => execFileSync('powershell.exe', ['-NoProfile', '-Command', command], { encoding: 'utf8' }).trim();
 
 async function until(label, fn, timeout = 60000) {
@@ -60,7 +62,7 @@ function canConnect(port, host) {
 
 async function shell(expression) {
   const targets = JSON.parse((await get(`http://127.0.0.1:${debugPort}/json/list`)).body);
-  const target = targets.find((t) => t.type === 'page' && t.url.endsWith('index.html'));
+  const target = targets.find((t) => t.type === 'page' && isUi(t.url));
   if (!target) throw new Error('Ziel nicht gefunden');
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
@@ -165,7 +167,7 @@ function watchSplash(stubPid, png = '') {
 }
 
 function launch() {
-  const child = spawn(exe, [`--remote-debugging-port=${debugPort}`], { stdio: 'ignore', env: { ...process.env, ASK_NO_UPDATES: '1' } });
+  const child = spawn(exe, [], { stdio: 'ignore', env: { ...process.env, ASK_NO_UPDATES: '1', WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${debugPort}` } });
   child.started = Date.now();
   return child;
 }
@@ -242,8 +244,8 @@ async function main() {
 
     // Ältere Stände und abgebrochene Entpackungen räumt der nächste Start weg
     const old = path.join(cacheRoot, '0.0.1-alt');
-    fs.mkdirSync(path.join(old, 'resources'), { recursive: true });
-    fs.copyFileSync(path.join(appDir, 'resources', 'app.asar'), path.join(old, 'resources', 'app.asar'));
+    fs.mkdirSync(old, { recursive: true });
+    fs.copyFileSync(path.join(appDir, 'ASK.exe'), path.join(old, 'ASK.exe'));
     const oldNeu = path.join(cacheRoot, '0.0.2-alt.neu');
     const youngNeu = path.join(cacheRoot, '0.0.3-jung.neu');
     fs.mkdirSync(oldNeu, { recursive: true });
@@ -252,8 +254,8 @@ async function main() {
     stub = launch();
     await waitRunning(stub);
     await until('Alte Stände gelöscht', () => !fs.existsSync(old) && !fs.existsSync(oldNeu), 30000)
-      .then(() => check('Älterer Stand (mit app.asar) und alter .neu-Ordner gelöscht', true))
-      .catch((e) => check('Älterer Stand (mit app.asar) und alter .neu-Ordner gelöscht', false, e.message));
+      .then(() => check('Älterer Stand (mit ASK.exe) und alter .neu-Ordner gelöscht', true))
+      .catch((e) => check('Älterer Stand (mit ASK.exe) und alter .neu-Ordner gelöscht', false, e.message));
     check('Junger .neu-Ordner und eigener Stand bleiben', fs.existsSync(youngNeu) && fs.existsSync(path.join(appDir, 'ASK.exe')));
     fs.rmSync(youngNeu, { recursive: true, force: true });
     await closeApp();
@@ -261,7 +263,7 @@ async function main() {
     // Abgebrochenes Entpacken (z. B. Herunterfahren): gilt nicht als fertig, der nächste Start entpackt neu
     fs.rmSync(appDir, { recursive: true, force: true });
     stub = launch();
-    await until('Entpacken läuft', () => fs.existsSync(path.join(`${appDir}.neu`, 'resources')), 120000);
+    await until('Entpacken läuft', () => fs.existsSync(path.join(`${appDir}.neu`, 'skills')), 120000);
     await wait(2000);
     execFileSync('taskkill.exe', ['/F', '/PID', String(stub.pid)]);
     await until('Starter beendet', () => stub.exitCode !== null, 10000);

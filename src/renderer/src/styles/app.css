@@ -16,6 +16,10 @@
   --acc-ink: #ffffff;
   --acc-soft: #e6f3f8;
   --acc-line: #9ccce0;
+  --think-1: #0082b4;      /* Denkaufwand: TF Blau bis CD Orange */
+  --think-2: #2b9ca6;
+  --think-3: #d9a057;
+  --think-4: #f28855;
   --ok: #2c8a45;
   --bad: #b23a2c;
   --bad-soft: #fdeeec;
@@ -51,6 +55,10 @@
     --acc-ink: #06222e;
     --acc-soft: #173040;
     --acc-line: #2c5b72;
+    --think-1: #55aacf;
+    --think-2: #5cc1c1;
+    --think-3: #e8b673;
+    --think-4: #f6a07a;
     --ok: #6cc58a;
     --bad: #ec7b6e;
     --bad-soft: #2e1a18;
@@ -409,13 +417,56 @@ button.work-head:hover { background: var(--hover); }
 .send.stop { background: var(--text); color: var(--pane); }
 .hintline { font-size: 11px; text-align: center; color: var(--dim); }
 .think-wrap { position: relative; }
-.think-pop { position: absolute; bottom: calc(100% + 8px); left: 0; width: 270px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-.think-head { display: flex; justify-content: space-between; font-weight: 600; }
-.think-value { color: var(--acc-text); }
-.think-scale { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); }
-.think-pop input[type=range] { width: 100%; accent-color: var(--acc); }
-.think-pop.standard input[type=range] { opacity: .45; }
-.think-foot { font-size: 12px; display: flex; gap: 6px; align-items: center; }
+.think-pop { position: absolute; bottom: calc(100% + 8px); left: 0; width: 286px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 12px; }
+.think-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+/* «Automatisch» als Schalter */
+.think-switch { display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; padding: 2px 0; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.think-switch:hover { color: var(--text); }
+.think-switch-track { position: relative; width: 30px; height: 18px; border-radius: 999px; background: var(--line-2); transition: background .15s; }
+.think-switch-track span { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--pane); box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s; }
+.think-switch.on { color: var(--acc-text); }
+.think-switch.on .think-switch-track { background: var(--acc); }
+.think-switch.on .think-switch-track span { transform: translateX(12px); }
+.think-switch:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; border-radius: 6px; }
+/* Regler (ENTSCHEIDE E62): Der weisse Knopf mit der Glühbirne sitzt in der Spur und schiebt die Füllung
+   (TF Blau bis CD Orange) vor sich her. --f: Anteil 0..1; der Knopf läuft von h/2 bis 100 % - h/2.
+   Bei «Maximal» wird die Spur zum Pixel-Banner (Canvas, siehe usePixelBanner in Composer.jsx). */
+.think-slider { --h: 30px; --c: var(--think-2); }
+.think-slider[data-step="0"] { --c: var(--think-1); }
+.think-slider[data-step="2"] { --c: var(--think-4); }
+.think-track { position: relative; height: var(--h); border-radius: 999px; background: var(--line); overflow: hidden; cursor: pointer; touch-action: none; }
+.think-track:focus { outline: none; }
+.think-track:focus-visible { box-shadow: 0 0 0 2px var(--pane), 0 0 0 4px var(--acc); }
+.think-fill, .think-pixels { position: absolute; inset: 0; width: 100%; height: 100%; }
+.think-fill { background: linear-gradient(90deg, var(--think-1), var(--think-2) 36%, var(--think-3) 70%, var(--think-4));
+  clip-path: inset(0 calc(100% - (var(--h) + (100% - var(--h)) * var(--f))) 0 0 round 999px); transition: clip-path .42s cubic-bezier(.22, 1, .36, 1), opacity .25s; }
+.think-pixels { opacity: 0; transition: opacity .25s; pointer-events: none; }
+.think-knob { position: absolute; top: 3px; left: calc(var(--h) / 2 + (100% - var(--h)) * var(--f)); width: calc(var(--h) - 6px); height: calc(var(--h) - 6px);
+  margin-left: calc((var(--h) - 6px) / -2); border-radius: 50%; background: #fff; color: var(--c); box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+  display: grid; place-items: center; transition: left .42s cubic-bezier(.22, 1, .36, 1), color .2s; }
+.think-knob .bulb { transition: transform .35s cubic-bezier(.34, 1.56, .64, 1); }
+.think-slider.drag .think-fill, .think-slider.drag .think-knob { transition: none; }
+.think-slider.max .think-pixels { opacity: 1; }
+.think-slider.max .think-fill { opacity: 0; transition: opacity .25s .2s; }
+.think-slider.max .think-knob { animation: think-glow 2.2s ease-in-out infinite; }
+.think-slider.max .think-knob .bulb { transform: scale(1.2); }
+.think-slider.drag .think-pixels { opacity: 0; }
+.think-slider.drag .think-fill { opacity: 1; transition: none; }
+@keyframes think-glow { 50% { box-shadow: 0 1px 3px rgba(0, 0, 0, .25), 0 0 16px 3px color-mix(in srgb, var(--think-4) 55%, transparent); } }
+.think-ticks { position: relative; margin: 8px calc(var(--h) / 2) 0; height: 18px; }
+.think-ticks button { position: absolute; left: calc(var(--i) * 100%); transform: translateX(-50%); border: 0; background: none; padding: 0 2px; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.think-ticks button:hover { color: var(--text); }
+.think-ticks button.sel { color: var(--c); font-weight: 600; }
+/* «Automatisch»: Spur leer, Knopf mit grauer Birne */
+.think-pop.auto .think-fill { opacity: 0; }
+.think-pop.auto .think-knob { color: var(--dim); }
+/* Knopf im Eingabefeld in der Farbe der Stufe */
+.chip.think-chip.on { background: color-mix(in srgb, currentColor 11%, transparent); }
+.chip.think-chip.on[data-step="0"] { color: var(--think-1); }
+.chip.think-chip.on[data-step="1"] { color: var(--think-2); }
+.chip.think-chip.on[data-step="2"] { color: var(--think-4); }
+@media (prefers-reduced-motion: reduce) { .think-fill, .think-knob, .think-knob .bulb { transition: none; } .think-slider.max .think-knob { animation: none; } }
+.think-info { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45; min-height: 2.9em; }
 
 /* ---------- Rechts: Dateien, Vorschau, Browser ---------- */
 .sidebar { background: var(--side); display: grid; grid-template-rows: 42px minmax(0, 1fr); min-height: 0; min-width: 0; overflow: hidden; }

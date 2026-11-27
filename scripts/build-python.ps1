@@ -1,6 +1,6 @@
 # Baut das mitgelieferte Python für ASK Desktop.
 # Quelle: offizielles NuGet-Paket «python» der Python Software Foundation (normale Ordnerstruktur,
-# verschiebbar, mit pip). Ergebnis: $BuildDir\python, wird von electron-builder eingepackt.
+# verschiebbar, mit pip). Ergebnis: $BuildDir\python; scripts/pack-python.js packt es für die App (ENTSCHEIDE E39).
 param(
     [string]$BuildDir = $(if ($env:ASK_BUILD_DIR) { $env:ASK_BUILD_DIR } else { Join-Path $env:LOCALAPPDATA "ASK-Desktop-Build" })
 )
@@ -42,7 +42,7 @@ if ($LASTEXITCODE -ne 0) { throw "pip install fehlgeschlagen" }
 
 Write-Host "Entferne Testsuiten und Entwicklungsdateien ..."
 $site = Join-Path $target "Lib\site-packages"
-$remove = @("jedi\third_party", "debugpy", "pandas\tests", "matplotlib\tests", "matplotlib\mpl-data\sample_data") |
+$remove = @("pandas\tests", "matplotlib\tests", "matplotlib\mpl-data\sample_data") |
     ForEach-Object { Join-Path $site $_ }
 $remove += Get-ChildItem (Join-Path $site "numpy") -Directory -Recurse -Filter tests | ForEach-Object FullName
 $remove += Join-Path $target "include"

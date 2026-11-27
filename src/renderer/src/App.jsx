@@ -84,6 +84,7 @@ export default function App() {
   const [chatId, setChatId] = useState(null);
   const [running, setRunning] = useState(false);
   const [runStarted, setRunStarted] = useState(0);
+  const [autoEffort, setAutoEffort] = useState(''); // «Automatisch»: vom Modell gewählter Denkaufwand (ENTSCHEIDE E62)
   const [groups, setGroups] = useState([]);
   const [files, setFiles] = useState({ top: [], recent: [] });
   const [dialog, setDialog] = useState(null);
@@ -213,8 +214,9 @@ export default function App() {
       case 'review': setAct('Prüft, ob der Schritt sicher ist …'); break;
       case 'approval-end': setAct('Denkt nach …'); break;
       case 'user':
-        if (!ev.auto) { followRef.current = true; setFollow(true); }
+        if (!ev.auto) { followRef.current = true; setFollow(true); setAutoEffort(''); }
         break;
+      case 'effort': setAutoEffort(ev.level || ''); break;
       default:
     }
     buf.current.push(ev);
@@ -757,7 +759,7 @@ export default function App() {
               activity={(tasksLive && tasks?.find((t) => t.status === 'in_arbeit')?.titel) ? `${tasks.find((t) => t.status === 'in_arbeit').titel} · ${activity}` : activity}
               runStarted={runStarted} commands={commands} pendingQuestion={pendingQuestion} pendingApproval={pendingApproval}
               onSend={send} onStop={() => api().chatStop()} onAnswer={(id, t) => api().chatAnswer(id, t)} onGoal={handleGoal}
-              onGoalClear={() => api().chatGoal('')} setModel={(id) => api().setModel(id)} setThinking={(l) => api().setThinking(l)}
+              onGoalClear={() => api().chatGoal('')} setModel={(id) => api().setModel(id)} setThinking={(l) => api().setThinking(l)} autoEffort={running ? autoEffort || 'mittel' : ''}
               setWeb={(on) => api().setWebSearch(on)} notice={notice}
               mode={state.mode || 'auto'} setMode={(mode) => api().setSettings({ mode })} />
           )}

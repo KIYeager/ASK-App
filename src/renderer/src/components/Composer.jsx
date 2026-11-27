@@ -3,8 +3,8 @@ import Icon from './Icon.jsx';
 import { extOf, fileBadge, formatSize } from '../lib/format.js';
 import { api } from '../api.js';
 
-const THINK_LEVELS = ['standard', 'tief', 'mittel', 'hoch', 'maximal'];
-const THINK_NAMES = { standard: 'Standard', tief: 'Tief', mittel: 'Mittel', hoch: 'Hoch', maximal: 'Maximal' };
+const THINK_LEVELS = ['standard', 'tief', 'mittel', 'maximal'];
+const THINK_NAMES = { standard: 'Standard', tief: 'Tief', mittel: 'Mittel', maximal: 'Maximal' };
 const MAX_ATTACH = 10;
 const MAX_ATTACH_SIZE = 50 * 1024 * 1024;
 const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
@@ -43,7 +43,149 @@ function Todo({ tasks, open, onToggle }) {
   );
 }
 
-function ThinkPicker({ level, onChange }) {
+// Was die Stufen bedeuten, in einer Zeile unter dem Regler. ASK kennt nur low, medium und xhigh (ENTSCHEIDE E62).
+const THINK_INFO = {
+  standard: 'Das Modell wählt selbst: Mittel zum Start, Maximal für Schwieriges, Tief für Einfaches.',
+  tief: 'Schnelle Antworten, kaum Überlegen.',
+  mittel: 'Ausgewogen, passt für die meisten Aufträge.',
+  maximal: 'So gründlich wie möglich, deutlich langsamer.',
+};
+const THINK_STEPS = THINK_LEVELS.slice(1); // tief bis maximal
+const LAST_STEP = THINK_STEPS.length - 1;
+
+// Glühbirne für den Denkaufwand: je höher die Stufe, desto mehr Strahlen (-1: Automatisch, ohne Füllung)
+function Bulb({ step = -1, size = 14 }) {
+  const all = ['M12 1.6v1.6', 'M5 4.5l1.1 1.1', 'M19 4.5l-1.1 1.1', 'M2.6 10.2h1.6', 'M21.4 10.2h-1.6'];
+  const rays = step >= LAST_STEP ? all : step >= 1 ? all.slice(0, 3) : [];
+  return (
+    <svg className="icon bulb" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 17h6M10 20.5h4M8.5 14.5a5 5 0 1 1 7 0c-.8.7-1.5 1.5-1.5 2.5h-4c0-1-.7-1.8-1.5-2.5z"
+        fill={step >= 0 ? 'currentColor' : 'none'} fillOpacity=".22" />
+      {rays.map((d) => <path key={d} d={d} />)}
+    </svg>
+  );
+}
+
+// Pixel-Banner bei «Maximal»: Pixel gehen von links nach rechts an, Lichtwellen laufen zum Knopf,
+// aus der Glühbirne steigen leuchtende Pixel. Farben aus --think-1 bis --think-4; ruhig bei reduzierter Bewegung.
+function usePixelBanner(canvas, track, active) {
+  useEffect(() => {
+    const cv = canvas.current;
+    const ctx = cv?.getContext?.('2d');
+    if (!active || !ctx) return undefined;
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const hash = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+    const rgb = (c) => { const n = parseInt(c.trim().slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
+    const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+    const css = getComputedStyle(track.current);
+    const colors = [1, 2, 3, 4].map((i) => rgb(css.getPropertyValue(`--think-${i}`) || '#0082b4'));
+    let raf = 0, t0 = 0, last = 0, parts = [];
+    const frame = (t) => {
+      if (!t0) t0 = t;
+      const w = track.current.clientWidth, h = track.current.clientHeight, dpr = window.devicePixelRatio || 1;
+      if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const el = still ? 1e9 : t - t0, step = 6, cols = Math.ceil(w / step), rows = Math.ceil(h / step);
+      const reveal = (el / 700) * cols;
+      for (let x = 0; x < cols && x <= reveal; x++) {
+        const pos = x / cols, band = Math.min(3, Math.floor(pos * 4));
+        const fresh = Math.max(0, 1 - (reveal - x) / 6);
+        const wave = still ? 0 : Math.max(0, Math.sin(pos * 9 - el / 380)) ** 4;
+        for (let y = 0; y < rows; y++) {
+          const j = hash(x, y);
+          let lift = band * .1 + pos * .12 + j * .14 + wave * .28 + fresh * .5;
+          if (!still && Math.sin(el / 230 + j * 60) > .985) lift += .5;
+          ctx.fillStyle = `rgb(${mix(colors[band], [255, 255, 255], Math.min(.85, lift)).join(',')})`;
+          ctx.fillRect(x * step, y * step, 5, 5);
+        }
+      }
+      if (!still && el > 300 && t - last > 55) {
+        last = t;
+        parts.push({ x: w - h / 2 + (Math.random() - .5) * 8, y: h / 2 - 4, vx: -(.3 + Math.random() * 1.6), vy: -(.2 + Math.random() * .9), life: 1,
+          c: Math.random() < .5 ? [255, 236, 170] : mix(colors[3], [255, 255, 255], .4) });
+      }
+      parts = parts.filter((p) => (p.life -= .02) > 0);
+      for (const p of parts) {
+        p.x += p.vx; p.y += p.vy; p.vy += .015;
+        ctx.shadowColor = ctx.fillStyle = `rgba(${p.c.join(',')},${p.life})`;
+        ctx.shadowBlur = 6;
+        ctx.fillRect(Math.round(p.x / 2) * 2, Math.round(p.y / 2) * 2, 3, 3);
+      }
+      ctx.shadowBlur = 0;
+      if (!still) raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => { cancelAnimationFrame(raf); ctx.clearRect(0, 0, cv.width, cv.height); };
+  }, [active, canvas, track]);
+}
+
+// Regler: Der Knopf mit der Glühbirne sitzt in der Spur und schiebt die Füllung vor sich her.
+// Klicken gleitet zur Stufe, Ziehen folgt stufenlos und rastet beim Loslassen weich ein.
+function ThinkSlider({ auto, pos, onPick }) {
+  const track = useRef(null);
+  const canvas = useRef(null);
+  const [raw, setRaw] = useState(null); // Stelle 0..1 während des Ziehens
+  const [dragging, setDragging] = useState(false);
+  const at = (x) => {
+    const r = track.current.getBoundingClientRect(), inset = r.height / 2;
+    return Math.max(0, Math.min(1, (x - r.left - inset) / (r.width - 2 * inset)));
+  };
+  const down = (e) => {
+    if (e.button !== 0) return;
+    const x0 = e.clientX;
+    let f = at(x0), moved = false;
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    onPick(Math.round(f * LAST_STEP));
+    const target = e.currentTarget;
+    const move = (ev) => {
+      if (!moved && Math.abs(ev.clientX - x0) < 4) return;
+      moved = true;
+      setDragging(true);
+      f = at(ev.clientX);
+      setRaw(f);
+      onPick(Math.round(f * LAST_STEP));
+    };
+    const up = () => {
+      setDragging(false); setRaw(null);
+      target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
+    };
+    target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
+  };
+  const key = (e) => {
+    const k = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
+    if (k) onPick(auto ? pos : pos + k);
+    else if (e.key === 'Home') onPick(0);
+    else if (e.key === 'End') onPick(LAST_STEP);
+    else if (e.key === 'Enter' || e.key === ' ') onPick(pos);
+    else return;
+    e.preventDefault();
+  };
+  const step = auto ? -1 : pos;
+  const max = step === LAST_STEP;
+  usePixelBanner(canvas, track, max && !dragging);
+  const f = raw ?? (auto ? 0 : pos / LAST_STEP);
+  return (
+    <div className={`think-slider${dragging ? ' drag' : ''}${max ? ' max' : ''}`} data-step={step}>
+      <div id="think-range" ref={track} className="think-track" role="slider" tabIndex={0} aria-label="Denkaufwand"
+        aria-valuemin={0} aria-valuemax={LAST_STEP} aria-valuenow={pos} aria-valuetext={auto ? 'Automatisch' : THINK_NAMES[THINK_STEPS[pos]]}
+        style={{ '--f': f }} onPointerDown={down} onKeyDown={key}>
+        <div className="think-fill" />
+        <canvas ref={canvas} className="think-pixels" aria-hidden="true" />
+        <div className="think-knob"><Bulb step={step} size={16} /></div>
+      </div>
+      <div className="think-ticks">
+        {THINK_STEPS.map((l, i) => (
+          <button key={l} type="button" tabIndex={-1} className={!auto && i === pos ? 'sel' : ''}
+            style={{ '--i': i / LAST_STEP }} onClick={() => { onPick(i); track.current?.focus(); }}>{THINK_NAMES[l]}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ThinkPicker({ level, autoLevel = '', onChange }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -54,23 +196,29 @@ function ThinkPicker({ level, onChange }) {
     document.addEventListener('keydown', esc, true);
     return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', esc, true); };
   }, [open]);
-  const idx = Math.max(1, THINK_LEVELS.indexOf(level));
+  useEffect(() => { if (open) document.getElementById('think-range')?.focus(); }, [open]);
+  const auto = !THINK_STEPS.includes(level);
+  const idx = THINK_STEPS.indexOf(level);
+  const pos = idx < 0 ? 1 : idx; // Automatisch: Regler bei «Mittel», aber grau
+  const autoStep = autoLevel ? THINK_STEPS.indexOf(autoLevel) : -1; // während eines Auftrags: Wahl des Modells
+  const pick = (i) => { const next = THINK_STEPS[Math.min(LAST_STEP, Math.max(0, i))]; if (next !== level) onChange(next); };
   return (
     <div className="think-wrap" ref={ref}>
-      <button type="button" id="think-btn" className={`chip${level !== 'standard' ? ' on' : ''}`} onClick={() => setOpen(!open)}
-        title="Denkaufwand des Modells (/denken)" aria-expanded={open}>
-        <Icon name="spark" size={14} /> <span id="think-label" className="chip-label">{THINK_NAMES[level] || 'Standard'}</span>
+      <button type="button" id="think-btn" className={`chip think-chip${!auto ? ' on' : ''}`} data-step={auto ? -1 : idx}
+        onClick={() => setOpen(!open)} title="Denkaufwand des Modells (/denken)" aria-expanded={open}>
+        <Bulb step={auto ? autoStep : idx} /> <span id="think-label" className="chip-label">{auto ? (autoLevel ? `Auto · ${THINK_NAMES[autoLevel]}` : 'Auto') : THINK_NAMES[level]}</span>
       </button>
       {open ? (
-        <div id="think-pop" className={`popover think-pop${level === 'standard' ? ' standard' : ''}`}>
-          <div className="think-head"><span>Denkaufwand</span><span className="think-value">{THINK_NAMES[level]}</span></div>
-          <div className="think-scale"><span>Tief</span><span>Maximal</span></div>
-          <input id="think-range" type="range" min="1" max="4" step="1" value={idx} aria-label="Denkaufwand"
-            onChange={(e) => onChange(THINK_LEVELS[Number(e.target.value)])} autoFocus />
-          <div className="think-foot">
-            <button id="think-standard" type="button" className="link" onClick={() => onChange('standard')}>Standard</button>
-            <span className="muted">· das Modell entscheidet selbst</span>
+        <div id="think-pop" className={`popover think-pop${auto ? ' auto' : ''}`} role="dialog" aria-label="Denkaufwand">
+          <div className="think-head">
+            <span>Denkaufwand</span>
+            <button id="think-standard" type="button" role="switch" aria-checked={auto} className={`think-switch${auto ? ' on' : ''}`}
+              onClick={() => onChange(auto ? 'mittel' : 'standard')} title="Das Modell entscheidet selbst">
+              <span className="think-switch-text">Automatisch</span><span className="think-switch-track" aria-hidden="true"><span /></span>
+            </button>
           </div>
+          <ThinkSlider auto={auto} pos={pos} onPick={pick} />
+          <p id="think-info" className="think-info">{THINK_INFO[auto ? 'standard' : level]}</p>
         </div>
       ) : null}
     </div>
@@ -127,7 +275,7 @@ function mentionAt(text, caret) {
 
 const Composer = forwardRef(function Composer(props, ref) {
   const { state, running, block, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
-    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode } = props;
+    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode, autoEffort } = props;
   const [text, setText] = useState('');
   const [pending, setPending] = useState([]); // neue Anhänge { name, type, size, data, url }
   const [kept, setKept] = useState([]); // schon gespeicherte Anhänge einer zurückgenommenen Eingabe { path, name, image }
@@ -473,7 +621,7 @@ const Composer = forwardRef(function Composer(props, ref) {
               title={!state.webSearchAvailable ? 'Websuche ist in ASK für dein Konto nicht freigegeben' : state.webSearch ? 'Websuche an: ASK sucht vor der Antwort im Web (/web)' : 'Websuche aus (/web)'}>
               <Icon name="globe" size={14} /> <span className="chip-label">Web</span>
             </button>
-            <ThinkPicker level={state.thinking || 'standard'} onChange={setThinking} />
+            <ThinkPicker level={state.thinking || 'standard'} autoLevel={autoEffort} onChange={setThinking} />
             <ModePicker mode={mode} onChange={setMode} />
             <span className="spacer" />
             {context?.tokens > 0 ? (
