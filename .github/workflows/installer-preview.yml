@@ -1,0 +1,100 @@
+# Baut den Installer ohne Signatur, installiert ASK auf dem Runner zweimal (neu, dann als Update) und nimmt
+# dabei Bildschirmfotos auf (ENTSCHEIDE E63). Die Bilder liegen als Artefakt «installer-bilder» bereit; drei
+# davon stehen zusätzlich als Base64 im Protokoll (Zeilen mit «BILD»), damit man sie ohne Download prüfen kann.
+name: Installer-Vorschau
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - src-tauri/windows/**
+      - scripts/nsis-plugins.js
+      - scripts/dist.js
+      - .github/workflows/installer-preview.yml
+
+jobs:
+  vorschau:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build-Ordner
+        shell: pwsh
+        run: '"ASK_BUILD_DIR=$env:RUNNER_TEMP\ask-build" >> $env:GITHUB_ENV'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: npm-Pakete
+        run: npm ci --no-audit --no-fund
+
+      - name: Python-Paket aus dem Zwischenspeicher
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\ask-build\cache
+          key: python-${{ hashFiles('scripts/build-python.ps1') }}
+
+      - name: Python bauen
+        shell: powershell
+        run: scripts\build-python.ps1 -BuildDir $env:ASK_BUILD_DIR
+
+      - name: Installer bauen (ohne Signatur)
+        run: npm run dist -- --ohne-signatur
+
+      - name: Installieren und fotografieren
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+          $setup = Get-ChildItem "$env:ASK_BUILD_DIR\dist\ASK-Setup-*.exe" | Select-Object -First 1
+          $out = "$env:RUNNER_TEMP\bilder"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          function Snap($name) {
+            $bmp = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+            $bmp.Save("$out\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+          }
+          foreach ($run in 'neu', 'update') {
+            $p = Start-Process $setup.FullName -PassThru
+            $i = 0
+            while (-not $p.HasExited -and $i -lt 400) { Snap ("{0}-{1:D3}" -f $run, $i); Start-Sleep -Milliseconds 250; $i++ }
+            Write-Host "$run`: $i Bilder, Exit-Code $($p.ExitCode)"
+            Start-Sleep -Seconds 3
+            Snap "$run-danach"
+            Get-Process ASK -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 2
+          }
+          # Je Lauf ein Bild aus der Mitte des Vorgangs, auf die Bildschirmmitte zugeschnitten, als Base64 ins Protokoll
+          foreach ($run in 'neu', 'update') {
+            $frames = Get-ChildItem "$out\$run-[0-9]*.png" | Sort-Object Name
+            if (-not $frames) { continue }
+            $pick = $frames[[math]::Floor($frames.Count / 2)]
+            $src = [System.Drawing.Image]::FromFile($pick.FullName)
+            $w = [math]::Min(720, $src.Width); $h = [math]::Min(420, $src.Height)
+            $rect = New-Object System.Drawing.Rectangle ([int](($src.Width - $w) / 2)), ([int](($src.Height - $h) / 2)), $w, $h
+            $crop = ([System.Drawing.Bitmap]$src).Clone($rect, $src.PixelFormat)
+            $file = "$out\ausschnitt-$run.png"
+            $crop.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)
+            $crop.Dispose(); $src.Dispose()
+            $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($file))
+            Write-Host "BILD-START $run $($pick.Name)"
+            for ($k = 0; $k -lt $b64.Length; $k += 2000) { Write-Host ("BILD " + $b64.Substring($k, [math]::Min(2000, $b64.Length - $k))) }
+            Write-Host "BILD-ENDE $run"
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installer-bilder
+          path: ${{ runner.temp }}\bilder

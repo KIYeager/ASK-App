@@ -14,3 +14,5 @@ src/renderer/dist/
 # Rust
 src-tauri/target/
 src-tauri/gen/
+# NSIS-Plugin aus scripts/nsis-plugins.js
+src-tauri/windows/plugins/

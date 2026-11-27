@@ -51,6 +51,7 @@ function main() {
   const res = resources(conf, path.join(base, 'python-pack'));
   const extra = path.join(base, 'tauri.build.json');
   fs.writeFileSync(extra, JSON.stringify({ bundle: { resources: res, createUpdaterArtifacts: !unsigned } }, null, 2));
+  run('node', [path.join('scripts', 'nsis-plugins.js')]); // SpiderBanner fürs Fortschrittsfenster (E63)
   run('npx', ['tauri', 'build', '--config', extra, '--bundles', 'nsis']);
 
   const bundle = path.join(tauriDir, 'target', 'release', 'bundle', 'nsis');
