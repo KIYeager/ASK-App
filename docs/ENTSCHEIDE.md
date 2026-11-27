@@ -703,3 +703,14 @@ Wie Docs in Claude soll ASK längere Texte nicht nur in den Chat schreiben, sond
 Nicht gewählt: Docs in den Daten der App statt im Projekt (gingen nicht mit dem Projekt mit, keine Sicherung, ASK bräuchte eigene Wege zum Lesen); .docx als Format der Docs (ASK könnte nur über Python-Skripte ändern, die Person sähe Änderungen erst nach dem Neuladen in Word); gemeinsames Bearbeiten mit anderen Personen (ASK läuft lokal, es gibt keinen Server).
 
 Tests: `docs.rs` (Pfade nur in `docs/`, keine Verknüpfung hinaus, Namen, Konflikt beim Speichern, Kommentare ausserhalb des Ordners, Werkzeuge, Systemprompt), `docx.rs` (Blöcke, Auszeichnungen, gültige und lesbare .docx, nur Web-Links), `tests/docmd.test.js` (Markdown ↔ Editor hin und zurück, Maskierung, eingefügtes HTML, nichts Fremdes im HTML). In der Oberfläche mit Beispieldaten (`npm run dev:ui`, Reiter «Docs»; `?docs=leer` ohne Docs). Unter Windows noch nicht geprüft: Editor in WebView2, Speichern als PDF mit Word, Öffnen der .docx in Word.
+
+## E82 Absturzschutz der Oberfläche
+
+Ein Fehler beim Zeichnen der Oberfläche (etwa eine Nachricht mit unerwarteten Daten) liess bisher das ganze Fenster leer; die Lernenden sahen nichts mehr und wussten nicht, ob ihre Arbeit weg ist. Jetzt fängt `components/Crash.jsx` solche Fehler ab, auf drei Ebenen:
+
+- **Ganzes Fenster:** eine Karte «Hier ist etwas schiefgelaufen» mit der Meldung, «Neu laden» und «Details kopieren» (wie E69, mit Version, Anmeldung, Terminal und den ersten Zeilen des Stacks). Die Karte sagt, dass Chats und Dateien nicht betroffen sind: Sie liegen im Hauptprozess, ein laufender Auftrag arbeitet dort weiter, Neuladen verliert nichts.
+- **Einzelne Nachricht im Chat** und **rechte Seite:** nur ein kurzer Hinweis an der Stelle («Diese Nachricht lässt sich nicht anzeigen») mit «Nochmals versuchen» und «Details kopieren»; der Rest bleibt bedienbar. Die rechte Seite versucht es beim Wechsel des Reiters oder der Datei von selbst nochmals.
+
+Fehler in Klick-Handlern und Promises fängt React nicht ab; sie leeren das Fenster aber auch nicht.
+
+Nicht gewählt: automatisch neu laden (bei einem Fehler, der gleich wieder auftritt, flackerte das Fenster endlos).

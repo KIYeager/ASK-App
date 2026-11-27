@@ -11,6 +11,7 @@ import RightPanel, { norm } from './components/RightPanel.jsx';
 import Dialogs, { activeDialog } from './components/Dialogs.jsx';
 import { useSkillCommands } from './components/Knowledge.jsx';
 import { Turn } from './components/Chat.jsx';
+import Guard from './components/Crash.jsx';
 import { applyEvent, buildTurns, emptyChat, lastTasks, loadChat, reuseTurns } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
 import { emitMod, fillTemplate, loadMods, modCommandFor, modsChanged, setModHost, takeDialogAfterReload, useMods } from './lib/mods.js';
@@ -932,7 +933,7 @@ export default function App() {
                 </div>
               ) : null}
               <div id="messages" className="messages">
-                {turns.map((t, i) => <Turn key={`${chatId}:${t.key}`} turn={t} ctx={ctx} last={i === turns.length - 1} />)}
+                {turns.map((t, i) => <Guard key={`${chatId}:${t.key}`} label="Diese Nachricht" appState={state}><Turn turn={t} ctx={ctx} last={i === turns.length - 1} /></Guard>)}
               </div>
             </div>
           </div>
@@ -977,7 +978,7 @@ export default function App() {
         {rightOpen ? <div className="resizer" data-panel="sidebar" role="separator" aria-orientation="vertical" tabIndex={0} aria-label="Breite der Seitenleiste"
           title="Ziehen: Breite ändern · Doppelklick: Standardbreite" onPointerDown={startResize('sidebar')} onDoubleClick={resetWidth('sidebar')} onKeyDown={keyResize('sidebar')} /> : <span />}
         {rightOpen ? (
-          <RightPanel tab={tab} setTab={setTab} root={state.folder} free={free} files={files} marks={marks} removed={removed} selected={selected}
+          <Guard label="Die rechte Seite" appState={state} resetKey={`${tab}:${selected?.path || ''}`}><RightPanel tab={tab} setTab={setTab} root={state.folder} free={free} files={files} marks={marks} removed={removed} selected={selected}
             onSelect={setSelected} onBig={() => setDialog({ name: 'preview' })} browser={browser} browserActive={browserActive}
             onBrowserClose={() => { api().browserClose(); setBrowser(BROWSER0); setBrowserBig(false); setTab('dateien'); }}
             onBrowserBig={() => setBrowserBig(!browserBig)} browserBig={browserBig}
@@ -985,7 +986,7 @@ export default function App() {
             running={running} dialogOpen={!!dialogName} onGithub={() => setDialog({ name: 'github' })} modPanels={modState.panels}
             docs={{ path: docPath, setPath: setDocPath, live: docLive,
               onAsk: (t) => { if (runningRef.current || acts.current.blocker) composer.current?.setText(t); else acts.current.send(t, []); },
-              onCompose: (t) => composer.current?.setText(t) }} />
+              onCompose: (t) => composer.current?.setText(t) }} /></Guard>
         ) : <span />}
       </main>
 
