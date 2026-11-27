@@ -26,11 +26,13 @@ pub fn relative_path(host: &str, path: &str) -> Option<String> {
 
 /// Eine eben geschriebene Datei (Bild vom Modell) kann unter Windows kurz gesperrt sein, etwa während der
 /// Virenschutz sie prüft: dann bis gut eine Sekunde lang nochmals versuchen statt gleich «nicht gefunden»
-fn read_with_retry(rel: &str) -> Option<(std::path::PathBuf, Vec<u8>)> {
+fn open_with_retry(rel: &str) -> Option<(std::path::PathBuf, std::fs::File, usize)> {
     for attempt in 0..8 {
         if let Some(full) = crate::shell().core().resolve_file(rel) {
-            if let Ok(data) = std::fs::read(&full) {
-                return Some((full, data));
+            if let Ok(file) = std::fs::File::open(&full) {
+                if let Ok(meta) = file.metadata() {
+                    return Some((full, file, meta.len() as usize));
+                }
             }
         }
         if attempt < 7 {
@@ -40,21 +42,40 @@ fn read_with_retry(rel: &str) -> Option<(std::path::PathBuf, Vec<u8>)> {
     None
 }
 
+/// Höchstens so viel auf eine Teilanfrage (Range): Ein Video fragt in vielen Stücken, und jedes Stück läge sonst
+/// ganz im Speicher (früher sogar die ganze Datei pro Anfrage).
+const RANGE_MAX: usize = 8 * 1024 * 1024;
+
+/// Bytes `start..=end` einer Datei lesen
+fn read_slice(file: &mut std::fs::File, start: usize, end: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(start as u64))?;
+    let mut buf = vec![0u8; end - start + 1];
+    file.read_exact(&mut buf)?;
+    Ok(buf)
+}
+
 fn respond(uri: &tauri::http::Uri, range: Option<&str>) -> Response<Vec<u8>> {
     let Some(rel) = relative_path(uri.host().unwrap_or(""), uri.path()) else { return not_found() };
-    let Some((full, data)) = read_with_retry(&rel) else { return not_found() };
+    let Some((full, mut file, total)) = open_with_retry(&rel) else { return not_found() };
     let mime = mime_of(&full);
-    let total = data.len();
     let builder = Response::builder()
         .header(header::CONTENT_TYPE, mime)
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, "no-cache");
     if let Some((start, end)) = range.and_then(|r| parse_range(r, total)) {
+        // Nur den verlangten Teil lesen, und höchstens RANGE_MAX: Den Rest holt die Ansicht mit der nächsten Anfrage
+        let end = end.min(start + RANGE_MAX - 1);
+        let Ok(part) = read_slice(&mut file, start, end) else { return not_found() };
         return builder
             .status(StatusCode::PARTIAL_CONTENT)
             .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{total}"))
-            .body(data[start..=end].to_vec())
+            .body(part)
             .expect("Antwort");
+    }
+    let mut data = Vec::with_capacity(total);
+    if std::io::Read::read_to_end(&mut file, &mut data).is_err() {
+        return not_found();
     }
     builder.status(StatusCode::OK).body(data).expect("Antwort")
 }

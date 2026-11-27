@@ -120,6 +120,10 @@ export function fromTranscript(items, running = false) {
   for (const item of items || []) {
     if (item.role === 'auto') m = add(m, { k: 'auto' });
     else if (item.role === 'undo') m = add(m, { k: 'notice', icon: 'undo', text: item.text });
+    // Gespeicherte Hinweise und Fehler eines Auftrags (auch «ab hier zusammengefasst»): Wer den Chat später öffnet,
+    // sieht, warum ein Auftrag aufgehört hat
+    else if (item.role === 'notice') m = add(m, { k: 'notice', text: item.text || '' });
+    else if (item.role === 'error') m = add(m, { k: 'error', text: item.text || '' });
     else if (item.role === 'user') {
       m = endTurn(m, turn);
       turn = item;
@@ -141,6 +145,13 @@ export function fromTranscript(items, running = false) {
     m = endTurn(m, turn);
   }
   return m;
+}
+
+// Chat laden: gespeicherter Verlauf, dazu die offenen Fragen und Rückfragen eines Chats, der schon arbeitet (pending:
+// Ereignisse «question» und «approval»). Ohne sie sähe man nach dem Wechsel in einen Chat, der im Hintergrund auf
+// eine Antwort wartet, die Frage nicht mehr und könnte nur noch stoppen.
+export function loadChat(items, running = false, pending = []) {
+  return (running ? pending || [] : []).reduce(applyEvent, fromTranscript(items, running));
 }
 
 // Ein Ereignis des Agenten anwenden
@@ -189,6 +200,9 @@ export function applyEvent(model, ev) {
       return i < 0 ? model : update(model, i, (e) => ({ question: { ...e.question, open: false, answer: ev.answer } }));
     }
     case 'approval':
+      // Dieselbe Rückfrage nur einmal (beim Wechsel in einen Chat kann sie mit dem Verlauf und als Ereignis kommen):
+      // Eine zweite Karte bliebe für immer offen
+      if (model.entries.some((e) => e.k === 'approval' && e.id === ev.id)) return model;
       return add(model, { k: 'approval', id: ev.id, title: ev.title, detail: ev.detail || '', reason: ev.reason || '', reviewed: !!ev.reviewed, answer: null });
     case 'approval-end': {
       const i = findIndex(model, (e) => e.k === 'approval' && e.id === ev.id);
@@ -303,6 +317,7 @@ export function buildTurns(model, running = false) {
     return {
       key: t.key,
       user: t.user,
+      body,
       steps: flatSteps,
       answer: answerIndex >= 0 ? body[answerIndex] : null,
       after,
@@ -311,6 +326,18 @@ export function buildTurns(model, running = false) {
       failed: tools.filter((e) => e.ok === false).length,
       pending: tools.some((e) => e.ok === null),
     };
+  });
+}
+
+// Unveränderte Aufträge behalten ihr Objekt von vorher: Einträge werden nie verändert, nur ersetzt, darum genügt der
+// Vergleich der Einträge selbst. So zeichnet die Oberfläche bei jedem Stück Antwort nur den laufenden Auftrag neu,
+// nicht den ganzen Chat (sonst wird ein langer Chat beim Schreiben der Antwort immer träger).
+export function reuseTurns(prev, next) {
+  if (!prev?.length) return next;
+  const old = new Map(prev.map((t) => [t.key, t]));
+  return next.map((t) => {
+    const p = old.get(t.key);
+    return p && p.running === t.running && p.user === t.user && p.body.length === t.body.length && p.body.every((e, i) => e === t.body[i]) ? p : t;
   });
 }
 

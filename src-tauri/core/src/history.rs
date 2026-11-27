@@ -33,7 +33,11 @@ pub fn date(ms: f64) -> String {
     }
 }
 
-type Cache = Mutex<HashMap<PathBuf, (std::time::SystemTime, Value)>>;
+/// Zwischenspeicher der gelesenen Chats: Datei → (Änderungszeit, Grösse der Datei, Inhalt). Begrenzt nach Anzahl und
+/// nach Grösse: Chats mit Spielen oder langen Ausgaben sind mehrere MB gross, und als `Value` belegen sie ein Vielfaches.
+type Cache = Mutex<HashMap<PathBuf, (std::time::SystemTime, u64, Value)>>;
+const CACHE_MAX_FILES: usize = 500;
+const CACHE_MAX_BYTES: u64 = 16 * 1024 * 1024;
 
 fn cache() -> &'static Cache {
     static CACHE: OnceLock<Cache> = OnceLock::new();
@@ -44,23 +48,38 @@ fn load_chats(folder: &Path) -> Vec<Value> {
     let dir = folder.join(".ask").join("chats");
     let Ok(rd) = std::fs::read_dir(&dir) else { return Vec::new() };
     let names: Vec<String> = rd.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".json")).collect();
+    // Gelöschte Chats dieses Ordners nicht weiter im Speicher halten
+    {
+        let present: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
+        cache().lock().retain(|file, _| file.parent() != Some(dir.as_path()) || file.file_name().and_then(|n| n.to_str()).is_some_and(|n| present.contains(n)));
+    }
     // Bei eingeschaltetem Schalter «Chats» liest jeder Arbeitsschritt die Liste: unveränderte Dateien nicht neu lesen
     let mut chats: Vec<Value> = names
         .iter()
         .filter_map(|n| {
             let file = dir.join(n);
             let mtime = std::fs::metadata(&file).and_then(|m| m.modified()).ok()?;
-            if let Some((t, chat)) = cache().lock().get(&file) {
+            if let Some((t, _, chat)) = cache().lock().get(&file) {
                 if *t == mtime {
                     return Some(chat.clone());
                 }
             }
-            let chat: Value = serde_json::from_str(&String::from_utf8_lossy(&std::fs::read(&file).ok()?)).ok()?;
+            let bytes = std::fs::read(&file).ok()?;
+            let size = bytes.len() as u64;
+            let chat: Value = serde_json::from_str(&String::from_utf8_lossy(&bytes)).ok()?;
             let mut c = cache().lock();
-            if c.len() > 500 {
-                c.clear();
+            c.remove(&file);
+            let full = |c: &HashMap<PathBuf, (std::time::SystemTime, u64, Value)>| c.len() >= CACHE_MAX_FILES || c.values().map(|v| v.1).sum::<u64>() + size > CACHE_MAX_BYTES;
+            // Voll: zuerst die Chats anderer Ordner hinaus. Reicht das nicht, bleibt der Speicher, wie er ist, und
+            // dieser Chat wird jedes Mal neu gelesen. Alles zu leeren hiesse, dass danach jeder Arbeitsschritt wieder
+            // sämtliche Chats liest, weil die Liste immer in derselben Reihenfolge durchlaufen wird.
+            if full(&c) {
+                c.retain(|f, _| f.parent() == Some(dir.as_path()));
             }
-            c.insert(file, (mtime, chat.clone()));
+            // Sehr grosse Chats gar nicht behalten
+            if !full(&c) && size <= CACHE_MAX_BYTES / 4 {
+                c.insert(file, (mtime, size, chat.clone()));
+            }
             Some(chat)
         })
         .filter(|c| c.get("id").is_some_and(truthy) && c.get("messages").is_some_and(Value::is_array))

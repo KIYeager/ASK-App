@@ -84,7 +84,7 @@ function ErrorRow({ text, ctx }) {
             <ol>{help.steps.map((s) => <li key={s}>{s}</li>)}</ol>
           </div>
         ) : null}
-        <button type="button" className="btn small error-copy" onClick={() => { ctx.copy(errorDetails(text, ctx.state)); setCopied(true); }}>
+        <button type="button" className="btn small error-copy" onClick={() => { ctx.copy(errorDetails(text, ctx.state)); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>
           {copied ? 'Kopiert' : 'Details kopieren'}
         </button>
       </div>

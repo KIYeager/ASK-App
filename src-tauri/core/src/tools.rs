@@ -160,6 +160,26 @@ fn fail(res: &Response) -> anyhow::Error {
     anyhow!(if text.is_empty() { format!("HTTP {}", res.status) } else { text })
 }
 
+/// So viel Ausgabe eines Befehls behält die App höchstens, während sie auf ihn wartet (Bytes). Das Modell bekommt
+/// davon `MAX_OUTPUT` Zeichen, die Oberfläche 6000; ohne Grenze füllte ein Skript, das endlos schreibt, den Speicher.
+const LIVE_OUTPUT_MAX: usize = 300_000;
+
+/// Gesammelte Ausgabe auf `LIVE_OUTPUT_MAX` halten: Anfang und Ende bleiben, die Mitte fällt weg.
+fn trim_live(output: &mut String) {
+    if output.len() <= LIVE_OUTPUT_MAX {
+        return;
+    }
+    let mut head = LIVE_OUTPUT_MAX / 5;
+    while !output.is_char_boundary(head) {
+        head -= 1;
+    }
+    let mut tail = output.len() - LIVE_OUTPUT_MAX * 3 / 5;
+    while !output.is_char_boundary(tail) {
+        tail += 1;
+    }
+    *output = format!("{}\n… (Ausgabe gekürzt) …\n{}", &output[..head], &output[tail..]);
+}
+
 /// Kürzt in der Mitte: ein Drittel Anfang, der Rest Ende
 pub fn clip(text: &str, max: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
@@ -525,6 +545,7 @@ async fn run_command(terminal: &dyn TerminalEndpoint, args: &Value, ctx: &ToolCt
     let id = data.get("id").cloned().unwrap_or(Value::Null);
     let id_text = js_string(&id);
     let mut output = output_text(&data);
+    trim_live(&mut output);
     let mut offset = data.get("next_offset").and_then(Value::as_i64).unwrap_or(output_len(&data) as i64);
     let end = Instant::now() + Duration::from_secs_f64(limit);
     let snapshot = EndpointSnapshot::of(terminal);
@@ -564,6 +585,7 @@ async fn run_command(terminal: &dyn TerminalEndpoint, args: &Value, ctx: &ToolCt
             let Some(json) = res.json.clone().filter(|_| res.status == 200) else { return Err(fail(&res)) };
             data = json;
             output.push_str(&output_text(&data));
+            trim_live(&mut output);
             offset = data.get("next_offset").and_then(Value::as_i64).unwrap_or(offset + output_len(&data) as i64);
         }
         Ok(())
@@ -597,7 +619,8 @@ async fn run_command(terminal: &dyn TerminalEndpoint, args: &Value, ctx: &ToolCt
 async fn command_status(terminal: &dyn TerminalEndpoint, args: &Value) -> Result<ToolResult> {
     let res = request(terminal, "GET", &format!("/execute/{}/status?{}", encode_uri_component(&js_string(&arg(args, "id"))), q(&[("wait", json!(30))])), None, REQUEST_TIMEOUT_MS).await?;
     let Some(json) = res.json.clone().filter(|_| res.status == 200) else { return Err(fail(&res)) };
-    let out = output_text(&json);
+    let mut out = output_text(&json);
+    trim_live(&mut out);
     let head = if json.get("status") == Some(&json!("running")) {
         "Läuft noch.".to_string()
     } else {
@@ -1994,6 +2017,23 @@ mod tests {
     use crate::askapi::test_http::{serve, Resp};
     use crate::servers::ServersOptions;
     use std::collections::HashMap;
+
+    #[test]
+    fn gesammelte_ausgabe_bleibt_begrenzt_anfang_und_ende_bleiben() {
+        let mut out = String::from("ANFANG\n");
+        for i in 0..40 {
+            out.push_str(&"ä".repeat(10_000)); // Mehrbyte-Zeichen: Schnitt nie mitten in einem Zeichen
+            out.push_str(&format!("\nZeile {i}\n"));
+            trim_live(&mut out);
+            assert!(out.len() <= LIVE_OUTPUT_MAX + 100, "nie viel grösser als die Grenze: {}", out.len());
+        }
+        assert!(out.starts_with("ANFANG\n"));
+        assert!(out.ends_with("Zeile 39\n"));
+        assert!(out.contains("(Ausgabe gekürzt)"));
+        let mut short = String::from("kurz");
+        trim_live(&mut short);
+        assert_eq!(short, "kurz");
+    }
 
     // ---- tests/tools.test.js ----
 

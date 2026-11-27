@@ -62,6 +62,26 @@ function ModelSelect({ id, value, models, onChange, label }) {
   );
 }
 
+// Zahl mit Einheit (Token): übernimmt beim Verlassen des Felds oder mit Enter; der Hauptprozess holt sie in den erlaubten Bereich
+function NumberField({ id, label, value, min, max, step = 1000, unit = 'Token', onChange }) {
+  const [text, setText] = useState(String(value ?? ''));
+  useEffect(() => { setText(String(value ?? '')); }, [value]);
+  const commit = () => {
+    const n = Math.round(Number(String(text).replace(/[’'\s]/g, '')));
+    if (!Number.isFinite(n) || n <= 0) { setText(String(value ?? '')); return; }
+    const v = Math.min(max, Math.max(min, n));
+    setText(String(v));
+    if (v !== value) onChange(v);
+  };
+  return (
+    <label className="s-number">
+      <input id={id} type="number" inputMode="numeric" min={min} max={max} step={step} value={text} aria-label={label}
+        onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } }} />
+      <span>{unit}</span>
+    </label>
+  );
+}
+
 // Zeilen der einfachen Bereiche als Daten, damit die Suche sie findet
 function rowsOf(state, go, onVerbose, close) {
   const u = state.update || {};
@@ -88,6 +108,10 @@ function rowsOf(state, go, onVerbose, close) {
       control: <ModelSelect id="review-model" label="Modell für die Prüfung" value={state.reviewModel} models={state.models} onChange={(v) => api().setSettings({ reviewModel: v })} /> },
     { pane: 'modelle', title: 'Hilfsagenten', text: 'ASK kann Teilfragen an Hilfsagenten abgeben, die nur lesen und recherchieren (bis 3 gleichzeitig). Ein schnelles Modell spart Zeit.',
       control: <ModelSelect id="helper-model" label="Modell für Hilfsagenten" value={state.helperModel} models={state.models} onChange={(v) => api().setSettings({ helperModel: v })} /> },
+    { pane: 'modelle', title: 'Kontextgrösse', text: 'So viel Verlauf geht höchstens an das Modell. Meldet ASK für ein Modell ein kleineres Fenster, gilt das kleinere. Der Ring im Eingabefeld zeigt, wie voll es ist.', keywords: 'kontext token fenster context verlauf',
+      control: <NumberField id="context-size" label="Kontextgrösse in Token" value={state.contextSize ?? 250000} min={8000} max={2000000} onChange={(v) => api().setSettings({ contextSize: v })} /> },
+    { pane: 'modelle', title: 'Reserve zum Zusammenfassen', text: 'Ist der Verlauf bis auf diese Reserve voll, fasst ASK die älteren Aufträge zusammen und arbeitet weiter; du siehst weiterhin den ganzen Chat. /zusammenfassen tut es sofort.', keywords: 'kontext komprimieren puffer buffer zusammenfassen kompakt',
+      control: <NumberField id="context-reserve" label="Reserve in Token" value={state.contextReserve ?? 30000} min={2000} max={500000} onChange={(v) => api().setSettings({ contextReserve: v })} /> },
     { pane: 'gedaechtnis', title: 'Gedächtnis', text: 'ASK merkt sich Vorlieben, Kenntnisse und Projektwissen für alle Chats (/gedaechtnis).', badge: 'Nur lokal',
       control: <Toggle label="Gedächtnis" checked={state.memory !== false} onChange={(v) => api().setMemoryEnabled(v)} /> },
     { pane: 'gedaechtnis', title: 'Gespeicherte Einträge', text: 'Ansehen, ändern, löschen oder selbst etwas eintragen.',
@@ -113,9 +137,14 @@ function rowsOf(state, go, onVerbose, close) {
 
 export default function SettingsDialog({ state, pane: initialPane, go, onClose, onVerbose, onCompose, onPane }) {
   const [pane, setPaneState] = useState(ALL.some((p) => p.id === initialPane) ? initialPane : 'konto');
+  const [query, setQuery] = useState('');
   // Bereich merken, damit untere Dialoge (Vorschau, Katalog …) dorthin zurückkehren
   const setPane = (id) => { setPaneState(id); onPane?.(id); };
-  const [query, setQuery] = useState('');
+  // Ein Knopf im Fenster selbst wechselt den Bereich über den Dialog («Mods …» unter Darstellung): übernehmen.
+  // Ohne das blieb der Bereich stehen, weil er nur beim Öffnen gelesen wurde, und der Knopf tat nichts.
+  useEffect(() => {
+    if (ALL.some((p) => p.id === initialPane)) { setPaneState(initialPane); setQuery(''); }
+  }, [initialPane]);
   const search = useRef(null);
   useEffect(() => { search.current?.focus(); }, []);
   const rows = rowsOf(state, go, onVerbose, onClose);
@@ -536,6 +565,7 @@ export function SkillViewDialog({ slug, onClose, onCopy }) {
 
 export const SHORTCUTS = [
   ['Chats', [['Ctrl+N', 'Neuer Chat'], ['Ctrl+W', 'Tab schliessen'], ['Ctrl+Tab', 'Nächster Tab'], ['Ctrl+Shift+Tab', 'Vorheriger Tab'], ['Ctrl+1 … 9', 'Zu Tab springen'], ['Ctrl+Shift+T', 'Geschlossenen Tab wieder öffnen']]],
+  ['Suchen', [['Ctrl+F', 'Im Chat suchen'], ['Enter', 'Nächster Treffer'], ['Shift+Enter', 'Vorheriger Treffer']]],
   ['Eingabe', [['Enter', 'Senden (während eines Auftrags: einreihen)'], ['Shift+Enter', 'Neue Zeile'], ['/', 'Befehle und Skills'], ['@', 'Datei erwähnen'], ['Esc', 'Auftrag stoppen']]],
   ['Ansicht', [['Ctrl+,', 'Einstellungen'], ['Ctrl+O', 'Details zeigen'], ['Ctrl+T', 'Aufgabenliste ein- und ausklappen'], ['Ctrl +', 'Grösser'], ['Ctrl −', 'Kleiner'], ['Ctrl+0', 'Normale Grösse']]],
   ['Mods und Fehler', [['Ctrl+Shift+M', 'Alle Mods ausschalten und neu laden'], ['Ctrl+R', 'ASK-Seite neu laden'], ['Ctrl+Shift+J', 'Entwicklertools der Oberfläche']]],

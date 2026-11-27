@@ -86,6 +86,17 @@ pub fn user_data() -> PathBuf {
     cfg().read().user_data.clone()
 }
 
+/// Ordner der Chats ohne Projekt (ENTSCHEIDE E78): in den Daten der App, nicht in der Projektliste. Dort liegen
+/// die Chats (.ask/chats), ihre Anhänge und die Bilder, die ASK in einem solchen Chat erstellt.
+pub fn free_dir() -> PathBuf {
+    user_data().join("chats")
+}
+
+/// Ist das der Ordner der Chats ohne Projekt?
+pub fn is_free_dir(folder: &str) -> bool {
+    crate::util::same_path(folder, &free_dir().to_string_lossy())
+}
+
 pub fn resources(parts: &[&str]) -> PathBuf {
     let mut p = cfg().read().resources_dir.clone();
     for part in parts {
@@ -164,4 +175,18 @@ pub fn runtime_dir() -> PathBuf {
         }
     }
     local_app_data().join("ASK-Desktop").join("laufzeit")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ordner_der_chats_ohne_projekt_wird_erkannt() {
+        let free = super::free_dir();
+        let text = free.to_string_lossy().to_string();
+        assert!(super::is_free_dir(&text));
+        assert!(super::is_free_dir(&format!("{text}{}", std::path::MAIN_SEPARATOR)), "abschliessender Trenner zählt nicht");
+        assert!(!super::is_free_dir(""));
+        assert!(!super::is_free_dir(&super::user_data().to_string_lossy()), "die Daten der App selbst sind kein Chat-Ordner");
+        assert!(!super::is_free_dir(&free.join("unter").to_string_lossy()));
+    }
 }

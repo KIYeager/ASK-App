@@ -25,38 +25,48 @@
 .mem-empty-mark span:nth-child(3) { width: 13px; height: 13px; right: 2px; bottom: 0; }
 .mem-empty-small { padding: 12px 4px; }
 
-/* Netz */
+/* Karte: «Du» in der Mitte, Äste für «Über dich» (oder dessen Themen) und Projekte, Einträge als Zeilen */
 .mem-net { position: relative; flex: 1; min-height: 0; display: flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); }
 .mem-canvas { position: relative; flex: 1; min-width: 0; cursor: grab; touch-action: none; user-select: none;
   background-image: radial-gradient(var(--line) 1px, transparent 1.2px); background-size: 24px 24px; }
 .mem-canvas:active { cursor: grabbing; }
 .mem-canvas > svg { display: block; position: absolute; inset: 0; }
-.mem-link { stroke: var(--line-2); stroke-width: 1; transition: opacity .15s, stroke .15s; }
-.mem-link.projekt { stroke-width: 1.8; }
-.mem-link.tag { stroke-dasharray: 2 3; }
-.mem-link.dim { opacity: .14; }
-.mem-link.lit { stroke: var(--acc); opacity: .85; }
-.mem-node { cursor: pointer; transition: opacity .15s; }
-.mem-node.du { cursor: default; }
-.mem-node.dim { opacity: .2; }
-.mem-node circle:not(.hit) { stroke: var(--card); stroke-width: 2; transition: r .12s; }
-.mem-node.tag circle:not(.hit) { stroke: var(--dim); stroke-width: 1.4; }
-.mem-node.item:hover circle:not(.hit) { r: 7.5; }
-.mem-node.item.sel circle:not(.hit) { r: 7.5; stroke: var(--text); stroke-width: 2; }
-.mem-node .hit { fill: transparent; stroke: none; }
-.mem-label { font-size: 12px; fill: var(--text); pointer-events: none; paint-order: stroke; stroke: var(--card); stroke-width: 3.5px; stroke-linejoin: round; }
-.mem-label.du { fill: var(--bg); stroke: none; font-weight: 650; font-size: 13px; }
-.mem-label.projekt { font-weight: 600; font-size: 12.5px; }
-.mem-label.tag { fill: var(--muted); font-size: 11px; }
+.mem-link { fill: none; stroke: var(--line-2); stroke-width: 1.4; stroke-opacity: .7; transition: opacity .15s; }
+.mem-link.ast { stroke-width: 2.4; stroke-opacity: .85; }
+.mem-link.dim { opacity: .18; }
+.mem-node { transition: opacity .15s; }
+.mem-node.dim { opacity: .28; }
+.mem-node.du circle { fill: var(--text); }
+.mem-node.gruppe rect { fill: var(--pane); stroke: var(--line-2); stroke-width: 1.2; }
+.mem-node.item { cursor: pointer; outline: none; }
+.mem-node.item circle { fill: var(--muted); stroke: var(--card); stroke-width: 2; }
+.mem-node.item .hit { fill: transparent; stroke: transparent; stroke-width: 1.2; transition: fill .12s; }
+.mem-node.item.hover .hit, .mem-node.item:focus-visible .hit { fill: var(--hover); }
+.mem-node.item:focus-visible .hit { stroke: var(--acc); }
+.mem-node.item.sel .hit { fill: var(--acc-soft); stroke: var(--acc); }
+.mem-label { font-size: 12.5px; fill: var(--text); pointer-events: none; }
+.mem-label.du { fill: var(--bg); font-weight: 650; font-size: 13.5px; }
+.mem-label.gruppe { font-weight: 600; fill: var(--text); }
+.mem-label.count { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+/* Äste der Projekte tragen die Farbe des Projekts: helle Schrift darauf */
+.mem-node.gruppe:not(.about) .mem-label { fill: #fff; }
+.mem-node.gruppe:not(.about) .mem-label.count { fill: rgba(255, 255, 255, .78); }
+.mem-hash { fill: var(--dim); font-size: 11px; }
+.mem-tagbar { position: absolute; top: 10px; left: 10px; right: 56px; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; cursor: default; }
+.mem-tagbar-label { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-right: 3px; }
+.mem-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: color-mix(in srgb, var(--pane) 92%, transparent); color: var(--muted);
+  border-radius: 999px; padding: 2px 9px; font-size: 12px; line-height: 1.5; }
+.mem-chip span { font-size: 10.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.mem-chip:hover { color: var(--text); border-color: var(--line-2); }
+.mem-chip.on { background: var(--acc); border-color: var(--acc); color: var(--acc-ink); }
+.mem-chip.on span { color: inherit; opacity: .8; }
+.mem-tip-tags { display: block; margin-top: 3px; opacity: .7; font-size: 11.5px; }
 .mem-tip { position: absolute; transform: translate(-50%, calc(-100% - 12px)); width: max-content; max-width: 280px; padding: 6px 10px; border-radius: 8px;
   background: var(--text); color: var(--bg); font-size: 12.5px; line-height: 1.4; pointer-events: none; box-shadow: var(--shadow); z-index: 2; }
 .mem-zoom { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 2px; padding: 3px;
   background: var(--pane); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); }
 .mem-legend { position: absolute; left: 12px; bottom: 10px; display: flex; gap: 14px; padding: 4px 8px; border-radius: 8px; font-size: 11.5px; color: var(--muted);
   background: color-mix(in srgb, var(--card) 88%, transparent); pointer-events: none; }
-.mem-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
-.mem-legend .dot.ring { border: 1.4px solid var(--dim); background: var(--pane); }
-.mem-legend .dot.small { width: 7px; height: 7px; vertical-align: 0; }
 
 /* Seitenfeld zum Eintrag */
 .mem-panel { width: 300px; flex: none; border-left: 1px solid var(--line); background: var(--pane); padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
@@ -119,3 +129,19 @@
 .mem-field.grow { flex: 1; min-height: 160px; }
 .dialog .mem-field textarea { flex: 1; resize: none; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
 .skill-btns { display: flex; gap: 8px; align-items: center; }
+
+/* Import aus einer anderen KI */
+.mem-import { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 6px 2px 2px; }
+.mem-import p { margin: 0; line-height: 1.5; max-width: 78ch; }
+.mem-import textarea { flex: 1; min-height: 140px; resize: none; border: 1px solid var(--line); border-radius: 10px; background: var(--pane); color: var(--text); padding: 10px 12px; font: 13px/1.5 var(--mono); outline: none; }
+.mem-import textarea:focus { border-color: var(--acc); }
+.mem-import-list { list-style: none; margin: 0; padding: 0; flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; }
+.mem-import-list li + li { border-top: 1px solid var(--line); }
+.mem-import-list label { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; cursor: pointer; }
+.mem-import-list label:hover { background: var(--hover); }
+.mem-import-list input { margin-top: 3px; flex: none; }
+.mem-import-list li:not(.on) .mem-item-text { color: var(--muted); }
+.mem-import .mem-form-btns { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.mem-import .mem-form-btns .spacer { flex: 1; }
+.mem-empty-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+.mem-empty-btns .btn { margin-top: 0; }

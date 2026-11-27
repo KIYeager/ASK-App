@@ -119,6 +119,10 @@ impl Views {
         };
         let main = window.clone();
         let ui = WebviewBuilder::new(UI, ui_url)
+            // Dateien ins Fenster ziehen (Anhang im Chat, Kopieren in den Ordner): Tauri fängt hineingezogene Dateien
+            // unter Windows sonst selbst ab, und in der Oberfläche kommt kein «drop» an. Seit dem Wechsel von Electron
+            // tat das Hineinziehen darum nichts.
+            .disable_drag_drop_handler()
             .initialization_script(SHORTCUTS)
             .on_navigation(|url| {
                 // Die Oberfläche navigiert nie weg (wie will-navigate → preventDefault)

@@ -349,7 +349,7 @@ fn merken(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
         return Ok(ToolOutput::new(false, "Nicht gemerkt: Das sieht nach heiklen Angaben aus (Zugangsdaten, Gesundheit, Noten). So etwas gehört nicht ins Gedächtnis.".into(), "nicht gemerkt"));
     }
     let scope = if field(a, "bereich") == "projekt" { "projekt" } else { "konto" };
-    if scope == "projekt" && ctx.folder.is_empty() {
+    if scope == "projekt" && (ctx.folder.is_empty() || crate::paths::is_free_dir(&ctx.folder)) {
         bail!("Ohne Projekt geht nur bereich «konto».");
     }
     let item = memory.add(NewItem {

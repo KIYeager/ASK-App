@@ -20,12 +20,12 @@ use unicode_normalization::UnicodeNormalization;
 pub const MAX_FILE: usize = 100 * 1024; // Import und Speichern: höchstens 100 KB
 pub const MAX_DESCRIPTION: usize = 300;
 pub const MAX_NAME: usize = 40;
-pub const PROMPT_MAX: usize = 3200; // Liste im Systemprompt (dazu 11 mitgelieferte Skills, E70)
+pub const PROMPT_MAX: usize = 4600; // Liste im Systemprompt (dazu die 16 mitgelieferten Skills und der Hilfe-Skill, E70, E78)
 pub const PROMPT_DESCRIPTION: usize = 160;
 pub const MAX_SKILLS: usize = 100;
 /// Befehle der App: ein Skill mit diesem Namen liesse sich mit /name nicht aufrufen
 pub const RESERVED: &[&str] = &["neu", "projekt", "goal", "suchen", "ordner", "explorer", "dateien", "github", "modell", "denken", "web", "chats",
-    "einstellungen", "update", "beta", "neustart", "abmelden", "gedaechtnis", "skills", "hilfe", "mods", "plan", "auto", "nachfragen", "nutzung"];
+    "einstellungen", "update", "beta", "neustart", "abmelden", "gedaechtnis", "skills", "hilfe", "mods", "plan", "auto", "nachfragen", "nutzung", "zusammenfassen", "finden"];
 
 fn is_reserved(slug: &str) -> bool {
     RESERVED.contains(&slug)
@@ -522,7 +522,10 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let s = Skills::with_standard(t.path(), &std_dir, std::sync::Arc::new(Vec::new));
         let n = s.list().len();
-        assert!(n >= 11, "{n}");
+        assert!(n >= 17, "{n}");
+        for name in ["word-dokument", "powerpoint-folien", "excel-tabelle", "dokument-zusammenfassen", "dokument-verbessern"] {
+            assert!(s.get(name).is_some(), "{name} fehlt");
+        }
         let p = s.prompt();
         assert!(!p.contains("weitere"), "alle {n} im Prompt, nicht abgeschnitten: {p}");
         assert!(p.contains("Auch ohne /name"), "ASK benutzt passende Skills von selbst");

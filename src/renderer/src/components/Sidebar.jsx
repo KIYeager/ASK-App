@@ -4,10 +4,13 @@ import PopMenu from './PopMenu.jsx';
 import { api } from '../api.js';
 import { formatTime, shortTime } from '../lib/format.js';
 
-// Linke Leiste: Projekte (ein Projekt = ein Arbeitsordner) mit ihren Chats
+const FREE_SHOWN = 8; // Chats ohne Projekt: so viele, bis man «Alle zeigen» wählt
+
+// Linke Leiste: oben die Chats ohne Projekt (ENTSCHEIDE E78), darunter die Projekte (ein Projekt = ein Arbeitsordner) mit ihren Chats
 export default function Sidebar({ groups, chatId, running, runningChats = [], query, setQuery, renaming, onRenameDone, onNewChat, onOpenChat, onDeleteChat,
-  onNewProject, onProjectMenu, onNewInProject, state, onSettings, onStatus, onOpen, update, onUpdate, onRefresh }) {
+  onNewProject, onProjectMenu, onNewInProject, state, onSettings, onStatus, onOpen, update, onUpdate, onRefresh, onChatMoved }) {
   const [collapsed, setCollapsed] = useState(() => new Set());
+  const [allFree, setAllFree] = useState(false);
   const [profile, setProfile] = useState(null); // Menü am Profil: { x, y }
   const [menu, setMenu] = useState(null); // { folder, chat, x, y }
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -66,9 +69,62 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
       askOk ? { icon: 'logout', label: 'Abmelden', run: () => api().logout() } : { icon: 'logout', label: 'Anmelden …', run: () => onStatus('ask') },
     ];
   };
+  const isBusy = (id) => runningChats.some((r) => r.id === id);
+  const moveTargets = (from) => groups.filter((g) => !g.missing && g.folder.toLowerCase() !== String(from).toLowerCase());
+  const moveChat = async (from, id, to) => {
+    let res;
+    try { res = await api().chatMove(from, id, to); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
+    if (res?.ok) onChatMoved?.(id, to);
+    else if (res?.reason) onOpen({ name: 'terminal', text: res.reason });
+    onRefresh?.();
+  };
+  const exportChat = async (folder, id) => {
+    let res;
+    try { res = await api().chatExport(folder, id); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
+    if (res && !res.ok && !res.canceled && res.reason) onOpen({ name: 'terminal', text: res.reason });
+  };
+  const freeGroup = groups.find((g) => g.free);
+  const projectGroups = groups.filter((g) => !g.free);
+  const busyIn = (g) => runningChats.some((r) => r.folder && r.folder.toLowerCase() === g.folder.toLowerCase());
+  // Chats einer Gruppe: der sichtbare, noch leere Chat steht als «Neuer Chat» zuoberst; die Suche filtert nach Titel
+  const chatsOf = (g) => {
+    let chats = g.chats;
+    if (g.current && chatId && !chats.some((c) => c.id === chatId)) chats = [{ id: chatId, title: 'Neuer Chat', updated: Date.now(), count: 0, placeholder: true }, ...chats];
+    return q ? chats.filter((c) => !c.placeholder && c.title.toLowerCase().includes(q)) : chats;
+  };
+  const chatRow = (g, c) => {
+    const active = g.current && c.id === chatId;
+    if (renamingChat && renamingChat.folder === g.folder && renamingChat.id === c.id) {
+      return (
+        <li key={c.id} className="chat-item renaming">
+          <RenameField name={c.title} className="chat-rename" onDone={async (title) => {
+            setRenamingChat(null);
+            if (title.trim() && title.trim() !== c.title) await api().chatRename(g.folder, c.id, title.trim());
+            onRefresh?.();
+          }} />
+        </li>
+      );
+    }
+    const busy = (active && running) || runningChats.some((r) => r.id === c.id);
+    return (
+      <li key={c.id} className={`chat-item${active ? ' active' : ''}${c.placeholder ? ' placeholder' : ''}`} aria-current={active ? 'true' : undefined}
+        title={c.placeholder ? 'Neuer Chat' : `${c.title}\n${c.count} ${c.count === 1 ? 'Auftrag' : 'Aufträge'} · ${formatTime(c.updated)} (${shortTime(c.updated)})\nRechtsklick: Menü`}
+        onClick={() => { if (!active) onOpenChat(g.folder, c.id); }}
+        onContextMenu={(e) => { if (!c.placeholder) openMenu(e, g.folder, c); else e.preventDefault(); }}>
+        {busy ? <span className="spin small" title="Arbeitet" aria-hidden="true" /> : null}
+        {c.pinned ? <Icon name="pin" size={12} className="cpin" title="Angeheftet" /> : null}
+        <span className="ctitle">{c.title}</span>
+        {!c.placeholder ? (
+          <button type="button" className="icon-btn cmenu-btn" aria-label={`Menü für ${c.title}`} aria-haspopup="menu" title={busy ? 'Stoppen, Umbenennen, Anheften, Löschen' : 'Umbenennen, Anheften, Löschen'}
+            onClick={(e) => openMenu(e, g.folder, c)}><Icon name="more" size={14} /></button>
+        ) : null}
+      </li>
+    );
+  };
   return (
     <aside id="chatbar" className="chatbar">
-      <button id="new-btn" type="button" className="new-chat" onClick={onNewChat} disabled={running || !state.folder} title="Neuer Chat im aktuellen Projekt (/neu)">
+      <button id="new-btn" type="button" className="new-chat" onClick={onNewChat} disabled={!state.folder}
+        title={state.free ? 'Neuer Chat ohne Projekt (/neu, Ctrl+N)' : 'Neuer Chat im aktuellen Projekt (/neu, Ctrl+N)'}>
         <Icon name="pen" size={15} /> Neuer Chat
       </button>
       <label className="search">
@@ -76,15 +132,42 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
         <input id="chat-search" type="search" placeholder="Chats durchsuchen" spellCheck={false} value={query}
           onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }} />
       </label>
-      <div className="side-label">
-        <span>Projekte</span>
-        <button type="button" className="icon-btn" title="Neues Projekt" aria-label="Neues Projekt" onClick={onNewProject}><Icon name="plus" size={15} /></button>
-      </div>
       <div id="chat-groups" className="chat-groups">
-        {groups.map((g) => {
-          let chats = g.chats;
-          if (g.current && chatId && !chats.some((c) => c.id === chatId)) chats = [{ id: chatId, title: 'Neuer Chat', updated: Date.now(), count: 0, placeholder: true }, ...chats];
-          if (q) chats = chats.filter((c) => !c.placeholder && c.title.toLowerCase().includes(q));
+        {freeGroup ? (() => {
+          const all = chatsOf(freeGroup);
+          const isCollapsed = !q && collapsed.has(freeGroup.folder);
+          if (q && !all.length) return null;
+          // Der sichtbare Chat bleibt in der Liste, auch wenn er weiter unten stünde
+          const shown = q || allFree ? all : all.filter((c, i) => i < FREE_SHOWN || c.id === chatId);
+          return (
+            <section className={`chat-group free${freeGroup.current ? ' current' : ''}${isCollapsed ? ' collapsed' : ''}`} data-folder={freeGroup.folder}>
+              <div className="side-label">
+                <button type="button" className="label-toggle" onClick={() => toggle(freeGroup.folder)} aria-expanded={!isCollapsed} title="Chats ohne Projekt: nur Gespräch, Web und Bilder">
+                  <span>Chats</span>
+                  {!freeGroup.current && busyIn(freeGroup) ? <span className="spin small" title="Arbeitet im Hintergrund" /> : null}
+                  <Icon name={isCollapsed ? 'chevRight' : 'chevDown'} size={13} className="chev" />
+                </button>
+                <button type="button" id="free-new" className="icon-btn" title="Neuer Chat ohne Projekt" aria-label="Neuer Chat ohne Projekt" onClick={() => onNewInProject(freeGroup.folder)}><Icon name="plus" size={15} /></button>
+              </div>
+              {!isCollapsed ? (
+                <ul className="chat-items">
+                  {shown.length ? shown.map((c) => chatRow(freeGroup, c)) : <li className="chat-empty">Noch keine Chats ohne Projekt</li>}
+                  {!q && all.length > shown.length ? (
+                    <li className="chat-more"><button type="button" className="link" onClick={() => setAllFree(true)}>Alle {all.length} zeigen</button></li>
+                  ) : !q && allFree && all.length > FREE_SHOWN ? (
+                    <li className="chat-more"><button type="button" className="link" onClick={() => setAllFree(false)}>Weniger zeigen</button></li>
+                  ) : null}
+                </ul>
+              ) : null}
+            </section>
+          );
+        })() : null}
+        <div className="side-label">
+          <span>Projekte</span>
+          <button type="button" className="icon-btn" title="Neues Projekt" aria-label="Neues Projekt" onClick={onNewProject}><Icon name="plus" size={15} /></button>
+        </div>
+        {projectGroups.map((g) => {
+          const chats = chatsOf(g);
           if (q && !chats.length) return null;
           const isCollapsed = !q && collapsed.has(g.folder);
           return (
@@ -94,7 +177,7 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
                 <button type="button" className="group-toggle" onClick={() => toggle(g.folder)} aria-expanded={!isCollapsed}>
                   <span className="swatch" style={{ background: g.color }} />
                   {renaming === g.folder ? null : <span className="gname">{g.name}</span>}
-                  {!g.current && runningChats.some((r) => r.folder && r.folder.toLowerCase() === g.folder.toLowerCase()) ? <span className="spin small" title="Arbeitet im Hintergrund" /> : null}
+                  {!g.current && busyIn(g) ? <span className="spin small" title="Arbeitet im Hintergrund" /> : null}
                   <Icon name={isCollapsed ? 'chevRight' : 'chevDown'} size={14} className="chev" />
                 </button>
                 {renaming === g.folder ? <RenameField name={g.name} onDone={(name) => onRenameDone(g.folder, name)} /> : null}
@@ -109,39 +192,16 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
               {!isCollapsed ? (
                 <ul className="chat-items">
                   {g.missing ? <li className="chat-empty">Ordner nicht gefunden</li>
-                    : chats.length ? chats.map((c) => {
-                      const active = g.current && c.id === chatId;
-                      if (renamingChat && renamingChat.folder === g.folder && renamingChat.id === c.id) {
-                        return (
-                          <li key={c.id} className="chat-item renaming">
-                            <RenameField name={c.title} className="chat-rename" onDone={async (title) => {
-                              setRenamingChat(null);
-                              if (title.trim() && title.trim() !== c.title) await api().chatRename(g.folder, c.id, title.trim());
-                              onRefresh?.();
-                            }} />
-                          </li>
-                        );
-                      }
-                      return (
-                        <li key={c.id} className={`chat-item${active ? ' active' : ''}${c.placeholder ? ' placeholder' : ''}`} aria-current={active ? 'true' : undefined}
-                          title={`${c.title}\n${c.count} ${c.count === 1 ? 'Auftrag' : 'Aufträge'} · ${formatTime(c.updated)} (${shortTime(c.updated)})\nRechtsklick: Menü`}
-                          onClick={() => { if (!active) onOpenChat(g.folder, c.id); }}
-                          onContextMenu={(e) => { if (!c.placeholder) openMenu(e, g.folder, c); else e.preventDefault(); }}>
-                          {(active && running) || runningChats.some((r) => r.id === c.id) ? <span className="spin small" title="Arbeitet" aria-hidden="true" /> : null}
-                          {c.pinned ? <Icon name="pin" size={12} className="cpin" title="Angeheftet" /> : null}
-                          <span className="ctitle">{c.title}</span>
-                          {!c.placeholder ? (
-                            <button type="button" className="icon-btn cmenu-btn" aria-label={`Menü für ${c.title}`} aria-haspopup="menu" title="Umbenennen, Anheften, Löschen"
-                              onClick={(e) => openMenu(e, g.folder, c)}><Icon name="more" size={14} /></button>
-                          ) : null}
-                        </li>
-                      );
-                    }) : <li className="chat-empty">Noch keine Chats</li>}
+                    : chats.length ? chats.map((c) => chatRow(g, c)) : <li className="chat-empty">Noch keine Chats</li>}
                 </ul>
               ) : null}
             </section>
           );
         })}
+        {!projectGroups.length && !q ? (
+          <div className="chat-empty projects-empty">Noch keine Projekte. In einem Projekt arbeitet ASK mit den Dateien eines Ordners.{' '}
+            <button type="button" className="link" onClick={onNewProject}>Projekt anlegen</button></div>
+        ) : null}
         {hits.query && hits.query === query.trim() && hits.list.length ? (
           <section className="chat-group content-hits">
             <div className="group-head"><span className="group-toggle"><span className="gname">Im Inhalt gefunden</span></span></div>
@@ -155,8 +215,7 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
             </ul>
           </section>
         ) : null}
-        {!groups.length ? <div className="chat-empty">{q ? 'Keine Treffer' : 'Noch keine Projekte'}</div> : null}
-        {q && groups.length && !groups.some((g) => g.chats.some((c) => c.title.toLowerCase().includes(q))) && !(hits.query === query.trim() && hits.list.length)
+        {q && !groups.some((g) => chatsOf(g).length) && !(hits.query === query.trim() && hits.list.length)
           ? <div className="chat-empty">Keine Treffer</div> : null}
       </div>
       {menu ? <PopMenu x={menu.x} y={menu.y} label="Chat" onClose={closeMenu} items={[
@@ -164,6 +223,11 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
         runningChats.some((r) => r.id === menu.chat.id) ? { label: 'Stoppen', run: () => api().chatStopChat(menu.folder, menu.chat.id) } : null,
         { label: 'Umbenennen', run: () => setRenamingChat({ folder: menu.folder, id: menu.chat.id }) },
         { label: menu.chat.pinned ? 'Nicht mehr anheften' : 'Anheften', run: async () => { await api().chatPin(menu.folder, menu.chat.id, !menu.chat.pinned); onRefresh?.(); } },
+        // In ein anderes Projekt oder zu den Chats ohne Projekt (E78); nicht, solange der Chat arbeitet
+        moveTargets(menu.folder).length ? { label: 'Verschieben nach', enabled: !isBusy(menu.chat.id), submenu: moveTargets(menu.folder).map((g) => ({
+          label: g.free ? 'Chats (ohne Projekt)' : g.name, swatch: g.free ? undefined : g.color, run: () => moveChat(menu.folder, menu.chat.id, g.folder) })) } : null,
+        { label: 'Exportieren …', run: () => exportChat(menu.folder, menu.chat.id) },
+        { separator: true },
         { label: 'Löschen', danger: true, run: () => onDeleteChat(menu.folder, menu.chat.id, menu.chat.title) },
       ]} /> : null}
       <div className="side-foot">

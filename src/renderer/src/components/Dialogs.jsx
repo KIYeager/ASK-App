@@ -114,7 +114,7 @@ function HelpSteps({ text, state, extra = '' }) {
           <ol>{help.steps.map((s) => <li key={s}>{s}</li>)}</ol>
         </>
       ) : null}
-      <button type="button" className="btn small" onClick={() => { api().copy(`${errorDetails(text, state)}${extra ? `\n\nMeldungen:\n${extra}` : ''}`); setCopied(true); }}>
+      <button type="button" className="btn small" onClick={() => { api().copy(`${errorDetails(text, state)}${extra ? `\n\nMeldungen:\n${extra}` : ''}`); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>
         {copied ? 'Kopiert' : 'Details kopieren'}
       </button>
     </div>
@@ -213,7 +213,7 @@ function TerminalDialog({ state, text, onClose }) {
   );
 }
 
-function GithubDialog({ onClose }) {
+function GithubDialog({ onClose, free }) {
   const [s, setS] = useState(null);
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
@@ -240,7 +240,8 @@ function GithubDialog({ onClose }) {
             {s.linked ? (
               <p>Dieses Projekt gehört zu <a href={s.url} onClick={(e) => { e.preventDefault(); api().openLink(s.url); }}>{s.repo}</a>.
                 {' '}Hier geändert: {s.changed.length + s.added.length + s.deleted.length} Dateien{s.remoteNewer ? '; auf GitHub gibt es Neueres' : ''}.</p>
-            ) : <p>Dieses Projekt ist mit keinem Repository verbunden. Verbinde es rechts im Bereich «GitHub» oder sag ASK zum Beispiel «Hol das Repository besitzer/name» oder «Leg das Projekt auf GitHub an».</p>}
+            ) : free ? <p>Ein Chat ohne Projekt hat kein Repository. Öffne ein Projekt, um es mit GitHub zu verbinden.</p>
+              : <p>Dieses Projekt ist mit keinem Repository verbunden. Verbinde es rechts im Bereich «GitHub» oder sag ASK zum Beispiel «Hol das Repository besitzer/name» oder «Leg das Projekt auf GitHub an».</p>}
             <p className="muted small">Holen, Hochladen, Branches und Pull Requests: rechts im Bereich «GitHub» oder im Chat, z. B. «lade die Änderungen auf GitHub hoch».</p>
             {s.trusted?.length ? (
               <>
@@ -434,7 +435,7 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
       {name === 'project' ? <ProjectDialog state={state} onResult={close} onClose={close} /> : null}
       {name === 'ask' ? <AskDialog state={state} onClose={close} onToken={() => setDialog({ name: 'ask-token' })} /> : null}
       {name === 'terminal' ? <TerminalDialog state={state} text={dialog.text} onClose={close} /> : null}
-      {name === 'github' ? <GithubDialog onClose={close} /> : null}
+      {name === 'github' ? <GithubDialog onClose={close} free={!!state.free} /> : null}
       {name === 'settings' ? <SettingsDialog key="settings" state={state} pane={dialog.pane} go={go} onClose={close} onVerbose={onVerbose}
         onPane={(pane) => setDialog({ name: 'settings', pane })}
         onCompose={(t) => { setDialog(null); onCompose(t); }} /> : null}

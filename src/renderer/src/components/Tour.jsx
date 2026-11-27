@@ -4,8 +4,8 @@ import { api } from '../api.js';
 // Einführung beim ersten Start (ENTSCHEIDE E49): vier Karten, die auf Teile der Oberfläche zeigen.
 // Wenig Text, «Weiter» und «Überspringen»; gemerkt in prefs.tourDone, wieder zu öffnen in den Einstellungen.
 const STEPS = [
-  { target: ['#chatbar'], title: 'Projekte',
-    text: 'Links stehen deine Projekte mit ihren Chats. Ein Projekt ist ein Ordner auf deinem Laptop.' },
+  { target: ['#chatbar'], title: 'Chats und Projekte',
+    text: 'Links stehen deine Chats und Projekte. Ein Chat ohne Projekt ist zum Fragen da. In einem Projekt arbeitet ASK mit den Dateien eines Ordners auf deinem Laptop.' },
   { target: ['#input-box'], title: 'Auftrag',
     text: 'Hier beschreibst du, was ASK tun soll. Im Feld wählst du Modus (Auto, Nachfragen, Plan), Web und Modell; @ nennt eine Datei, / öffnet Befehle.' },
   { target: ['.work', '#messages .msg', '#transcript'], title: 'Im Chat',
@@ -38,6 +38,15 @@ function place(r) {
   if (r.y >= 200) return { left: clampX(r.x + r.w / 2 - CARD_W / 2), bottom: vh - r.y + GAP };
   if (vh - (r.y + r.h) >= 200) return { left: clampX(r.x + r.w / 2 - CARD_W / 2), top: r.y + r.h + GAP };
   return { left: clampX(r.x + r.w / 2 - CARD_W / 2), top: Math.max(GAP, r.y + r.h / 2 - 90) };
+}
+
+// Rahmen um das Ziel, ganz im Fenster: Liegt das Ziel am Rand (Leiste links), bliebe sonst eine Seite des Rahmens unsichtbar
+function spot(r) {
+  const left = Math.max(2, r.x - PAD);
+  const top = Math.max(2, r.y - PAD);
+  const right = Math.min(window.innerWidth - 2, r.x + r.w + PAD);
+  const bottom = Math.min(window.innerHeight - 2, r.y + r.h + PAD);
+  return { left, top, width: right - left, height: bottom - top };
 }
 
 export default function Tour({ state, onDone }) {
@@ -81,7 +90,7 @@ export default function Tour({ state, onDone }) {
   const pos = rect ? place(rect) : null;
   return (
     <div id="tour" className={`tour${rect ? '' : ' dim'}`}>
-      {rect ? <div className="tour-spot" style={{ left: rect.x - PAD, top: rect.y - PAD, width: rect.w + 2 * PAD, height: rect.h + 2 * PAD }} /> : null}
+      {rect ? <div className="tour-spot" style={spot(rect)} /> : null}
       <div className={`tour-card${pos ? '' : ' center'}`} style={pos || undefined} role="dialog" aria-modal="true"
         aria-labelledby="tour-title" aria-describedby="tour-text">
         <div className="tour-count">{step + 1} / {STEPS.length}</div>

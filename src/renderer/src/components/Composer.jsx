@@ -9,6 +9,9 @@ const MAX_ATTACH = 10;
 const MAX_ATTACH_SIZE = 50 * 1024 * 1024;
 const IMAGE_RE = /\.(png|jpe?g|gif|webp)$/i;
 const TODO_SHOWN = 7;
+const MAX_DRAFTS = 20; // Entwürfe anderer Chats, die das Eingabefeld behält
+const MAX_SENT = 50; // frühere Eingaben für ↑
+const revoke = (files) => { for (const f of files || []) if (f.url) URL.revokeObjectURL(f.url); };
 
 // Aufgabenliste über der Eingabe wie in Claude Code (aus dem letzten update_tasks)
 function Todo({ tasks, open, onToggle }) {
@@ -285,12 +288,12 @@ function mentionAt(text, caret) {
 }
 
 const Composer = forwardRef(function Composer(props, ref) {
-  const { state, running, block, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
+  const { state, chatId, free, running, block, fileBlock, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
     onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode, autoEffort } = props;
   const [text, setText] = useState('');
   const [pending, setPending] = useState([]); // neue Anhänge { name, type, size, data, url }
   const [kept, setKept] = useState([]); // schon gespeicherte Anhänge einer zurückgenommenen Eingabe { path, name, image }
-  const [queued, setQueued] = useState(null); // Enter während eines Auftrags: eine wartende Nachricht (ENTSCHEIDE E34)
+  const [queued, setQueued] = useState(null); // Enter während eines Auftrags: eine wartende Nachricht { chat, text, files, kept } (ENTSCHEIDE E34)
   const [slashIndex, setSlashIndex] = useState(0);
   const [mention, setMention] = useState(null); // { start, query, items, index }
   const [dropping, setDropping] = useState(false);
@@ -300,6 +303,47 @@ const Composer = forwardRef(function Composer(props, ref) {
   const input = useRef(null);
   const fileInput = useRef(null);
   const sent = useRef({ list: [], index: -1 });
+  // Jeder Chat behält seinen Entwurf (Text, Anhänge, wartende Nachricht): Wer während eines Auftrags einen neuen
+  // Chat beginnt oder den Chat wechselt, findet beim Zurückkommen vor, was dort stand, und nichts geht in den falschen Chat.
+  const drafts = useRef(new Map()); // Chat → { text, pending, kept }
+  const shownChat = useRef(chatId);
+  const live = useRef({});
+  live.current = { text, pending, kept, queued };
+  const stash = (chat, d) => {
+    if (!chat) return;
+    const old = drafts.current.get(chat);
+    drafts.current.delete(chat);
+    const files = old ? [...d.pending, ...old.pending] : d.pending;
+    revoke(files.slice(MAX_ATTACH)); // was nicht mehr Platz hat, auch freigeben
+    const merged = { text: old ? [d.text, old.text].filter(Boolean).join('\n') : d.text, pending: files.slice(0, MAX_ATTACH), kept: old ? [...d.kept, ...old.kept] : d.kept };
+    if (!merged.text && !merged.pending.length && !merged.kept.length) return;
+    drafts.current.set(chat, merged);
+    while (drafts.current.size > MAX_DRAFTS) { // ältesten Entwurf verwerfen, Vorschaubilder freigeben
+      const [first, gone] = drafts.current.entries().next().value;
+      revoke(gone.pending);
+      drafts.current.delete(first);
+    }
+  };
+  useLayoutEffect(() => {
+    const prev = shownChat.current;
+    if (prev === chatId) return;
+    shownChat.current = chatId;
+    const cur = live.current;
+    const q = cur.queued && cur.queued.chat === prev ? cur.queued : null;
+    stash(prev, { text: [q?.text, cur.text].filter(Boolean).join('\n'), pending: [...(q?.files || []), ...cur.pending], kept: [...(q?.kept || []), ...cur.kept] });
+    const next = drafts.current.get(chatId) || { text: '', pending: [], kept: [] };
+    drafts.current.delete(chatId);
+    setText(next.text); setPending(next.pending); setKept(next.kept); setQueued(null); setMention(null); setSlashIndex(0);
+    sent.current.index = -1;
+  }, [chatId]);
+  useEffect(() => () => { revoke(live.current.pending); for (const d of drafts.current.values()) revoke(d.pending); }, []);
+  // Etwas zurück ins Eingabefeld des Chats, zu dem es gehört (sichtbar: ins Feld, sonst zu dessen Entwurf)
+  const giveBack = (chat, { text: t = '', files = [], kept: k = [] }) => {
+    if (chat !== shownChat.current) { stash(chat, { text: t, pending: files, kept: k }); return; }
+    if (t) setText((cur) => (cur ? `${t}\n${cur}` : t));
+    if (files.length) setPending((p) => { const all = [...files, ...p]; revoke(all.slice(MAX_ATTACH)); return all.slice(0, MAX_ATTACH); });
+    if (k.length) setKept((p) => [...k, ...p]);
+  };
 
   useImperativeHandle(ref, () => ({
     focus: () => input.current?.focus(),
@@ -308,13 +352,10 @@ const Composer = forwardRef(function Composer(props, ref) {
     addFiles: (list) => addFiles(list),
     toggleTodo: () => toggleTodo(),
     // Text und Anhänge zurück ins Eingabefeld (zurückgenommene Eingabe, Senden fehlgeschlagen)
-    restore: ({ text: t = '', files = [], kept: k = [] } = {}) => {
-      if (t) setText((cur) => (cur ? `${t}\n${cur}` : t));
-      if (files.length) setPending((p) => [...files, ...p]);
-      if (k.length) setKept((p) => [...k, ...p]);
+    restore: (d = {}) => {
+      giveBack(shownChat.current, d);
       setTimeout(() => input.current?.focus(), 0);
     },
-    restoreQueued: () => restoreQueued(),
     // Datei im Chat erwähnen: Pfad an der Schreibstelle einfügen
     insert: (t) => {
       const el = input.current;
@@ -328,21 +369,16 @@ const Composer = forwardRef(function Composer(props, ref) {
 
   // Wartende Nachricht geht nach dem Auftrag von selbst hinaus (ausser es ist gerade nichts möglich)
   useEffect(() => {
-    if (running || !queued) return;
+    // Nur im Chat, in dem sie geschrieben wurde; nach einem Wechsel liegt sie schon bei dessen Entwurf (oben)
+    if (running || !queued || queued.chat !== chatId) return;
     const q = queued;
     setQueued(null);
-    if (block) { restoreQueuedFrom(q); return; }
+    if (block) { giveBack(q.chat, q); return; }
     sendNow(q.text, q.files, q.kept);
-  }, [running]);
+  }, [running, chatId]);
 
-  function restoreQueuedFrom(q) {
-    if (!q) return;
-    if (q.text) setText((cur) => (cur ? `${q.text}\n${cur}` : q.text));
-    setPending((p) => [...q.files, ...p].slice(0, MAX_ATTACH));
-    setKept((p) => [...q.kept, ...p]);
-  }
   function restoreQueued() {
-    restoreQueuedFrom(queued);
+    if (queued) giveBack(queued.chat, queued);
     setQueued(null);
   }
   function stopRun() {
@@ -377,7 +413,7 @@ const Composer = forwardRef(function Composer(props, ref) {
   }, [mentionQuery]);
 
   function updateMention(value, caret) {
-    const at = mentionAt(value, caret);
+    const at = free ? null : mentionAt(value, caret); // ohne Projekt gibt es keine Dateien zum Erwähnen
     setMention((m) => (at ? { ...at, items: m && m.query === at.query ? m.items : (m?.items || []), index: 0 } : null));
   }
 
@@ -449,10 +485,12 @@ const Composer = forwardRef(function Composer(props, ref) {
       return;
     }
     if (slashMatches.length) { runSlash(slashMatches[slashIndex] || slashMatches[0]); return; }
+    // Chat ohne Projekt: Dateien (ausser Bildern) liest ASK über das Terminal; läuft es noch nicht, scheiterte das Lesen ohne Erklärung
+    if (fileBlock && [...pending, ...kept].some((f) => !(f.url || f.image))) { notice(fileBlock); return; }
     if (running) {
       // Enter während eines Auftrags reiht ein, statt zu stoppen (stoppen: Esc oder ■)
       if (queued) { notice('Es wartet schon eine Nachricht. Mit × entfernen oder den Auftrag abwarten.'); return; }
-      setQueued({ text: t, files: pending, kept });
+      setQueued({ chat: chatId, text: t, files: pending, kept });
       setText(''); setPending([]); setKept([]);
       return;
     }
@@ -464,19 +502,16 @@ const Composer = forwardRef(function Composer(props, ref) {
   }
 
   async function sendNow(t, files = [], keptFiles = []) {
-    if (t) { sent.current.list.push(t); sent.current.index = -1; }
+    const chat = chatId;
+    if (t) { sent.current.list = [...sent.current.list, t].slice(-MAX_SENT); sent.current.index = -1; }
     const res = await onSend(t, files, keptFiles);
-    if (res && res.ok === false) {
-      setPending((p) => [...files, ...p]);
-      setKept((p) => [...keptFiles, ...p]);
-      if (t) setText((cur) => (cur ? `${t}\n${cur}` : t));
-    } else {
-      for (const f of files) if (f.url) URL.revokeObjectURL(f.url);
-    }
+    // Nicht gesendet: zurück zum Chat, aus dem es kam (auch wenn inzwischen ein anderer sichtbar ist)
+    if (res && res.ok === false) giveBack(chat, { text: t, files, kept: keptFiles });
+    else revoke(files);
   }
 
   function onKey(e) {
-    if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); cycleMode(); return; }
+    if (e.key === 'Tab' && e.shiftKey && !free) { e.preventDefault(); cycleMode(); return; }
     if (mention?.items?.length) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         const n = mention.items.length;
@@ -538,10 +573,11 @@ const Composer = forwardRef(function Composer(props, ref) {
 
   const showTodoOpen = running && tasksLive ? todoOpen : (todoPeek ?? !todoCollapsed);
   const answering = !!pendingQuestion;
-  const placeholder = answering ? 'Antworte auf die Frage von ASK …'
+  const placeholder = dropping ? 'Loslassen, um die Dateien anzuhängen'
+    : answering ? 'Antworte auf die Frage von ASK …'
     : pendingApproval ? 'ASK wartet oben auf deine Entscheidung …'
     : running ? 'Folgenachricht (wird nach dem Auftrag gesendet) · Esc stoppt'
-    : (block || (mode === 'plan' ? 'Was soll ASK planen? …' : 'Auftrag beschreiben · @ für Dateien'));
+    : (block || (free ? 'Frag ASK etwas …' : mode === 'plan' ? 'Was soll ASK planen? …' : 'Auftrag beschreiben · @ für Dateien'));
   const sendDisabled = answering ? !text.trim() : (!running && !!block);
   const ctxKnown = context?.limit > 0;
   const ctxPct = ctxKnown ? Math.min(100, Math.round((context.tokens / context.limit) * 100)) : 0;
@@ -623,7 +659,7 @@ const Composer = forwardRef(function Composer(props, ref) {
               ))}
             </div>
           ) : null}
-          <textarea id="input" ref={input} rows={1} spellCheck value={text} placeholder={placeholder} title="Enter senden · Shift+Enter neue Zeile · / Befehle · @ Datei · Shift+Tab Modus"
+          <textarea id="input" ref={input} rows={1} spellCheck value={text} placeholder={placeholder} title={free ? 'Enter senden · Shift+Enter neue Zeile · / Befehle' : 'Enter senden · Shift+Enter neue Zeile · / Befehle · @ Datei · Shift+Tab Modus'}
             onChange={(e) => { setText(e.target.value); setSlashIndex(0); updateMention(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
             onBlur={() => setMention(null)} onKeyDown={onKey} onPaste={onPaste} aria-label="Auftrag an ASK" />
           <div className="input-tools">
@@ -636,12 +672,13 @@ const Composer = forwardRef(function Composer(props, ref) {
               <Icon name="globe" size={14} /> <span className="chip-label">Web</span>
             </button>
             <ThinkPicker level={state.thinking || 'standard'} autoLevel={autoEffort} onChange={setThinking} />
-            <ModePicker mode={mode} onChange={setMode} />
+            {/* Ohne Projekt ändert ASK nichts: kein Modus zu wählen */}
+            {free ? null : <ModePicker mode={mode} onChange={setMode} />}
             <span className="spacer" />
             {context?.tokens > 0 ? (
               <span id="ctx" className={`ctx${ctxKnown && ctxPct >= 80 ? ' warn' : ''}`}
-                title={ctxKnown && ctxPct >= 80 ? 'Der Kontext ist fast voll. Beginne mit /neu einen neuen Chat, sonst vergisst das Modell Früheres.'
-                  : `Belegung des Kontextfensters${context.estimated ? ' (geschätzt)' : ''}`}>
+                title={ctxKnown && ctxPct >= 80 ? `Der Kontext ist fast voll (${short(context.tokens)} von ${short(context.limit)} Token). ASK fasst ältere Aufträge bald von selbst zusammen; /zusammenfassen tut es sofort, /neu beginnt einen neuen Chat.`
+                  : `Belegung des Kontextfensters${context.estimated ? ' (geschätzt)' : ''}${ctxKnown ? `: ${short(context.tokens)} von ${short(context.limit)} Token` : ''}`}>
                 {ctxKnown ? <span className="ctx-ring" style={{ '--p': `${ctxPct}%` }} aria-hidden="true" /> : null}
                 <span id="ctx-text">{ctxKnown ? `${ctxPct} %` : `${context.estimated ? '≈ ' : ''}${short(context.tokens)}`}</span>
               </span>

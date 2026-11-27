@@ -58,7 +58,7 @@ Erlaubte Dateien: `json css js md txt svg png jpg jpeg gif webp mp3 wav ogg woff
 | `anweisungen` | nein | höchstens 2000 Zeichen, ergänzen die Anweisungen an das Modell. Sie gelten nie gegen Sicherheit und Rückfragen |
 | `nachfragen` | nein | ASK fragt immer zuerst vor: `loeschen` (Dateien löschen), `schreiben` (Dateien schreiben), `befehle` (jeder Befehl), `web` (Internet). Macht ASK nur strenger |
 
-Befehlsnamen der App sind gesperrt: `neu projekt goal suchen ordner explorer dateien github modell denken web chats einstellungen update beta neustart abmelden gedaechtnis skills hilfe mods plan auto nachfragen nutzung`.
+Befehlsnamen der App sind gesperrt: `neu projekt goal suchen ordner explorer dateien github modell denken web chats einstellungen update beta neustart abmelden gedaechtnis skills hilfe mods plan auto nachfragen nutzung zusammenfassen finden`.
 
 ## Aussehen (CSS)
 
@@ -84,7 +84,7 @@ CSS wirkt nur, wenn der Selektor ein Element trifft. Erfinde keine Klassen, nimm
 |---|---|
 | ganzes Fenster | `.app` |
 | Kopfzeile | `.topbar`; Logo `.brand`; Tabs `.tabs`, ein Tab `.tab`, der aktive `.tab.on`; Fensterknöpfe `.win-ctl` |
-| linke Leiste (Projekte, Chats) | `.chatbar`; Knopf «Neuer Chat» `.new-chat`; Kopf eines Projekts `.group-head`; Chat in der Liste `.chat-item`, der offene `.chat-item.active`; Profil unten `.account` |
+| linke Leiste (Chats, Projekte) | `.chatbar`; Knopf «Neuer Chat» `.new-chat`; Chats ohne Projekt `.chat-group.free`; Kopf eines Projekts `.group-head`; Chat in der Liste `.chat-item`, der offene `.chat-item.active`; Profil unten `.account` |
 | Chat | `.chat-area`; Verlauf `.transcript` |
 | Eingabe der Person | `.msg.user .bubble` |
 | Antwort von ASK | `.msg.assistant`; Text darin `.md` (Überschriften, Listen, `code`, `pre`, `table`) |
