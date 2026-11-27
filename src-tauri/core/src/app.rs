@@ -604,7 +604,7 @@ impl App {
         let value = js_string(&settings::get("thinking"));
         match value.as_str() {
             "normal" => "standard".into(),
-            "gruendlich" => "hoch".into(),
+            "gruendlich" | "hoch" => "maximal".into(), // «hoch» gibt es nicht mehr (ASK kennt nur drei Stufen)
             "aus" => "tief".into(),
             v if THINKING_LEVELS.contains(&v) => v.to_string(),
             _ => "standard".into(),
@@ -613,7 +613,7 @@ impl App {
 
     /// Qwen-Schalter für hohen Denkaufwand am Ende des Systemprompts (siehe THINKING_PARAMS in askapi.rs)
     fn thinking_switch(&self) -> &'static str {
-        if matches!(self.thinking_level().as_str(), "hoch" | "maximal") { "\n\n/think" } else { "" }
+        if self.thinking_level() == "maximal" { "\n\n/think" } else { "" }
     }
 
     pub fn current_model(&self) -> String {

@@ -64,7 +64,9 @@ const STALL_MS: u64 = 5 * 60 * 1000;
 const CHARS_PER_TOKEN: f64 = 3.6;
 
 /// Denkaufwand-Stufen des Reglers
-pub const THINKING_LEVELS: [&str; 5] = ["standard", "tief", "mittel", "hoch", "maximal"];
+/// ASK kennt nur low, medium und xhigh, darum drei Stufen plus «standard» (ENTSCHEIDE E62). Ein früher
+/// gespeichertes «hoch» gilt als «maximal».
+pub const THINKING_LEVELS: [&str; 4] = ["standard", "tief", "mittel", "maximal"];
 
 /// Zeit in Millisekunden (für Tests austauschbar)
 pub type NowFn = Arc<dyn Fn() -> i64 + Send + Sync>;
@@ -637,13 +639,14 @@ pub fn parse_text_tool_calls(content: &str) -> (String, Vec<ToolCall>) {
 }
 
 /// Denkaufwand (Regler wie «Reasoning Effort» in ASK). reasoning_effort verstehen OpenAI-kompatible
-/// Server und ASK selbst; für Hoch und Maximal zusätzlich vLLM (chat_template_kwargs) und Ollama (think).
+/// Server und ASK selbst (dort nur low, medium, xhigh); für Maximal zusätzlich vLLM (chat_template_kwargs)
+/// und Ollama (think). Kennt ein anderer Server xhigh nicht, nimmt `nearest_effort` die nächste Stufe.
 /// Der Hauptprozess setzt dazu den Qwen-Schalter /think. «standard» schickt nichts, das Modell entscheidet selbst.
 pub fn thinking_params(level: &str) -> Option<Value> {
     match level {
         "tief" => Some(json!({ "reasoning_effort": "low" })),
         "mittel" => Some(json!({ "reasoning_effort": "medium" })),
-        "hoch" | "maximal" => Some(json!({ "reasoning_effort": "high", "think": true, "chat_template_kwargs": { "enable_thinking": true } })),
+        "maximal" | "hoch" => Some(json!({ "reasoning_effort": "xhigh", "think": true, "chat_template_kwargs": { "enable_thinking": true } })),
         _ => None,
     }
 }
@@ -2190,6 +2193,18 @@ mod tests {
         assert_eq!(calls, vec![ToolCall { id: String::new(), name: "x".into(), arguments: "{\"a\":1}".into() }]);
     }
 
+    #[test]
+    fn denkaufwand_stufen_wie_ask_sie_kennt() {
+        let effort = |l: &str| thinking_params(l).and_then(|p| p.get("reasoning_effort").cloned());
+        assert_eq!(thinking_params("standard"), None);
+        assert_eq!(effort("tief"), Some(json!("low")));
+        assert_eq!(effort("mittel"), Some(json!("medium")));
+        assert_eq!(effort("maximal"), Some(json!("xhigh")));
+        assert_eq!(effort("hoch"), Some(json!("xhigh")), "früher gespeichert: wie Maximal");
+        assert_eq!(thinking_params("mittel").unwrap().get("think"), None, "Denk-Schalter nur bei Maximal");
+        assert_eq!(thinking_params("maximal").unwrap()["think"], json!(true));
+    }
+
     #[tokio::test]
     async fn denkaufwand_abgelehnte_stufe_durch_die_naechste_erlaubte_ersetzen() {
         let msg = "litellm.BadRequestError: OpenAIException - Unexpected reasoning effort high. Supported types are xhigh (default), medium, and low.";
@@ -2197,9 +2212,10 @@ mod tests {
         assert_eq!(nearest_effort(msg, "low"), None, "erlaubt: nichts ändern");
         assert_eq!(nearest_effort("Unrecognized request argument: reasoning_effort", "high"), None, "ohne Liste: keine Wahl");
 
-        let detail = msg.to_string();
+        // ein Server ohne xhigh: Maximal fällt auf high zurück
+        let detail = "Unexpected reasoning effort xhigh. Supported types are low, medium, and high.".to_string();
         let server = serve(move |req| {
-            if req.json()["reasoning_effort"] == "high" {
+            if req.json()["reasoning_effort"] == "xhigh" {
                 Resp::json(400, &json!({ "detail": detail }))
             } else {
                 Resp::json(200, &json!({ "choices": [{ "message": { "content": "ok" }, "finish_reason": "stop" }] }))
@@ -2209,7 +2225,7 @@ mod tests {
         let ask = session();
         ask.set_base(&server.url);
         ask.set_token("t");
-        let req = ChatRequest { model: "m".into(), thinking: "hoch".into(), ..Default::default() };
+        let req = ChatRequest { model: "m".into(), thinking: "maximal".into(), ..Default::default() };
         let first = ask.chat(req.clone()).await.unwrap();
         assert_eq!(first.content, "ok");
         ask.chat(req).await.unwrap();
@@ -2220,7 +2236,7 @@ mod tests {
             assert_eq!(reqs[0].headers.get("authorization").map(String::as_str), Some("Bearer t"));
         }
         let sent: Vec<Value> = server.reqs.lock().iter().map(|r| r.json()["reasoning_effort"].clone()).collect();
-        assert_eq!(sent, vec![json!("high"), json!("xhigh"), json!("xhigh")], "einmal abgelehnt, danach gleich die erlaubte Stufe");
+        assert_eq!(sent, vec![json!("xhigh"), json!("high"), json!("high")], "einmal abgelehnt, danach gleich die erlaubte Stufe");
     }
 
     #[test]
@@ -2273,10 +2289,10 @@ mod tests {
         ask.set_base(&server.url);
         ask.set_token("t");
         let req = |model: &str, thinking: &str| ChatRequest { model: model.into(), thinking: thinking.into(), ..Default::default() };
-        ask.chat(req("a", "hoch")).await.unwrap();
-        ask.chat(req("b", "hoch")).await.unwrap();
+        ask.chat(req("a", "maximal")).await.unwrap();
+        ask.chat(req("b", "maximal")).await.unwrap();
         let sent: Vec<(Value, Value)> = server.reqs.lock().iter().map(|r| (r.json()["model"].clone(), r.json()["reasoning_effort"].clone())).collect();
-        assert_eq!(sent, vec![(json!("a"), json!("high")), (json!("a"), Value::Null), (json!("b"), json!("high"))]);
+        assert_eq!(sent, vec![(json!("a"), json!("xhigh")), (json!("a"), Value::Null), (json!("b"), json!("xhigh"))]);
 
         *next.lock() = Some(Resp::json(200, &json!({ "error": { "message": "maximum context length is 8192 tokens" } })));
         let err = ask.chat(req("b", "")).await.unwrap_err();

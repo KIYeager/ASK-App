@@ -125,9 +125,10 @@ Echtes ASK (Version, Freigaben, Anmeldung über Microsoft-Konto in der App), ech
 4. Browser-Bereich: Seite öffnen, das Modell klickt, tippt und macht ein Bildschirmfoto; mit minimiertem Fenster im unsichtbaren Fenster.
 5. `view_file` mit PDF, Word, Bild; Vorschau rechts für Bild, PDF, Text.
 6. Benachrichtigung mit Klick öffnet den Chat; Zoom (Ctrl +/-/0), Ctrl+R, Ctrl+Shift+I/J.
-7. Updates: nächste Beta wird angeboten, signiert geladen, installiert, ASK startet neu.
-8. Einzelne EXE: entpackt sich, startet, meldet neue Versionen nur mit «Download öffnen».
-9. Geschwindigkeit: Workflow «Benchmark» (Actions, «Run workflow») vergleicht die Electron-Fassung mit dem aktuellen Stand: Zeit bis zur Oberfläche und bis «Terminal läuft», Arbeitsspeicher, Grössen (`scripts/benchmark.js`). Ergebnis hier eintragen.
+7. Denkaufwand (E62): Regler ziehen und Stufen anklicken (gleitet), bei Maximal Pixel-Banner; ein Auftrag schickt bei Maximal `reasoning_effort` xhigh ohne abgelehnte Anfrage; mit «Animationen anzeigen» aus steht das Banner still.
+8. Updates: nächste Beta wird angeboten, signiert geladen, installiert, ASK startet neu.
+9. Einzelne EXE: entpackt sich, startet, meldet neue Versionen nur mit «Download öffnen».
+10. Geschwindigkeit: Workflow «Benchmark» (Actions, «Run workflow») vergleicht die Electron-Fassung mit dem aktuellen Stand: Zeit bis zur Oberfläche und bis «Terminal läuft», Arbeitsspeicher, Grössen (`scripts/benchmark.js`). Ergebnis hier eintragen.
 
 ### Tests wiederholen
 
