@@ -120,18 +120,33 @@ fn read_text(path: &Path) -> std::io::Result<Result<String, std::str::Utf8Error>
     Ok(std::str::from_utf8(&bytes).map(|s| s.replace("\r\n", "\n").replace('\r', "\n")))
 }
 
-/// Text schreiben wie Python im Textmodus (unter Windows wird aus «\n» «\r\n»)
+/// Text schreiben wie Python im Textmodus (unter Windows wird aus «\n» «\r\n»). Erst in eine Datei daneben,
+/// dann umbenennen: Bricht das Schreiben ab (Absturz, Disk voll), bleibt die alte Datei ganz statt leer.
+/// Lässt sich nicht umbenennen (Datei in einem Programm offen) oder ist das Ziel eine Verknüpfung: direkt schreiben.
 fn write_text(path: &Path, content: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
         }
     }
-    if cfg!(windows) {
-        std::fs::write(path, content.replace('\n', "\r\n"))
-    } else {
-        std::fs::write(path, content)
+    let data = if cfg!(windows) { content.replace('\n', "\r\n") } else { content.to_string() };
+    let link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if link || name.is_empty() {
+        return std::fs::write(path, data);
     }
+    let tmp = path.with_file_name(format!(".{name}.{:06x}.ask-tmp", rand::random::<u32>() & 0xff_ffff));
+    if std::fs::write(&tmp, &data).is_ok() {
+        // Rechte der bisherigen Datei behalten (z. B. ausführbar unter Linux)
+        if let Ok(meta) = std::fs::metadata(path) {
+            let _ = std::fs::set_permissions(&tmp, meta.permissions());
+        }
+        if std::fs::rename(&tmp, path).is_ok() {
+            return Ok(());
+        }
+    }
+    let _ = std::fs::remove_file(&tmp);
+    std::fs::write(path, data)
 }
 
 /// `repr()` eines Strings wie in Python (für Fehlermeldungen)
@@ -560,6 +575,9 @@ mod tests {
     fn schreiben_lesen_ersetzen() {
         let (_b, api) = api();
         let r = api.write("ausgabe/test.txt", "Grüsse\nzwei\n").unwrap();
+        api.write("ausgabe/test.txt", "Grüsse\nzwei\n").unwrap(); // überschreiben: über eine Datei daneben
+        let left: Vec<_> = std::fs::read_dir(_b.path().join("Arbeitsordner Prüfung").join("ausgabe")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("test.txt")], "keine Zwischendatei bleibt liegen");
         assert_eq!(r["size"], "Grüsse\nzwei\n".len());
         let ReadResult::Json(v) = api.read("ausgabe/test.txt", None, None).unwrap() else { panic!() };
         assert_eq!(v["content"], "Grüsse\nzwei\n");

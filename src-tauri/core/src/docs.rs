@@ -225,6 +225,16 @@ pub fn read(folder: &str, rel: &str) -> Result<Value> {
 /// geändert (ASK hat geschrieben), wird nichts überschrieben, sondern `{ ok: false, conflict: true, content, hash }`
 /// zurückgegeben. Sonst `{ ok: true, hash, modified, title }`.
 pub fn save(folder: &str, rel: &str, content: &str, base: Option<&str>) -> Result<Value> {
+    let _guard = DOCS_LOCK.lock();
+    save_locked(folder, rel, content, base)
+}
+
+/// Lesen, prüfen und schreiben eines Docs unter dieser Sperre: Speichert die Oberfläche, während ASK dasselbe
+/// Doc bearbeitet, gewinnt sonst still der Letzte.
+static DOCS_LOCK: Mutex<()> = Mutex::new(());
+
+/// `save` ohne Sperre (wer sie schon hält)
+fn save_locked(folder: &str, rel: &str, content: &str, base: Option<&str>) -> Result<Value> {
     let rel = doc_rel(rel)?;
     let p = full_path(folder, &rel)?;
     let content = content.replace("\r\n", "\n");
@@ -294,8 +304,13 @@ fn load_comments(folder: &str) -> serde_json::Map<String, Value> {
 fn with_comments<T>(folder: &str, f: impl FnOnce(&mut serde_json::Map<String, Value>) -> Result<T>) -> Result<T> {
     let _guard = COMMENTS_LOCK.lock();
     let mut all = load_comments(folder);
-    let out = f(&mut all)?;
+    // Unlesbare Datei: zur Seite legen statt mit einer leeren Liste zu überschreiben (alle Kommentare wären weg)
     let file = comments_file(folder);
+    if all.is_empty() && std::fs::read_to_string(&file).is_ok_and(|t| !t.trim().is_empty() && serde_json::from_str::<Value>(&t).map_or(true, |v| !v.is_object())) {
+        let aside = file.with_extension(format!("kaputt-{}.json", now_ms()));
+        std::fs::rename(&file, &aside)?;
+    }
+    let out = f(&mut all)?;
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -565,6 +580,7 @@ fn run_inner(name: &str, a: &Value, ctx: &ToolCtx, folder: &str) -> Result<ToolR
         }
         "doc_bearbeiten" => {
             let rel = doc_rel(&arg(a, "pfad").unwrap_or_default())?;
+            let guard = DOCS_LOCK.lock(); // vom Lesen bis zum Schreiben: kein Speichern der Oberfläche dazwischen
             let doc = read(folder, &rel)?;
             let current = str_of(&doc, "content");
             let (old, new, append, whole) = (arg(a, "alt"), arg(a, "neu"), arg(a, "anhaengen"), arg(a, "inhalt"));
@@ -592,7 +608,8 @@ fn run_inner(name: &str, a: &Value, ctx: &ToolCtx, folder: &str) -> Result<ToolR
             if next == current {
                 return Ok(ToolResult::new(true, "Keine Änderung: Das Doc steht schon so.", "unverändert"));
             }
-            save(folder, &rel, &next, None)?;
+            save_locked(folder, &rel, &next, None)?;
+            drop(guard);
             live(ctx, &rel, false);
             let (before, after) = (current.lines().count() as i64, next.lines().count() as i64);
             let diff = after - before;
@@ -809,6 +826,14 @@ mod tests {
         assert!(threads(&f, &rel).is_empty());
         // Kommentare liegen nicht im Projektordner
         assert!(walkdir::WalkDir::new(&proj).into_iter().flatten().all(|e| !e.path().to_string_lossy().ends_with(".json")));
+        // unlesbare Kommentardatei: zur Seite gelegt, nicht überschrieben
+        let file = comments_file(&f);
+        std::fs::write(&file, "{ kaputt").unwrap();
+        add_comment(&f, &rel, "Liebe Lea", "Neu").unwrap();
+        let aside: Vec<String> = std::fs::read_dir(file.parent().unwrap()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.contains(".kaputt-")).collect();
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        assert_eq!(std::fs::read_to_string(file.with_file_name(&aside[0])).unwrap(), "{ kaputt");
+        assert_eq!(threads(&f, &rel).len(), 1);
     }
 
     #[tokio::test]

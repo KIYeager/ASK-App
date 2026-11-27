@@ -142,6 +142,7 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
   const scroller = useRef(null);
   const hash = useRef('');
   const saved = useRef('');
+  const saving = useRef(null); // Markdown, das gerade gespeichert wird (eigene Änderung, kein Konflikt)
   const dirty = useRef(false);
   const seq = useRef(0);
   const timer = useRef(null);
@@ -166,12 +167,16 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
     if (box) box.scrollTop = top;
   }, []);
 
-  const load = useCallback(async (force) => {
+  const load = useCallback(async (force, retry = true) => {
     const r = await api().docsRead(path);
     if (!r?.ok) { setMissing(true); return; }
     setMissing(false);
     setComments(r.comments || []);
+    // Nach «nicht gefunden» ist der Editor noch nicht wieder da: nach dem Zeichnen nochmals laden, sonst
+    // landete der Text nirgends und die Prüfsumme sagte trotzdem «geladen»
+    if (!ed.current) { if (retry) setTimeout(() => load(true, false), 0); return; }
     if (!force && r.hash === hash.current) return;
+    if (!force && saving.current !== null && r.content === saving.current) return; // eigenes Speichern
     if (!force && dirty.current) { setConflict({ content: r.content, hash: r.hash }); return; }
     show(r.content);
     hash.current = r.hash;
@@ -190,7 +195,8 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
     const md = htmlToMd(ed.current);
     if (md === saved.current) { setDirty(false); setStatus('Gespeichert'); return; }
     setStatus('Speichert …');
-    const r = await api().docsSave(path, md, hash.current);
+    saving.current = md;
+    const r = await api().docsSave(path, md, hash.current).finally(() => { saving.current = null; });
     if (r?.ok) {
       hash.current = r.hash;
       saved.current = md;

@@ -315,6 +315,50 @@ pub fn check_url(raw: &str, allow_local: bool) -> Result<url::Url> {
     Ok(url)
 }
 
+/// Adresse im eigenen Rechner, im lokalen Netz oder sonst nicht öffentlich (wie `check_url`, aber für die
+/// Adressen, die ein Name ergibt)
+pub fn is_local_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || a == 0
+                || (a == 100 && (64..=127).contains(&b)) // gemeinsam genutzter Bereich von Anbietern und VPN
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_local_ip(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// Ein öffentlicher Name, der auf eine lokale Adresse zeigt (z. B. «127.0.0.1.nip.io» oder ein umgebogener
+/// DNS-Eintrag), kommt an `check_url` vorbei. Darum den Namen selbst auflösen und ablehnen, wenn alle Adressen
+/// lokal sind. Lässt er sich nicht auflösen (z. B. hinter einem Proxy, der selbst auflöst), entscheidet der Proxy.
+async fn check_resolved(url: &url::Url, allow_local: bool) -> Result<()> {
+    if allow_local {
+        return Ok(());
+    }
+    let Some(url::Host::Domain(host)) = url.host() else { return Ok(()) }; // IP-Adressen prüft check_url
+    let port = url.port_or_known_default().unwrap_or(443);
+    let lookup = tokio::time::timeout(Duration::from_secs(5), tokio::net::lookup_host((host, port))).await;
+    let Ok(Ok(addrs)) = lookup else { return Ok(()) };
+    let ips: Vec<std::net::IpAddr> = addrs.map(|a| a.ip()).collect();
+    if !ips.is_empty() && ips.iter().all(|ip| is_local_ip(*ip)) {
+        bail!(LOCAL_BLOCKED);
+    }
+    Ok(())
+}
+
 fn timeout_error() -> anyhow::Error {
     anyhow!("Keine Antwort innerhalb von 20 Sekunden.")
 }
@@ -345,35 +389,22 @@ async fn read_limited(res: reqwest::Response, signal: Option<&Signal>) -> Result
     Ok(buf)
 }
 
-const CP1252: [char; 32] = [
-    '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž',
-    'Ÿ',
-];
-
+/// Zeichensatz aus dem Content-Type oder dem `<meta charset>`; ohne Angabe UTF-8
 fn charset_of(content_type: &str, buf: &[u8]) -> String {
     let head: String = buf[..buf.len().min(2048)].iter().map(|b| *b as char).collect();
-    let found = re!(r"(?i)charset=([A-Za-z0-9_-]+)")
+    let found = re!(r"(?i)charset=([A-Za-z0-9_:.-]+)")
         .captures(content_type)
-        .or_else(|| re!(r#"(?i)<meta[^>]+charset=['"]?([A-Za-z0-9_-]+)"#).captures(&head))
+        .or_else(|| re!(r#"(?i)<meta[^>]+charset=['"]?([A-Za-z0-9_:.-]+)"#).captures(&head))
         .map(|m| m[1].to_lowercase());
-    let cs = found.unwrap_or_else(|| "utf-8".to_string());
-    if ["utf-8", "utf8", "iso-8859-1", "latin1", "windows-1252", "utf-16le"].contains(&cs.as_str()) { cs } else { "utf-8".to_string() }
+    found.unwrap_or_else(|| "utf-8".to_string())
 }
 
-/// Wie `TextDecoder(charset).decode(buf)`; «iso-8859-1» und «latin1» sind wie im Web windows-1252
+/// Wie `TextDecoder(charset).decode(buf)` im Browser (Namen nach WHATWG, «iso-8859-1» ist windows-1252,
+/// eine BOM hat Vorrang). Vorher wurden z. B. iso-8859-15, windows-1250 und utf-16be als UTF-8 gelesen und
+/// die Umlaute zu «�». Unbekannte Namen: UTF-8.
 fn decode_text(buf: &[u8], charset: &str) -> String {
-    match charset {
-        "iso-8859-1" | "latin1" | "windows-1252" => buf
-            .iter()
-            .map(|b| if (0x80..0xA0).contains(b) { CP1252[(*b - 0x80) as usize] } else { *b as char })
-            .collect(),
-        "utf-16le" => {
-            let body = buf.strip_prefix(&[0xFF, 0xFE]).unwrap_or(buf);
-            let units: Vec<u16> = body.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
-            String::from_utf16_lossy(&units)
-        }
-        _ => String::from_utf8_lossy(buf.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(buf)).to_string(),
-    }
+    let encoding = encoding_rs::Encoding::for_label(charset.as_bytes()).unwrap_or(encoding_rs::UTF_8);
+    encoding.decode(buf).0.into_owned()
 }
 
 /// Die Websuche von ASK, wie `Web` sie braucht (die `AskSession` ist eine; Tests nehmen eine Attrappe)
@@ -524,12 +555,16 @@ impl Web {
     pub async fn page(&self, raw_url: &str, opts: PageOptions) -> Result<PageResult> {
         let signal = opts.signal.as_ref();
         let url = check_url(raw_url, self.allow_local)?;
+        check_resolved(&url, self.allow_local).await?;
         let res = self.get(url.as_str(), signal, "text/html,*/*;q=0.8").await?;
         if !res.status().is_success() {
             bail!("Die Seite antwortet mit HTTP {}.", res.status().as_u16());
         }
         let final_url = res.url().to_string();
-        check_url(&final_url, self.allow_local)?; // Weiterleitung ins lokale Netz
+        let checked = check_url(&final_url, self.allow_local)?; // Weiterleitung ins lokale Netz
+        if checked.host_str() != url.host_str() {
+            check_resolved(&checked, self.allow_local).await?; // Inhalt eines lokalen Ziels nicht weitergeben
+        }
         let ctype = res.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
         let buf = read_limited(res, signal).await?;
         if re!(r"(?i)pdf").is_match(&ctype) || buf.starts_with(b"%PDF-") {
@@ -644,6 +679,33 @@ mod tests {
         // tausende offene Tags blockieren nicht
         let big = "<div>".repeat(200_000) + "Ende";
         assert!(html_to_text(&big).text.contains("Ende"));
+    }
+
+    #[tokio::test]
+    async fn namen_mit_lokaler_adresse_werden_abgelehnt() {
+        for ip in ["127.0.0.1", "10.1.2.3", "192.168.0.1", "172.20.0.1", "169.254.1.1", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"] {
+            assert!(is_local_ip(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in ["8.8.8.8", "195.176.1.1", "2a00:1450::1"] {
+            assert!(!is_local_ip(ip.parse().unwrap()), "{ip}");
+        }
+        // «localhost» ist ein Name, aber immer lokal: wird nach dem Auflösen abgelehnt (ohne Ausnahme für Tests)
+        let local = url::Url::parse("http://localhost.example.invalid/").unwrap();
+        assert!(check_resolved(&local, false).await.is_ok(), "nicht auflösbar: der Proxy entscheidet");
+        let lh = url::Url::parse("http://localhost:1/").unwrap();
+        assert_eq!(check_resolved(&lh, false).await.unwrap_err().to_string(), LOCAL_BLOCKED);
+        assert!(check_resolved(&lh, true).await.is_ok());
+    }
+
+    #[test]
+    fn seiten_in_anderen_zeichensaetzen() {
+        let dec = |ct: &str, buf: &[u8]| decode_text(buf, &charset_of(ct, buf));
+        assert_eq!(dec("text/html; charset=ISO-8859-15", b"Gr\xfcezi \xa4"), "Grüezi €");
+        assert_eq!(dec("text/html; charset=windows-1250", b"\x8a"), "Š");
+        assert_eq!(dec("text/html", b"<meta charset=\"iso-8859-1\">\xe4\x80"), "<meta charset=\"iso-8859-1\">ä€", "latin1 wie im Browser: windows-1252");
+        assert_eq!(dec("text/html; charset=utf-16be", &[0, b'a', 0, 0xfc]), "aü");
+        assert_eq!(dec("text/html", "\u{feff}Grüezi".as_bytes()), "Grüezi", "BOM entfernt");
+        assert_eq!(dec("text/html; charset=gibt-es-nicht", "ä".as_bytes()), "ä");
     }
 
     #[test]
