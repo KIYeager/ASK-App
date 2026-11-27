@@ -43,7 +43,7 @@
     ${IfNot} ${Errors}
       StrCpy $6 1
     ${EndIf}
-    ; Eine frühere Fassung entfernt die Vorlage schon vor diesem Fenster; gemerkt in .onInit (installer.nsi)
+    ; Eine fruehere Fassung entfernt die Vorlage schon vor diesem Fenster; gemerkt in .onInit (installer.nsi)
     !ifdef ASK_TEMPLATE
       ${If} $AskWasInstalled = 1
         StrCpy $6 1

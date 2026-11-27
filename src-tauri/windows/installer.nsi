@@ -560,7 +560,7 @@ Function .onInit
     Call RestorePreviousInstallLocation
   ${EndIf}
 
-  ; ASK: für «ASK wird aktualisiert» im Fortschrittsfenster (hooks.nsh, askStyleBanner)
+  ; ASK: fuer "ASK wird aktualisiert" im Fortschrittsfenster (hooks.nsh, askStyleBanner)
   StrCpy $AskWasInstalled 0
   ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
   ${If} $R0 != ""
