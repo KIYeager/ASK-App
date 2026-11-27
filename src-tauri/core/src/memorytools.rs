@@ -41,6 +41,8 @@ pub struct KnowledgeCtx {
     pub memory_on: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Wird nach jeder Änderung aufgerufen (die Oberfläche lädt dann neu)
     pub changed: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Nach Ein- oder Ausschalten eines Mods (die Oberfläche lädt die Mods neu, Zustand modsCode)
+    pub mods_changed: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl KnowledgeCtx {
@@ -268,6 +270,22 @@ pub fn knowledge_tools() -> Vec<KnowledgeTool> {
             }),
         },
         KnowledgeTool {
+            name: "mod_einschalten",
+            label: "Mod einschalten",
+            description: concat!(
+                "Schaltet einen Mod ein oder aus. Einschalten nur, wenn die Person es will, und erst nach mod_testen ohne Fehler; ",
+                "die Person bestätigt es in einem Dialog (bei Code mit Warnung). Ausschalten geht ohne Rückfrage. Danach lädt die Oberfläche neu, sobald der Auftrag fertig ist.",
+            ),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Kennung des Mods" },
+                    "an": { "type": "boolean", "description": "true: einschalten (Standard), false: ausschalten" },
+                },
+                "required": ["id"],
+            }),
+        },
+        KnowledgeTool {
             name: "mod_erstellen",
             label: "Mod erstellen",
             description: concat!(
@@ -299,6 +317,7 @@ pub fn describe(name: &str, a: &Value) -> String {
         "mod_erstellen" => a.get("dateien").and_then(|d| d.get("mod.json")).map(js_string)
             .and_then(|t| crate::mods::parse_manifest(&t).ok()).map(|m| m.name).unwrap_or_else(|| field(a, "id")),
         "mod_testen" => field(a, "id"),
+        "mod_einschalten" => format!("{} {}", field(a, "id"), if a.get("an") == Some(&Value::Bool(false)) { "aus" } else { "an" }),
         "katalog_suchen" => [field(a, "suche"), field(a, "repo")].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · "),
         "katalog_hinzufuegen" => format!("{} {}", field(a, "repo"), field(a, "pfad")),
         "mod_lesen" => [field(a, "id"), field(a, "datei")].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · "),
@@ -315,6 +334,7 @@ pub async fn run(name: &str, a: &Value, ctx: &MemoryToolCtx) -> Option<Result<To
         "skill_erstellen" => skill_erstellen(a, ctx).await,
         "mod_erstellen" => mod_erstellen(a, ctx).await,
         "mod_liste" => mod_liste(ctx),
+        "mod_einschalten" => mod_einschalten(a, ctx).await,
         "katalog_suchen" => katalog_suchen(a, ctx).await,
         "katalog_hinzufuegen" => katalog_hinzufuegen(a, ctx).await,
         "mod_lesen" => mod_lesen(a, ctx),
@@ -470,6 +490,48 @@ async fn katalog_hinzufuegen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutpu
         let (id, name) = (js_string(&r["mod"]["id"]), js_string(&r["mod"]["name"]));
         ToolOutput::new(true, format!("Mod «{name}» (id {id}) hinzugefügt, aber aus. Teste ihn mit mod_testen und sag der Person: Einstellungen → Mods → «{name}» → Vorschau ansehen und einschalten."), format!("{id} hinzugefügt"))
     })
+}
+
+async fn mod_einschalten(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
+    let mods = need_mods(ctx)?;
+    let id = crate::mods::slug(&field(a, "id"));
+    let on = a.get("an") != Some(&Value::Bool(false));
+    let Some(info) = mods.info(&id) else {
+        return Ok(ToolOutput::new(false, format!("Keinen Mod «{id}» gefunden."), "nicht gefunden"));
+    };
+    let name = info.manifest.name.clone();
+    let notify = |k: &KnowledgeCtx| if let Some(f) = &k.mods_changed { f() };
+    if !on {
+        if !mods.enable(&id, false)? {
+            return Ok(ToolOutput::new(true, format!("Mod «{name}» war schon aus."), "schon aus"));
+        }
+        if let Some(k) = &ctx.knowledge { notify(k); }
+        return Ok(ToolOutput::new(true, format!("Mod «{name}» ausgeschaltet. Die Oberfläche lädt neu, wenn der Auftrag fertig ist."), format!("{id} aus")));
+    }
+    if !info.fehler.is_empty() {
+        return Ok(ToolOutput::new(false, format!("Nicht eingeschaltet: {}", info.fehler), "fehlerhaft"));
+    }
+    if info.aktiv {
+        return Ok(ToolOutput::new(true, format!("Mod «{name}» ist schon an."), "schon an"));
+    }
+    let code = !info.manifest.script.is_empty();
+    let ok = match &ctx.confirm {
+        Some(confirm) => {
+            let mut detail = format!("{}\n\nÄndert: {}.", info.manifest.beschreibung, mod_parts(&info.manifest));
+            if code {
+                detail.push_str(&format!("\n\nAchtung: Der Mod enthält Code ({}), der in ASK läuft und alles in der Oberfläche sehen und bedienen kann, auch deine Chats. Schalte ihn nur ein, wenn du ihm vertraust; den Code siehst du unter Einstellungen → Mods → Vorschau. Solange er an ist, bestätigst du heikle Schritte in einem Fenster von Windows.", info.manifest.script));
+            }
+            detail.push_str("\n\nAusschalten: Einstellungen → Mods oder Ctrl+Shift+M.");
+            confirm(format!("Mod «{name}» einschalten?"), detail, ConfirmOptions { danger: code, ..Default::default() }).await.ok
+        }
+        None => false,
+    };
+    if !ok {
+        return Ok(ToolOutput::new(false, "Die Person hat das Einschalten abgelehnt.".into(), "abgelehnt"));
+    }
+    mods.enable(&id, true)?;
+    if let Some(k) = &ctx.knowledge { notify(k); }
+    Ok(ToolOutput::new(true, format!("Mod «{name}» eingeschaltet. Die Oberfläche lädt neu, sobald dieser Auftrag fertig ist; erst dann wirkt er."), format!("{id} an")))
 }
 
 fn need_mods(ctx: &MemoryToolCtx) -> Result<Arc<crate::mods::Mods>> {
@@ -683,6 +745,7 @@ mod tests {
                 mods: None,
                 catalog: None,
                 catalog_sources: None,
+                mods_changed: None,
                 memory_on: Some(Arc::new(move || on2.load(Ordering::SeqCst))),
                 changed: Some(Arc::new(move || { ch2.fetch_add(1, Ordering::SeqCst); })),
             }),
@@ -759,7 +822,7 @@ mod tests {
     fn werkzeugbeschreibungen_im_openai_format() {
         let specs: Vec<Value> = knowledge_tools().iter().map(KnowledgeTool::spec).collect();
         let names: Vec<&str> = specs.iter().map(|s| s["function"]["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["merken", "vergessen", "skill_lesen", "skill_erstellen", "mod_liste", "mod_lesen", "katalog_suchen", "katalog_hinzufuegen", "mod_testen", "mod_erstellen"]);
+        assert_eq!(names, ["merken", "vergessen", "skill_lesen", "skill_erstellen", "mod_liste", "mod_lesen", "katalog_suchen", "katalog_hinzufuegen", "mod_testen", "mod_einschalten", "mod_erstellen"]);
         assert_eq!(specs[0]["type"], "function");
         assert_eq!(specs[0]["function"]["parameters"]["required"], json!(["text", "bereich"]));
         let keys: Vec<&String> = specs[0]["function"]["parameters"]["properties"].as_object().unwrap().keys().collect();
@@ -811,5 +874,17 @@ mod tests {
         assert!(!r.ok && r.output.contains("style.css"), "{}", r.output);
         let r = run_tool("mod_erstellen", json!({ "id": "neon", "dateien": { "style.css": ":root{--acc:#f0f}" } }), &ctx).await;
         assert!(!r.ok && r.output.contains("Nichts geändert"), "{}", r.output);
+        // Einschalten nur mit Bestätigung, ausschalten ohne
+        answer.store(false, Ordering::SeqCst);
+        let r = run_tool("mod_einschalten", json!({ "id": "neon" }), &ctx).await;
+        assert!(!r.ok && !mods.info("neon").unwrap().aktiv, "abgelehnt: {}", r.output);
+        answer.store(true, Ordering::SeqCst);
+        let r = run_tool("mod_einschalten", json!({ "id": "neon" }), &ctx).await;
+        assert!(r.ok && mods.info("neon").unwrap().aktiv, "{}", r.output);
+        assert!(run_tool("mod_einschalten", json!({ "id": "neon" }), &ctx).await.output.contains("schon an"));
+        answer.store(false, Ordering::SeqCst);
+        let r = run_tool("mod_einschalten", json!({ "id": "neon", "an": false }), &ctx).await;
+        assert!(r.ok && !mods.info("neon").unwrap().aktiv, "ohne Rückfrage aus: {}", r.output);
+        assert!(!run_tool("mod_einschalten", json!({ "id": "fehlt" }), &ctx).await.ok);
     }
 }

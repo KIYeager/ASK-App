@@ -18,7 +18,7 @@ Ein Mod verändert ASK: Aussehen (CSS), Verhalten (JavaScript), eigene `/befehle
 2. **Plan vorschlagen.** Nenne Id, Name, welche Dateien entstehen und was die Person am Ende sieht. Hol ein Ja ein.
 3. **Mod erstellen** mit dem Werkzeug `mod_erstellen` (Dateien: `mod.json`, `style.css`, `mod.js`, Bilder). **Ändern:** `mod_erstellen` mit `id` und nur den geänderten Dateien; die übrigen bleiben. Ein leerer Inhalt (`""`) löscht eine Datei.
 4. **Testen** mit `mod_testen` (geht auch, solange der Mod aus ist): Bildschirmfoto der Oberfläche mit dem Mod und Bericht mit Fehlern. Mit `aktionen` Ereignisse auslösen (`{art:'ereignis', name:'fertig'}`), auf Elemente klicken (`{art:'klick', selektor:'.robo-helfer-figur'}`), den Bereich öffnen (`{art:'panel'}`) oder einen Befehl eintippen. Gibt es Fehler oder sieht etwas falsch aus: verbessern und nochmals testen, bevor du der Person sagst, dass der Mod fertig ist. Teste hell und dunkel (`farbschema`).
-5. **Der Person erklären:** Neue oder geänderte Mods sind **ausgeschaltet**. Sie wirken erst, wenn die Person sie unter **Einstellungen → Mods** nach einer Vorschau einschaltet. Sag das immer, sonst sucht sie vergeblich nach der Wirkung.
+5. **Einschalten anbieten:** Neue oder geänderte Mods sind **ausgeschaltet**. Frag, ob du ihn einschalten sollst, und nimm dann `mod_einschalten` (die Person bestätigt in einem Dialog; bei Code mit Warnung). Die Oberfläche lädt danach neu, sobald der Auftrag fertig ist. Will sie selbst schauen: Einstellungen → Mods → Vorschau. Ausschalten mit `mod_einschalten` und `an: false`, wenn etwas stört.
 6. **Nachbessern**, wenn die Person etwas ändern will. Nach jeder Änderung muss sie den Mod erneut in der Vorschau bestätigen.
 
 ## Grenzen (Sicherheit)

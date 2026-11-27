@@ -109,6 +109,7 @@ const BROWSER0 = { url: '', back: false, forward: false, loading: false, running
 export default function App() {
   const [state, setState] = useState(null);
   const [model, dispatch] = useReducer(reducer, undefined, emptyChat);
+  const reloadAfterRun = useRef(false); // Mods während eines Auftrags geändert: danach neu laden
   const modelRef = useRef(model);
   modelRef.current = model;
   const modState = useMods(); // Befehle, Bereiche und Knöpfe von Mods (lib/mods.js)
@@ -309,7 +310,8 @@ export default function App() {
       }),
       a.onFolderError((reason) => setDialog({ name: 'terminal', text: reason })),
       // Andere Mods aktiv: neu laden, damit Code und Aussehen genau den eingeschalteten Mods entsprechen
-      a.onModsChanged?.(async () => { if (await modsChanged()) window.location.reload(); }),
+      // Während eines Auftrags erst danach (ASK kann Mods selbst ein- und ausschalten, mod_einschalten)
+      a.onModsChanged?.(async () => { if (await modsChanged()) { if (runningRef.current) reloadAfterRun.current = true; else window.location.reload(); } }),
       a.onBrowserState((s) => setBrowser((b) => ({ ...b, ...s }))),
       a.onServers?.((list) => setServers(list || [])),
       a.onBrowserNotice((text) => setBrowser((b) => ({ ...b, log: [...b.log, { text, level: 'warning' }].slice(-6) }))),
@@ -330,6 +332,7 @@ export default function App() {
 
   useEffect(() => {
     if (running) { setRunStarted((t) => t || Date.now()); setAct('Denkt nach …'); } else setRunStarted(0);
+    if (!running && reloadAfterRun.current) setTimeout(() => window.location.reload(), 1500); // Mods geändert: Antwort kurz stehen lassen
   }, [running]);
 
   // Ausführliche Ansicht aus den gespeicherten Einstellungen (einmal beim Start)

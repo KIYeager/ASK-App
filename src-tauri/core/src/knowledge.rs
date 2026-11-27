@@ -203,6 +203,10 @@ impl Knowledge {
             catalog_sources: Some(self.cfg.catalog_sources.clone()),
             memory_on: Some(Arc::new(move || memory_on(&cfg))),
             changed: Some(Arc::new(move || send("memory:changed", json!({})))),
+            mods_changed: Some({
+                let (send, on_settings) = (self.cfg.send.clone(), self.cfg.on_settings.clone());
+                Arc::new(move || { send("mods:changed", json!({})); on_settings(); })
+            }),
         }
     }
 
