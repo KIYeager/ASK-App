@@ -503,7 +503,7 @@ impl Sources {
                     *slot = (score, c.piece);
                 }
             }
-            let mut ranked: Vec<((&str, usize), (f64, &str))> = best.into_iter().collect();
+            let mut ranked: Vec<_> = best.into_iter().collect();
             ranked.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0).then_with(|| a.0.cmp(&b.0)));
             let set: HashSet<String> = terms.iter().cloned().collect();
             let results: Vec<Value> = ranked

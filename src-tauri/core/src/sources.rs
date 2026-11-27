@@ -169,7 +169,7 @@ mod tests {
         let project = dir.path().join("Projekt");
         std::fs::create_dir_all(&project).unwrap();
         let s = src.to_string_lossy().to_string();
-        assert_eq!(add(&project, &[s.clone()]).unwrap(), ["Quellen/Skript.pdf"]);
+        assert_eq!(add(&project, std::slice::from_ref(&s)).unwrap(), ["Quellen/Skript.pdf"]);
         assert_eq!(add(&project, &[s, "fehlt.pdf".into()]).unwrap(), ["Quellen/Skript (2).pdf"]);
         assert!(add(&dir.path().join("weg"), &[]).is_err());
     }
