@@ -6,7 +6,7 @@
      (sandbox ohne allow-same-origin, CSP ohne Netz); nur postMessage an die Oberfläche geht hinaus. -->
 <style>
   :root {
-    --ask-bg: #ffffff; --ask-card: #f7f9fa; --ask-line: #e1e7ea; --ask-text: #141a1d; --ask-muted: #5b6871;
+    --ask-bg: #ffffff; --ask-card: #f7f9fa; --ask-line: #e1e7ea; --ask-line-2: #cfd8dd; --ask-text: #141a1d; --ask-muted: #5b6871;
     --ask-acc: #0082b4; --ask-acc-ink: #ffffff; --ask-acc-soft: #e6f3f8; --ask-ok: #2c8a45; --ask-bad: #b23a2c;
     --ask-orange: #f28855;
     --ask-font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
@@ -15,14 +15,56 @@
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --ask-bg: #16191b; --ask-card: #1c2023; --ask-line: #2c3338; --ask-text: #e6ebee; --ask-muted: #9aa7b0;
+      --ask-bg: #16191b; --ask-card: #1c2023; --ask-line: #2c3338; --ask-line-2: #3a4349; --ask-text: #e6ebee; --ask-muted: #9aa7b0;
       --ask-acc: #3fb0dc; --ask-acc-ink: #0b1215; --ask-acc-soft: rgba(63, 176, 220, .14); --ask-ok: #5cc27a; --ask-bad: #f07a6a;
       color-scheme: dark;
     }
   }
+  *, *::before, *::after { box-sizing: border-box; }
   html, body { margin: 0; background: transparent; color: var(--ask-text); font: 14px/1.5 var(--ask-font); }
-  body { padding: 2px; overflow-x: hidden; }
+  body { padding: 12px 14px 14px; overflow-x: hidden; overflow-wrap: anywhere; }
+  /* Grundformen: so sieht HTML ohne eigenes CSS schon aus wie die App */
+  h1, h2, h3, h4 { margin: 0 0 8px; line-height: 1.3; font-weight: 650; }
+  h1 { font-size: 19px; } h2 { font-size: 16.5px; } h3 { font-size: 15px; } h4 { font-size: 14px; }
+  p { margin: 0 0 8px; }
+  a { color: var(--ask-acc); }
   button, input, select, textarea { font: inherit; color: inherit; }
+  button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 14px; border-radius: 8px;
+    border: 1px solid var(--ask-line-2); background: var(--ask-bg); cursor: pointer; font-weight: 500; }
+  button:hover:not(:disabled) { border-color: var(--ask-acc); background: var(--ask-acc-soft); }
+  button:disabled { opacity: .5; cursor: default; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--ask-acc); outline-offset: 1px; }
+  .ask-primary, button.ask-primary { background: var(--ask-acc); border-color: var(--ask-acc); color: var(--ask-acc-ink); }
+  .ask-primary:hover:not(:disabled) { background: var(--ask-acc); filter: brightness(1.08); }
+  input:not([type=range]):not([type=checkbox]):not([type=radio]), select, textarea {
+    padding: 6px 10px; border-radius: 8px; border: 1px solid var(--ask-line-2); background: var(--ask-bg); min-width: 0; }
+  input[type=range], input[type=checkbox], input[type=radio], progress { accent-color: var(--ask-acc); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--ask-line); vertical-align: top; }
+  th { color: var(--ask-muted); font-weight: 600; font-size: 12.5px; }
+  td.zahl, th.zahl { text-align: right; font-variant-numeric: tabular-nums; }
+  code { font-family: var(--ask-mono); font-size: 12.5px; background: var(--ask-card); padding: 1px 5px; border-radius: 4px; }
+  /* Bausatz (Klassen ask-…, im Skill interaktive-antworten beschrieben) */
+  .ask-card { border: 1px solid var(--ask-line); border-radius: 12px; background: var(--ask-card); padding: 14px 16px; }
+  .ask-stack { display: flex; flex-direction: column; gap: 12px; }
+  .ask-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .ask-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .ask-muted { color: var(--ask-muted); font-size: 13px; }
+  .ask-big { font-size: 26px; font-weight: 700; color: var(--ask-acc); font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .ask-ok { color: var(--ask-ok); } .ask-bad { color: var(--ask-bad); }
+  .ask-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--ask-acc-soft); color: var(--ask-acc); }
+  .ask-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+  .ask-tabs > button { border-radius: 999px; padding: 6px 14px; }
+  .ask-tabs > button[aria-selected="true"] { background: var(--ask-acc); border-color: var(--ask-acc); color: var(--ask-acc-ink); }
+  [data-panel][hidden] { display: none !important; }
+  .ask-bars { display: flex; flex-direction: column; gap: 8px; }
+  .ask-bars > * { display: grid; grid-template-columns: minmax(0, 11em) minmax(60px, 1fr) 3.5em; align-items: center; gap: 12px; }
+  .ask-bars > * > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ask-bars > * > :last-child { text-align: right; color: var(--ask-muted); font-variant-numeric: tabular-nums; }
+  .ask-bar { display: block; height: 10px; border-radius: 6px;
+    background: linear-gradient(var(--farbe, var(--ask-acc)), var(--farbe, var(--ask-acc))) 0 / calc(var(--wert, 0) * 1%) 100% no-repeat, var(--ask-line); }
+  hr { border: 0; border-top: 1px solid var(--ask-line); margin: 12px 0; }
+  @media (max-width: 420px) { .ask-bars > * { grid-template-columns: minmax(0, 7em) minmax(40px, 1fr) 3.5em; gap: 8px; } }
 </style>
 <script>
   (() => {
@@ -44,6 +86,20 @@
     addEventListener('load', report);
     addEventListener('DOMContentLoaded', () => new ResizeObserver(report).observe(document.body));
     setTimeout(report, 50);
+    // Reiter: .ask-tabs mit Knöpfen data-tab="x", daneben Bereiche data-panel="x" (im selben Eltern-Element)
+    const showTab = (tabs, id) => {
+      tabs.querySelectorAll('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === id)));
+      tabs.parentElement.querySelectorAll(':scope > [data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== id; });
+    };
+    addEventListener('click', (e) => {
+      const b = e.target.closest('.ask-tabs [data-tab]');
+      if (b) showTab(b.closest('.ask-tabs'), b.dataset.tab);
+    });
+    addEventListener('DOMContentLoaded', () => document.querySelectorAll('.ask-tabs').forEach((t) => {
+      t.setAttribute('role', 'tablist');
+      const first = t.querySelector('[data-tab][aria-selected="true"]') || t.querySelector('[data-tab]');
+      if (first) showTab(t, first.dataset.tab);
+    }));
     // Esc im Baustein: die Oberfläche verkleinert eine vergrösserte Ansicht
     addEventListener('keydown', (e) => { if (e.key === 'Escape') post('esc', 1); });
   })();

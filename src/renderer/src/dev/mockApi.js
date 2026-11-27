@@ -124,8 +124,11 @@ const uiDemo = [
   '',
   'Und ein kleines Programm:',
   '```ask-html',
-  '<style>button{padding:8px 14px;border-radius:8px;border:1px solid var(--ask-line);background:var(--ask-acc);color:var(--ask-acc-ink)}</style>',
-  '<p>Würfel: <strong id="w">–</strong></p><button id="b">Würfeln</button> <button id="s">Ergebnis senden</button>',
+  '<div class="ask-tabs"><button data-tab="w">Würfel</button><button data-tab="n">Noten</button></div>',
+  '<div data-panel="w" class="ask-stack"><div class="ask-card ask-row"><span class="ask-big" id="w">–</span><span class="ask-muted">Noch nicht gewürfelt</span></div>',
+  '<div class="ask-row"><button class="ask-primary" id="b">Würfeln</button><button id="s">Ergebnis senden</button></div></div>',
+  '<div data-panel="n" class="ask-bars"><div><span>Modul 129</span><span class="ask-bar" style="--wert:82"></span><span>82</span></div>',
+  '<div><span>Allgemeinbildung und Sport</span><span class="ask-bar" style="--wert:74"></span><span>74</span></div></div>',
   '<script>let z=0;b.onclick=()=>{z=1+Math.floor(Math.random()*6);w.textContent=z};s.onclick=()=>ask.senden("Ich habe eine "+z+" gewürfelt.")</script>',
   '```',
 ].join('\n');

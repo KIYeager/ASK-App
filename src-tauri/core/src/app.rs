@@ -41,7 +41,7 @@ const INTERACTIVE_HINT: &str = "\n\n# Interaktive Antworten\nDie Oberfläche kan
 einen Block ```ask-ui mit JSON (Diagramm, Quiz, Karteikarten, Rechner, Auswahl, Formular, Schritte, Vergleich, Hinweis) oder ```ask-html \
 mit eigenem HTML und JavaScript ohne Internet. Benutze sie von selbst, wo sie mehr helfen als Text: Zahlen vergleichen, üben und \
 abfragen, mit Werten spielen, aus Möglichkeiten wählen lassen, Schritte abhaken. Kurze Antworten und reine Erklärungen bleiben Text. \
-Bevor du einen Baustein schreibst, lies den Skill «interaktive-antworten» mit skill_lesen und halte dich genau an das Format; \
+Nimm zuerst die festen Bausteine (```ask-ui) und baue sie nie in HTML nach; ```ask-html nur, wenn keiner passt. Bevor du einen Baustein schreibst, lies den Skill «interaktive-antworten» mit skill_lesen und halte dich genau an das Format; \
 schreib den Block nie in eine Datei, sondern direkt in die Antwort, mit einem Satz Text davor.";
 
 pub struct AppOptions {

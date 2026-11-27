@@ -64,6 +64,11 @@ test('HTML-Bausteine: Vorspann ohne Netz, Protokoll askui in beiden CSP', () => 
   const conf = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8')).app.security.csp;
   assert.match(conf['frame-src'], /askui:/);
   assert.ok(!/askui/.test(conf['script-src']), 'askui darf keine Skripte in die Oberfläche liefern');
+  // Jede Klasse des Bausatzes, die der Skill nennt, gibt es im Vorspann
+  const skill = fs.readFileSync('resources/standard-skills/interaktive-antworten/SKILL.md', 'utf8');
+  const named = new Set([...skill.matchAll(/`(ask-[a-z]+)`/g)].map((m) => m[1]).filter((c) => !['ask-ui', 'ask-html', 'ask-hilfe'].includes(c)));
+  assert.ok(named.size >= 10, `Bausatz im Skill: ${[...named]}`);
+  for (const c of named) assert.match(prelude, new RegExp(`\\.${c}\\b`), `Klasse ${c} fehlt im Vorspann`);
   const ui = fs.readFileSync('src/renderer/src/components/UiBlocks.jsx', 'utf8');
   assert.match(ui, /sandbox="allow-scripts allow-forms"/, 'iframe ohne allow-same-origin');
   assert.ok(!/allow-same-origin|allow-top-navigation|allow-popups/.test(ui));
