@@ -13,10 +13,16 @@ Ein Mod verändert ASK: Aussehen (CSS), Verhalten (JavaScript), eigene `/befehle
    - **Seitenpanel:** ein eigener Reiter rechts (Timer, Notizen, Spickzettel).
    - **Schwebende Figur:** ein Maskottchen, das auf ASK reagiert.
    - **Verhalten:** reagiert auf Ereignisse (Meldung bei «fertig», Knopf in der Kopfzeile).
+   Gibt es so etwas vielleicht schon? Mit `katalog_suchen` (art «mod») nachsehen und einen passenden Mod mit `katalog_hinzufuegen` anbieten, statt alles neu zu bauen.
+   Will die Person einen **vorhandenen** Mod ändern oder hat sie Fragen dazu: zuerst `mod_liste`, dann `mod_lesen` (ganzer Mod oder eine Datei). Nie raten, was in einem Mod steht.
 2. **Plan vorschlagen.** Nenne Id, Name, welche Dateien entstehen und was die Person am Ende sieht. Hol ein Ja ein.
-3. **Mod erstellen** mit dem Werkzeug `mod_erstellen` (Dateien: `mod.json`, `style.css`, `mod.js`, Bilder).
-4. **Der Person erklären:** Neue oder geänderte Mods sind **ausgeschaltet**. Sie wirken erst, wenn die Person sie unter **Einstellungen → Mods** nach einer Vorschau einschaltet. Sag das immer, sonst sucht sie vergeblich nach der Wirkung.
-5. **Nachbessern**, wenn die Person etwas ändern will. Nach jeder Änderung muss sie den Mod erneut in der Vorschau bestätigen.
+3. **Mod erstellen** mit dem Werkzeug `mod_erstellen` (Dateien: `mod.json`, `style.css`, `mod.js`, Bilder). **Ändern:** `mod_erstellen` mit `id` und nur den geänderten Dateien; die übrigen bleiben. Ein leerer Inhalt (`""`) löscht eine Datei.
+4. **Testen** mit `mod_testen` (geht auch, solange der Mod aus ist): Bildschirmfoto der Oberfläche mit dem Mod und Bericht mit Fehlern. Mit `aktionen` Ereignisse auslösen (`{art:'ereignis', name:'fertig'}`), auf Elemente klicken (`{art:'klick', selektor:'.robo-helfer-figur'}`), den Bereich öffnen (`{art:'panel'}`) oder einen Befehl eintippen. Gibt es Fehler oder sieht etwas falsch aus: verbessern und nochmals testen, bevor du der Person sagst, dass der Mod fertig ist. Teste hell und dunkel (`farbschema`).
+5. **Einschalten anbieten:** Neue oder geänderte Mods sind **ausgeschaltet**. Frag, ob du ihn einschalten sollst, und nimm dann `mod_einschalten` (die Person bestätigt in einem Dialog; bei Code mit Warnung). Die Oberfläche lädt danach neu, sobald der Auftrag fertig ist. Will sie selbst schauen: Einstellungen → Mods → Vorschau. Ausschalten mit `mod_einschalten` und `an: false`, wenn etwas stört.
+6. **Nachbessern**, wenn die Person etwas ändern will. Nach jeder Änderung muss sie den Mod erneut in der Vorschau bestätigen.
+
+## Nie «fertig» ohne Beweis
+Ein gespeicherter Mod ändert in ASK erst etwas, wenn er **eingeschaltet** ist, und ein geänderter Mod ist wieder **aus**. Sag nie «Ich habe … geändert», nur weil `mod_erstellen` geklappt hat. Erst wenn `mod_testen` zeigt, dass es wirkt (Bildschirmfoto sieht anders aus, keine Fehler, keine Selektoren ohne Treffer), ist der Mod fertig. Dann einschalten anbieten. Treffen Selektoren nichts, nimm die aus «Aufbau der Oberfläche» oder ändere die Variablen.
 
 ## Grenzen (Sicherheit)
 - Keine Sicherheitseinstellungen ändern, keine Rückfragen («Darf ASK …?») automatisch bestätigen, keine Zugangsdaten oder Schlüssel lesen. Die App blockiert das ohnehin. Versuche es nicht und baue es nicht ein.
@@ -58,6 +64,30 @@ Das Wurzelelement trägt `data-theme="dark"` oder `data-theme="light"`:
 :root[data-theme="dark"]  { --acc: #22d3ee; }
 :root[data-theme="light"] { --acc: #0e7490; }
 ```
+
+<!-- OBERFLAECHE START (gleicher Abschnitt in resources/mod-anleitung/SKILL.md und resources/standard-skills/mod-erstellen/SKILL.md; ein Test prüft jede Klasse) -->
+## Aufbau der Oberfläche (Selektoren)
+
+CSS wirkt nur, wenn der Selektor ein Element trifft. Erfinde keine Klassen, nimm diese:
+
+| Bereich | Selektor |
+|---|---|
+| ganzes Fenster | `.app` |
+| Kopfzeile | `.topbar`; Logo `.brand`; Tabs `.tabs`, ein Tab `.tab`, der aktive `.tab.on`; Fensterknöpfe `.win-ctl` |
+| linke Leiste (Projekte, Chats) | `.chatbar`; Knopf «Neuer Chat» `.new-chat`; Kopf eines Projekts `.group-head`; Chat in der Liste `.chat-item`, der offene `.chat-item.active`; Profil unten `.account` |
+| Chat | `.chat-area`; Verlauf `.transcript` |
+| Eingabe der Person | `.msg.user .bubble` |
+| Antwort von ASK | `.msg.assistant`; Text darin `.md` (Überschriften, Listen, `code`, `pre`, `table`) |
+| Arbeitsschritte, Gedanken | `.msg.tool`, `.msg.thought` |
+| Eingabefeld | `.input-box`; Knöpfe darin `.input-tools .chip`; Senden `#send-btn` |
+| Vorschläge im leeren Chat | `.examples .example` |
+| rechte Seitenleiste | `.sidebar`; Reiter `.rt`; Inhalt `.rp-body` |
+| Dialoge und Menüs | `.overlay`, `.dialog`, `.chat-menu` |
+| Knöpfe allgemein | `.btn`, `.btn.primary`, `.icon-btn` |
+| Teile von Mods | Knöpfe in der Kopfzeile `.mod-btns`; Bereich in der Seitenleiste `.mod-panel-host` |
+
+Farben, Rundungen und Schriften ändert man am besten über die Variablen (oben); das wirkt überall gleichzeitig. Für einzelne Bereiche die Selektoren aus der Tabelle nehmen, eigene Elemente mit Klassen, die mit der Kennung beginnen.
+<!-- OBERFLAECHE ENDE -->
 
 ## JavaScript-Schnittstelle (`ASK`)
 `mod.js` ist ein normales Skript (kein `import`). Alles in eine sofort ausgeführte Funktion packen, die `ASK` festhält: `(function (ASK) { … })(ASK);`. So trifft jeder spätere Aufruf (z. B. in Ereignissen) die Ablage und Dateien des eigenen Mods.

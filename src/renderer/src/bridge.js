@@ -170,6 +170,7 @@ export function install() {
   modsImport: () => call('mods:import'),
   modsExample: (id) => call('mods:example', id),
   modsFolder: () => call('mods:folder'),
+  modsGuide: (action) => call('mods:guide', action || ''),
   onModsChanged: on('mods:changed'),
   catalogSources: (list) => call('catalog:sources', list === undefined ? null : list),
   catalogList: (repo) => call('catalog:list', repo),

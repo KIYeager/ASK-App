@@ -138,10 +138,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tab .swatch { width: 8px; height: 8px; border-radius: 50%; }
 .tab .swatch.busy { animation: tab-busy 1.2s ease-in-out infinite; }
 @keyframes tab-busy { 50% { opacity: .3; } }
-.tab-x { border: 0; background: none; color: var(--dim); margin-right: 6px; width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; flex: none; }
+.tab-x { border: 0; background: none; color: var(--dim); margin-right: 8px; width: 18px; height: 18px; padding: 0; border-radius: 50%; display: grid; place-items: center; flex: none; transition: background .12s, color .12s; }
 .tab:not(.on) .tab-x { opacity: 0; }
 .tab:hover .tab-x, .tab-x:focus-visible { opacity: 1; }
-.tab-x:hover { color: var(--text); background: var(--line); }
+/* Beim Darüberfahren ein kleiner, runder, dezenter Kreis statt eines Kastens */
+.tab-x:hover { color: var(--text); background: color-mix(in srgb, var(--text) 12%, transparent); }
 /* «+» auf der Höhe der Tabs (unten bündig wie die inaktiven Tabs), nicht in der Mitte der ganzen Kopfzeile */
 .tab-new { align-self: flex-end; flex: none; width: 28px; height: 28px; margin: 0 0 3px 4px; display: grid; place-items: center; padding: 0; }
 @media (prefers-reduced-motion: reduce) { .tab .swatch.busy { animation: none; } }
@@ -1091,3 +1092,23 @@ textarea.gh-input { resize: vertical; min-height: 56px; line-height: 1.45; }
   .settings-body { grid-template-columns: 1fr; }
   .settings-nav { display: none; }
 }
+
+/* Katalog: Mods und Skills unterscheidbar (eigene Farbe und eigenes Symbol) */
+:root { --kind-mod: #b4632f; --kind-mod-soft: #fbeee4; --kind-skill: var(--acc-text); --kind-skill-soft: var(--acc-soft); }
+@media (prefers-color-scheme: dark) { :root { --kind-mod: #f0a46c; --kind-mod-soft: rgba(240, 164, 108, .14); } }
+.cat-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.cat-tools .input { flex: 1; min-width: 160px; }
+.cat-section { margin-top: 6px; }
+.cat-section h3 { display: flex; align-items: center; gap: 7px; margin: 14px 0 2px; font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--text); }
+.cat-section.kind-mod h3 .icon { color: var(--kind-mod); }
+.cat-section.kind-skill h3 .icon { color: var(--kind-skill); }
+.cat-count { font-size: 11px; font-weight: 600; padding: 0 7px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--muted); }
+.cat-lead { margin-bottom: 4px !important; }
+.cat-row { gap: 14px; }
+.cat-icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex: none; align-self: flex-start; margin-top: 1px; }
+.cat-row.kind-mod .cat-icon { background: var(--kind-mod-soft); color: var(--kind-mod); }
+.cat-row.kind-skill .cat-icon { background: var(--kind-skill-soft); color: var(--kind-skill); }
+.cat-row.kind-skill .s-title { font-family: var(--mono); font-size: 13px; }
+.s-badge.kind-mod { background: var(--kind-mod-soft); border-color: transparent; color: var(--kind-mod); font-family: var(--sans); }
+.s-badge.kind-skill { background: var(--kind-skill-soft); border-color: transparent; color: var(--kind-skill); font-family: var(--sans); }
+.cat-done { display: inline-flex; align-items: center; gap: 4px; }

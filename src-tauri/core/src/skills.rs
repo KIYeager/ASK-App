@@ -20,12 +20,12 @@ use unicode_normalization::UnicodeNormalization;
 pub const MAX_FILE: usize = 100 * 1024; // Import und Speichern: höchstens 100 KB
 pub const MAX_DESCRIPTION: usize = 300;
 pub const MAX_NAME: usize = 40;
-pub const PROMPT_MAX: usize = 1800; // Liste im Systemprompt
+pub const PROMPT_MAX: usize = 3200; // Liste im Systemprompt (dazu 11 mitgelieferte Skills, E70)
 pub const PROMPT_DESCRIPTION: usize = 160;
 pub const MAX_SKILLS: usize = 100;
 /// Befehle der App: ein Skill mit diesem Namen liesse sich mit /name nicht aufrufen
 pub const RESERVED: &[&str] = &["neu", "projekt", "goal", "suchen", "ordner", "explorer", "dateien", "github", "modell", "denken", "web", "chats",
-    "einstellungen", "update", "beta", "neustart", "abmelden", "gedaechtnis", "skills", "hilfe"];
+    "einstellungen", "update", "beta", "neustart", "abmelden", "gedaechtnis", "skills", "hilfe", "mods", "plan", "auto", "nachfragen", "nutzung"];
 
 fn is_reserved(slug: &str) -> bool {
     RESERVED.contains(&slug)
@@ -382,7 +382,7 @@ impl Skills {
         if list.is_empty() {
             return String::new();
         }
-        let mut text = String::from("\n\n# Skills\nAnleitungen für wiederkehrende Aufträge (eigene der Person und mitgelieferte). Passt ein Skill zum Auftrag, lies ihn zuerst mit skill_lesen und halte dich daran.");
+        let mut text = String::from("\n\n# Skills\nAnleitungen für wiederkehrende Aufträge (eigene der Person und mitgelieferte). Prüfe bei jedem Auftrag, ob ein Skill dazu passt. Wenn ja: lies ihn zuerst mit skill_lesen, sag in einem kurzen Satz, welchen Skill du benutzt, und halte dich an seine Anleitung. Auch ohne /name, sobald er passt.");
         let mut shown = 0;
         for s in &list {
             let line = format!("\n- {}: {}", s.slug, one_line(&s.description, PROMPT_DESCRIPTION));
@@ -512,8 +512,20 @@ mod tests {
             s.save(&skill(&format!("skill-{i}"), &format!("Beschreibung {}", "lang ".repeat(60)), "x"), &d).unwrap();
         }
         let p = s.prompt();
-        assert!(char_len(&p) < 1900, "{}", char_len(&p));
+        assert!(char_len(&p) < PROMPT_MAX + 100, "{}", char_len(&p));
         assert!(Regex::new(r"… und \d+ weitere").unwrap().is_match(&p));
+    }
+
+    #[test]
+    fn alle_mitgelieferten_skills_passen_in_den_systemprompt() {
+        let std_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../resources/standard-skills");
+        let t = tempfile::tempdir().unwrap();
+        let s = Skills::with_standard(t.path(), &std_dir, std::sync::Arc::new(Vec::new));
+        let n = s.list().len();
+        assert!(n >= 11, "{n}");
+        let p = s.prompt();
+        assert!(!p.contains("weitere"), "alle {n} im Prompt, nicht abgeschnitten: {p}");
+        assert!(p.contains("Auch ohne /name"), "ASK benutzt passende Skills von selbst");
     }
 
     #[test]

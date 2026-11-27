@@ -16,7 +16,8 @@ Neue Version veröffentlichen: siehe [unten](#neue-version-veröffentlichen). We
 | Terminal-Server | `src-tauri/terminal/` (Crate `ask-terminal`) | der Server läuft in derselben ASK.exe (`--terminal`), Low Integrity und Job-Objekt setzt `NativeLowBackend`; Ordnersperre in der Datei-API, CORS |
 | Anweisungen | `resources/anweisungen/` | Systemprompt für das Modell und Zusatz zur Befehlsbeschreibung |
 | Mitgelieferte Skills | `resources/standard-skills/` | Skills für alle (ENTSCHEIDE E70), ausschaltbar in den Einstellungen |
-| Beispiel-Mods | `resources/mods-beispiele/` | Neon, Robo-Helfer, Pomodoro, Vokabeln (E72); dieselben in `katalog/` für das Katalog-Repository |
+| Beispiel-Mods | `resources/mods-beispiele/` | Neon, Robo-Helfer, Pomodoro, Vokabeln (E72); dieselben im Katalog [KIYeager/ASK-Erweiterungen](https://github.com/KIYeager/ASK-Erweiterungen) |
+| Anleitung für andere KI | `resources/mod-anleitung/SKILL.md` | Mods mit Claude, ChatGPT, Codex … bauen (Agent Skill `ask-mods`, E75); dieselbe im Katalog unter `.claude/skills/ask-mods/` |
 | Skills | `resources/skills/` | Anleitungen für Word, Excel, PowerPoint, PDF (erstellen und vorhandene Dateien bearbeiten), Hilfsfunktionen `bearbeiten.py`, Prüfskript `pruefen.py`, Platz für Vorlagen in `vorlagen/` |
 | Tests | `tests/` | Unit-, Python-, End-to-End- und Pakettests, Beispieldateien |
 

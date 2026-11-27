@@ -76,6 +76,9 @@ pub struct KnowledgeConfig {
     pub standard_skills: Option<PathBuf>,
     /// Mitgelieferte Beispiel-Mods (resources/mods-beispiele, E72)
     pub example_mods: Option<PathBuf>,
+    /// Kataloge auf GitHub (catalog.rs, E71) für die Werkzeuge katalog_suchen und katalog_hinzufuegen
+    pub catalog: Option<Arc<crate::catalog::Catalog>>,
+    pub catalog_sources: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
 }
 
 impl KnowledgeConfig {
@@ -91,6 +94,8 @@ impl KnowledgeConfig {
             on_settings: Arc::new(|| {}),
             standard_skills: None,
             example_mods: None,
+            catalog: None,
+            catalog_sources: Arc::new(Vec::new),
         }
     }
 }
@@ -194,8 +199,14 @@ impl Knowledge {
             memory: Some(self.memory.clone()),
             skills: Some(self.skills.clone()),
             mods: Some(self.mods.clone()),
+            catalog: self.cfg.catalog.clone(),
+            catalog_sources: Some(self.cfg.catalog_sources.clone()),
             memory_on: Some(Arc::new(move || memory_on(&cfg))),
             changed: Some(Arc::new(move || send("memory:changed", json!({})))),
+            mods_changed: Some({
+                let (send, on_settings) = (self.cfg.send.clone(), self.cfg.on_settings.clone());
+                Arc::new(move || { send("mods:changed", json!({})); on_settings(); })
+            }),
         }
     }
 

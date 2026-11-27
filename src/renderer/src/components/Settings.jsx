@@ -1,11 +1,12 @@
 // Einstellungen als grosses Fenster mit Bereichen links (ENTSCHEIDE E73), dazu Skills, Kataloge und Mods (E70–E72).
 // Suchen filtert alle Zeilen der Bereiche. Untere Dialoge (Skill bearbeiten, Katalog, Vorschau eines Mods) kehren
 // beim Schliessen in denselben Bereich zurück (dialog.back).
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
 import { Segmented, UPDATE_TEXT, UsageView } from './Dialogs.jsx';
 import { formatSize } from '../lib/format.js';
+import { keepDialogOverReload } from '../lib/mods.js';
 
 export const PANES = [
   [
@@ -317,8 +318,10 @@ function useModsList() {
 function ModsPane({ state, go, onCompose }) {
   const data = useModsList();
   const [msg, setMsg] = useState(null);
-  const run = async (p) => {
-    const r = await p.catch((e) => ({ ok: false, reason: String(e?.message || e) }));
+  // Ein-/Ausschalten und Löschen laden die Oberfläche neu; danach geht es hier weiter
+  const run = async (p, reload = false) => {
+    if (reload) keepDialogOverReload({ name: 'settings', pane: 'mods' });
+    const r = await (typeof p === 'function' ? p() : p).catch((e) => ({ ok: false, reason: String(e?.message || e) }));
     if (r?.ok === false && !r.canceled) setMsg({ bad: true, text: r.reason });
     else if (r?.kind) setMsg({ text: installedText(r) });
     else setMsg(null);
@@ -331,26 +334,30 @@ function ModsPane({ state, go, onCompose }) {
         <div className="s-note warn" role="status">
           <Icon name="shield" size={16} />
           <div><strong>Ein Mod mit Code ist eingeschaltet.</strong> Heikle Schritte (Befehle erlauben, Modus «Auto», Skills speichern …) bestätigst du jetzt in einem Fenster von Windows. Ctrl+Shift+M schaltet alle Mods sofort aus.</div>
-          <button type="button" className="btn small" onClick={() => run(api().modsOffAll())}>Alle ausschalten</button>
+          <button type="button" className="btn small" onClick={() => run(() => api().modsOffAll(), true)}>Alle ausschalten</button>
         </div>
       ) : (
         <div className="s-note"><Icon name="shield" size={16} /><div>Code in einem Mod sieht und bedient alles in ASK. Schalte nur Mods ein, deren Code du angesehen hast oder deren Quelle du vertraust. Neue und geänderte Mods sind aus.</div></div>
       )}
       <div className="s-actions">
         <button type="button" className="btn primary" onClick={() => onCompose('/mod-erstellen ')}><Icon name="spark" size={14} /> Mit ASK erstellen</button>
-        <button type="button" className="btn" onClick={() => run(api().modsImport())}>Aus Ordner importieren …</button>
+        <button type="button" className="btn" onClick={() => run(() => api().modsImport(), true)}>Aus Ordner importieren …</button>
         <button type="button" className="btn" onClick={() => api().modsFolder()}>Ordner öffnen</button>
       </div>
       <Message msg={msg} />
+      <Row title="Anleitung für andere KI" text="Mit Claude, ChatGPT, Codex oder Copilot einen Mod bauen: Anleitung kopieren und in den Chat einfügen, oder als SKILL.md speichern (in Claude als Skill «ask-mods»). Den fertigen Ordner holst du mit «Aus Ordner importieren …».">
+        <button type="button" className="btn small" onClick={async () => { const r = await api().modsGuide('kopieren'); setMsg(r?.ok ? { text: 'Anleitung kopiert. Füge sie im Chat der anderen KI ein und beschreibe deinen Mod.' } : { bad: true, text: r?.reason || 'Nicht kopiert.' }); }}>Kopieren</button>
+        <button type="button" className="btn small" onClick={async () => { const r = await api().modsGuide('speichern'); if (r?.path) setMsg({ text: `Gespeichert: ${r.path}` }); else if (r?.ok === false && !r.canceled) setMsg({ bad: true, text: r.reason }); }}>Speichern …</button>
+      </Row>
       <h3>Deine Mods</h3>
       {data === null ? <p className="muted">Lädt …</p> : !mods.length ? <p className="muted small">Noch keine Mods. Probier ein Beispiel aus oder lass ASK einen erstellen.</p> : mods.map((m) => (
         <Row key={m.id} title={<>{m.name} <span className="s-ver">{m.version}</span></>}
           text={<>{m.beschreibung}{m.geaendert ? <span className="s-warn"> Seit dem Einschalten geändert: erst nach erneuter Vorschau wieder aktiv.</span> : null}{m.fehler ? <span className="s-warn"> {m.fehler}</span> : null}
             <span className="s-tags">{modParts(m).map((t) => <span key={t} className={`s-tag${t === 'Code' ? ' code' : ''}`}>{t}</span>)}</span></>}>
           <button type="button" className="btn small" onClick={() => go('mod-preview', { id: m.id })}>Vorschau</button>
-          <button type="button" className="icon-btn" title="Löschen" aria-label={`Mod ${m.name} löschen`} onClick={() => run(api().modsRemove(m.id))}><Icon name="trash" size={14} /></button>
+          <button type="button" className="icon-btn" title="Löschen" aria-label={`Mod ${m.name} löschen`} onClick={() => run(() => api().modsRemove(m.id), m.aktiv)}><Icon name="trash" size={14} /></button>
           <Toggle label={`Mod ${m.name}`} checked={m.aktiv} disabled={!!m.fehler}
-            onChange={(v) => (v ? go('mod-preview', { id: m.id }) : run(api().modsEnable(m.id, false)))} />
+            onChange={(v) => (v ? go('mod-preview', { id: m.id }) : run(() => api().modsEnable(m.id, false), true))} />
         </Row>
       ))}
       {data?.examples?.length ? (
@@ -359,7 +366,7 @@ function ModsPane({ state, go, onCompose }) {
           {data.examples.map((e) => (
             <Row key={`x-${e.id}`} title={e.name} text={<>{e.beschreibung}<span className="s-tags">{modParts(e).map((t) => <span key={t} className={`s-tag${t === 'Code' ? ' code' : ''}`}>{t}</span>)}</span></>}>
               {e.installiert ? <span className="muted small">Hinzugefügt</span>
-                : <button type="button" className="btn small" onClick={() => run(api().modsExample(e.id))}>Hinzufügen</button>}
+                : <button type="button" className="btn small" onClick={() => run(() => api().modsExample(e.id), true)}>Hinzufügen</button>}
             </Row>
           ))}
         </>
@@ -384,11 +391,36 @@ function SubDialog({ id, title, onClose, children, actions, wide = true }) {
   );
 }
 
+// Mods und Skills deutlich getrennt: eigene Farbe und eigenes Symbol, Umschalter oben, Abschnitte mit Erklärung
+const KINDS = {
+  mod: { label: 'Mods', one: 'Mod', icon: 'puzzle', text: 'Verändern ASK selbst: Aussehen, Bereiche, Figuren, Knöpfe oder Befehle. Nach dem Hinzufügen aus, bis du sie unter Mods einschaltest.' },
+  skill: { label: 'Skills', one: 'Skill', icon: 'bolt', text: 'Anleitungen, die ASK bei passenden Aufträgen liest. Direkt aufrufen mit /name im Eingabefeld.' },
+};
+
+function CatalogEntry({ e, repo, state, onAdd }) {
+  const k = KINDS[e.kind] || KINDS.skill;
+  return (
+    <div className={`s-row cat-row kind-${e.kind}`}>
+      <span className="cat-icon" aria-hidden="true"><Icon name={k.icon} size={16} /></span>
+      <div className="s-row-text">
+        <div className="s-title">{e.kind === 'skill' ? `/${e.name}` : e.name}<span className={`s-badge kind-${e.kind}`}>{k.one}</span></div>
+        {e.description ? <div className="s-text">{e.description}</div> : null}
+      </div>
+      <div className="s-row-ctl">
+        <button type="button" className="btn small ghost" onClick={() => api().openLink(`https://github.com/${repo}/tree/HEAD/${e.path}`)}>Ansehen</button>
+        {e.installiert || state === 'ok' ? <span className="muted small cat-done"><Icon name="check" size={13} /> Hinzugefügt</span>
+          : <button type="button" className="btn small" disabled={state === 'lädt'} onClick={() => onAdd(e)}>{state === 'lädt' ? 'Lädt …' : 'Hinzufügen'}</button>}
+      </div>
+    </div>
+  );
+}
+
 export function CatalogDialog({ repo, kind, onClose }) {
   const [res, setRes] = useState(null);
   const [done, setDone] = useState({});
   const [msg, setMsg] = useState(null);
   const [filter, setFilter] = useState('');
+  const [show, setShow] = useState(null); // 'skill' | 'mod' | 'alle'
   useEffect(() => { api().catalogList(repo).then(setRes).catch((e) => setRes({ ok: false, reason: String(e?.message || e) })); }, [repo]);
   const add = async (e) => {
     setDone((d) => ({ ...d, [e.path]: 'lädt' }));
@@ -396,24 +428,38 @@ export function CatalogDialog({ repo, kind, onClose }) {
     setDone((d) => ({ ...d, [e.path]: r?.ok ? 'ok' : '' }));
     setMsg(r?.ok ? { text: installedText(r) } : r?.canceled ? null : { bad: true, text: r?.reason || 'Nicht hinzugefügt.' });
   };
-  const entries = useMemo(() => (res?.entries || [])
-    .filter((e) => `${e.name} ${e.description}`.toLowerCase().includes(filter.trim().toLowerCase()))
-    .sort((a, b) => (a.kind === kind ? -1 : 0) - (b.kind === kind ? -1 : 0)), [res, filter, kind]);
+  const all = res?.entries || [];
+  const count = (k) => all.filter((e) => e.kind === k).length;
+  // Zuerst die Art, von der aus der Katalog geöffnet wurde; gibt es davon keine, alle
+  const current = show || (kind && count(kind) ? kind : 'alle');
+  const q = filter.trim().toLowerCase();
+  const matching = all.filter((e) => `${e.name} ${e.description}`.toLowerCase().includes(q));
+  const kinds = current === 'alle' ? ['mod', 'skill'] : [current];
   return (
     <SubDialog id="dlg-catalog" title={`Katalog ${repo}`} onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Fertig</button>}>
-      <p className="s-text">Einträge aus <button type="button" className="linkish" onClick={() => api().openLink(`https://github.com/${repo}`)}>github.com/{repo}</button>. Lies einen Skill oder Mod, bevor du ihn hinzufügst: Er wird zu einer Anleitung für ASK.</p>
+      <p className="s-text">Einträge aus <button type="button" className="linkish" onClick={() => api().openLink(`https://github.com/${repo}`)}>github.com/{repo}</button>. Sieh dir einen Eintrag an, bevor du ihn hinzufügst.</p>
       {!res ? <p className="muted">Lädt …</p> : res.ok === false ? <p className="s-msg bad" role="alert">{res.reason}</p> : (
         <>
-          <input className="input" type="search" placeholder="Filtern" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Einträge filtern" />
-          <div className="s-list">
-            {!entries.length ? <p className="muted small">Keine Einträge.</p> : entries.map((e) => (
-              <Row key={e.path} title={e.name} badge={e.kind === 'mod' ? 'Mod' : 'Skill'} text={e.description}>
-                <button type="button" className="btn small ghost" onClick={() => api().openLink(`https://github.com/${repo}/tree/HEAD/${e.path}`)}>Ansehen</button>
-                {e.installiert || done[e.path] === 'ok' ? <span className="muted small">Hinzugefügt</span>
-                  : <button type="button" className="btn small" disabled={done[e.path] === 'lädt'} onClick={() => add(e)}>{done[e.path] === 'lädt' ? 'Lädt …' : 'Hinzufügen'}</button>}
-              </Row>
-            ))}
+          <div className="cat-tools">
+            <Segmented name="Art" value={current} onChange={setShow}
+              options={[['skill', `Skills (${count('skill')})`], ['mod', `Mods (${count('mod')})`], ['alle', `Alle (${all.length})`]]} />
+            <input className="input" type="search" placeholder="Filtern" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Einträge filtern" />
           </div>
+          {kinds.map((k) => {
+            const list = matching.filter((e) => e.kind === k);
+            if (current === 'alle' && !list.length) return null;
+            return (
+              <section key={k} className={`cat-section kind-${k}`}>
+                <h3><Icon name={KINDS[k].icon} size={14} /> {KINDS[k].label} <span className="cat-count">{list.length}</span></h3>
+                <p className="s-text cat-lead">{KINDS[k].text}</p>
+                <div className="s-list">
+                  {!list.length ? <p className="muted small">{q ? 'Nichts gefunden.' : `Keine ${KINDS[k].label} in diesem Katalog.`}</p>
+                    : list.map((e) => <CatalogEntry key={e.path} e={e} repo={repo} state={done[e.path]} onAdd={add} />)}
+                </div>
+              </section>
+            );
+          })}
+          {current === 'alle' && !matching.length ? <p className="muted small">Nichts gefunden.</p> : null}
         </>
       )}
       <Message msg={msg} />
@@ -438,6 +484,7 @@ export function ModPreviewDialog({ id, onClose }) {
   if (!m) return <SubDialog id="dlg-mod" title="Mod" onClose={onClose}><p className="muted">Den Mod gibt es nicht mehr.</p></SubDialog>;
   const shown = m.files.find((f) => f.path === file);
   const enable = async () => {
+    keepDialogOverReload({ name: 'settings', pane: 'mods' });
     const r = await api().modsEnable(m.id, true).catch((e) => ({ ok: false, reason: String(e?.message || e) }));
     if (r?.ok) onClose();
     else setMsg({ bad: true, text: r?.reason || 'Nicht eingeschaltet.' });
@@ -448,7 +495,7 @@ export function ModPreviewDialog({ id, onClose }) {
         {m.script && !m.aktiv ? <label className="check"><input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} /> Ich habe den Code angesehen und vertraue der Quelle</label> : null}
         <span className="spacer" />
         <button type="button" className="btn" onClick={onClose}>{m.aktiv ? 'Schliessen' : 'Abbrechen'}</button>
-        {m.aktiv ? <button type="button" className="btn" onClick={async () => { await api().modsEnable(m.id, false); onClose(); }}>Ausschalten</button>
+        {m.aktiv ? <button type="button" className="btn" onClick={async () => { keepDialogOverReload({ name: 'settings', pane: 'mods' }); await api().modsEnable(m.id, false); onClose(); }}>Ausschalten</button>
           : <button type="button" className="btn primary" disabled={(!!m.script && !trust) || !!m.fehler} onClick={enable}>Einschalten</button>}
       </>
     )}>

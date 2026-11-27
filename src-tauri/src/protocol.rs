@@ -105,11 +105,28 @@ fn mime_of(path: &std::path::Path) -> &'static str {
 // Adresse: askmod://mod/<id>/<fingerabdruck>/<pfad> bzw. http://askmod.localhost/mod/<id>/<fingerabdruck>/<pfad>.
 // Geliefert wird nur, was mods.rs für einen eingeschalteten, unveränderten Mod freigibt.
 
-pub fn handle_mod(_ctx: UriSchemeContext<'_, Wry>, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
+pub fn handle_mod(ctx: UriSchemeContext<'_, Wry>, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
     let uri = request.uri().clone();
+    // Testansicht (mod_testen, E75): Dateien auch ausgeschalteter Mods, aber nur an die unsichtbaren Testfenster
+    let test = crate::pages::is_mod_test(ctx.webview_label());
     tauri::async_runtime::spawn_blocking(move || {
-        responder.respond(respond_mod(&uri));
+        responder.respond(if test { respond_mod_test(&uri) } else { respond_mod(&uri) });
     });
+}
+
+fn respond_mod_test(uri: &tauri::http::Uri) -> Response<Vec<u8>> {
+    let (host, path) = (uri.host().unwrap_or(""), uri.path());
+    let rest = if host == "test" { Some(path.to_string()) } else { path.strip_prefix("/test").map(str::to_string) };
+    let Some((id, hash, file)) = rest.and_then(|r| mod_path("mod", &r)) else { return not_found() };
+    let Some(data) = crate::shell().core().knowledge.mods.test_file(&id, &hash, &file) else { return not_found() };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mod_mime(&file))
+        .header(header::CACHE_CONTROL, "no-store")
+        .header("X-Content-Type-Options", "nosniff")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*") // Fehlermeldungen mit Zeile (crossorigin in mods.js)
+        .body(data)
+        .expect("Antwort")
 }
 
 /// (Kennung, Fingerabdruck, Pfad) aus der Adresse
@@ -148,6 +165,7 @@ fn respond_mod(uri: &tauri::http::Uri) -> Response<Vec<u8>> {
         .header(header::CONTENT_TYPE, mod_mime(&file))
         .header(header::CACHE_CONTROL, "no-cache")
         .header("X-Content-Type-Options", "nosniff")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*") // Fehlermeldungen mit Zeile (crossorigin in mods.js)
         .body(data)
         .expect("Antwort")
 }

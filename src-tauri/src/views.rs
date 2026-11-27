@@ -290,6 +290,10 @@ fn is_local_dev_url(u: &str) -> bool {
 }
 
 /// Adresse der eigenen Oberfläche (gebaut: tauri://localhost bzw. http://tauri.localhost, Entwicklung: Vite)
+pub fn is_own_ui_url(url: &url::Url) -> bool {
+    matches!(url.scheme(), "tauri" | "http" | "https") && is_own_ui(url)
+}
+
 fn is_own_ui(url: &url::Url) -> bool {
     matches!(url.host_str(), Some("localhost" | "tauri.localhost" | "127.0.0.1"))
 }

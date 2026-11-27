@@ -113,6 +113,11 @@ pub fn standard_skills_dir() -> PathBuf {
     resources(&["standard-skills"])
 }
 
+/// Anleitung für andere KI-Agents zum Bauen von Mods (Agent Skill «ask-mods», E75)
+pub fn mod_guide_file() -> PathBuf {
+    resources(&["mod-anleitung", "SKILL.md"])
+}
+
 /// Mitgelieferte Beispiel-Mods (E72)
 pub fn example_mods_dir() -> PathBuf {
     resources(&["mods-beispiele"])

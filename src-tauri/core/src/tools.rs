@@ -358,6 +358,10 @@ pub trait VisualTools: Send + Sync {
     /// `visual.browse(folder, ziel, { aktionen, warten, chat, onLive, signal, localPorts })`: Werkzeug `browser`.
     /// `ziel` ist leer, wenn das Modell keines angibt (auf der offenen Seite weiterarbeiten).
     async fn browse(&self, folder: &str, ziel: &str, opts: VisualOpts) -> Result<Value>;
+    /// Werkzeug `mod_testen` (ENTSCHEIDE E75): Mod in einer Testansicht der Oberfläche laden, Bildschirmfoto und Bericht
+    async fn mod_test(&self, _folder: &str, _test: crate::visual::ModTest) -> Result<Value> {
+        bail!("Mods testen geht nur in der App.")
+    }
 }
 
 /// Das `ctx`-Objekt von `runTool`
@@ -1262,6 +1266,36 @@ async fn browser(ctx: &ToolCtx, a: &Value) -> Result<ToolResult> {
     Ok(r)
 }
 
+/// Mod ausprobieren (ENTSCHEIDE E75): in einer unsichtbaren Testansicht von ASK mit Beispieldaten, auch wenn er aus
+/// ist. Der Code läuft dort ohne Zugriff auf den Hauptprozess, ohne Internet und mit eigenem, leerem Speicher.
+async fn mod_testen(ctx: &ToolCtx, a: &Value) -> Result<ToolResult> {
+    let v = visual_of(ctx)?;
+    let Some(mods) = ctx.knowledge.as_ref().and_then(|k| k.mods.clone()) else { bail!("Mods sind hier nicht verfügbar.") };
+    let id = crate::mods::slug(&str_of(a, "id"));
+    let Some(info) = mods.info(&id) else {
+        let ids: Vec<String> = mods.list().into_iter().map(|m| m.manifest.id).collect();
+        return Ok(ToolResult::new(false, format!("Keinen Mod «{id}» gefunden. Vorhanden: {}", if ids.is_empty() { "keine".into() } else { ids.join(", ") }), "nicht gefunden"));
+    };
+    if !info.fehler.is_empty() {
+        return Ok(ToolResult::new(false, format!("mod.json ist fehlerhaft: {}", info.fehler), "fehlerhaft"));
+    }
+    let test = crate::visual::ModTest {
+        id: info.manifest.id.clone(),
+        hash: info.hash.clone(),
+        style: info.manifest.style.clone(),
+        script: info.manifest.script.clone(),
+        befehle: serde_json::to_value(&info.manifest.befehle).unwrap_or(Value::Null),
+        dark: str_of(a, "farbschema") != "hell",
+        aktionen: a.get("aktionen").and_then(Value::as_array).cloned().unwrap_or_default(),
+        chat: ctx.chat.clone(),
+    };
+    let mut r = ToolResult::from_value(&v.mod_test(&ctx.folder, test).await?);
+    if !ctx.can_see {
+        r.output = r.output.replace("Das Bildschirmfoto folgt in der nächsten Nachricht.", "Das Bildschirmfoto bekommst du nicht: das Modell in ASK kann keine Bilder ansehen. Verlass dich auf den Bericht.");
+    }
+    Ok(r)
+}
+
 // ---------- Entwicklungsserver ----------
 
 /// Entwicklungsserver (src/main/servers.js, ENTSCHEIDE E48): laufen im Terminal weiter, ohne dass der Auftrag
@@ -1912,6 +1946,7 @@ async fn run(terminal: Option<&dyn TerminalEndpoint>, name: &str, args: &Value, 
         "server_stoppen" => server_stoppen(ctx, args).await,
         "server_liste" => server_liste(ctx),
         "bild_erstellen" => bild_erstellen(ctx, args).await,
+        "mod_testen" => mod_testen(ctx, args).await,
         other => {
             let mctx = MemoryToolCtx {
                 folder: ctx.folder.clone(),
@@ -2359,6 +2394,9 @@ mod tests {
                 memory: Some(memory.clone()),
                 skills: Some(skills.clone()),
                 mods: None,
+                catalog: None,
+                catalog_sources: None,
+                mods_changed: None,
                 memory_on: Some(Arc::new(move || on2.load(Ordering::SeqCst))),
                 changed: Some(Arc::new(move || {
                     ch2.fetch_add(1, Ordering::SeqCst);
@@ -2431,6 +2469,20 @@ mod tests {
             self.seen.lock().push((folder.into(), ziel.into(), opts));
             Ok(json!({ "ok": true, "output": format!("Seite geladen. {SHOT_LATER}"), "summary": "ok", "images": ["s.png"] }))
         }
+    }
+
+    #[tokio::test]
+    async fn mod_testen_braucht_einen_vorhandenen_mod() {
+        let t = tempfile::tempdir().unwrap();
+        let mods = Arc::new(crate::mods::Mods::new(t.path().join("mods"), None));
+        let v = Arc::new(FakeVisual { seen: Mutex::new(Vec::new()) });
+        let ctx = ToolCtx { visual: Some(v), folder: "C:\\x".into(), chat: "c1".into(),
+            knowledge: Some(KnowledgeCtx { mods: Some(mods.clone()), ..Default::default() }), ..Default::default() };
+        let r = run_tool(None, "mod_testen", &json!({ "id": "neon" }), &ctx).await;
+        assert!(!r.ok && r.output.contains("Keinen Mod «neon»"), "{}", r.output);
+        mods.save(&[("mod.json".into(), br#"{"id":"neon","name":"Neon"}"#.to_vec())], false).unwrap();
+        let r = run_tool(None, "mod_testen", &json!({ "id": "neon" }), &ctx).await;
+        assert!(!r.ok && r.output.contains("nur in der App"), "Attrappe ohne Testansicht: {}", r.output);
     }
 
     #[tokio::test]

@@ -287,6 +287,7 @@ impl App {
             let m3 = me.clone();
             let m4 = me.clone();
             let host = o.host.clone();
+            let catalog = Arc::new(crate::catalog::Catalog::new(client.clone()));
             let mut kcfg = KnowledgeConfig::new(paths::user_data());
             kcfg.ask = Some(ask.clone() as Arc<dyn ChatApi>);
             kcfg.get_model = Arc::new(move || m2.upgrade().map(|a| a.current_model()).unwrap_or_default());
@@ -298,6 +299,8 @@ impl App {
             });
             kcfg.on_settings = Arc::new(move || { if let Some(a) = m3.upgrade() { a.push_state(); } });
             kcfg.standard_skills = Some(paths::standard_skills_dir());
+            kcfg.catalog = Some(catalog.clone());
+            kcfg.catalog_sources = Arc::new(|| crate::extensions::catalogs().iter().filter_map(|c| c["repo"].as_str().map(str::to_string)).collect());
             kcfg.example_mods = Some(paths::example_mods_dir());
             let knowledge = Arc::new(Knowledge::new(kcfg));
 
@@ -352,7 +355,7 @@ impl App {
                 images,
                 visual,
                 knowledge,
-                catalog: Arc::new(crate::catalog::Catalog::new(client.clone())),
+                catalog,
                 updater,
                 reviewer,
                 dns,
@@ -674,6 +677,28 @@ impl App {
         if self.thinking_level() == "maximal" { "\n\n/think" } else { "" }
     }
 
+    /// Kurz, wie ASK gerade eingestellt ist, damit das Modell Fragen zur App beantworten kann (E77). Die Bedienung
+    /// steht im mitgelieferten Skill «ask-hilfe».
+    fn app_facts(&self) -> String {
+        let s = settings::load();
+        let theme = match js_string(&s["theme"]).as_str() { "hell" => "Hell", "dunkel" => "Dunkel", _ => "wie Windows (System)" };
+        let mode = match self.chat_mode().as_str() { "auto" => "Auto", "plan" => "Plan", _ => "Nachfragen" };
+        let model_name = self.ask.models().into_iter().find(|m| m.id == self.current_model()).map(|m| m.name).unwrap_or_else(|| self.current_model());
+        let mods: Vec<String> = self.knowledge.mods.active().into_iter().map(|m| m.manifest.name).collect();
+        let u = self.updater.snapshot();
+        format!(
+            "\n\n# Über die App\nDu arbeitest in ASK, der Desktop-App der TF Bern, Version {}. Fragt die Person, wie etwas in ASK geht, wo eine Einstellung ist oder was ein Knopf macht, lies zuerst den Skill «ask-hilfe» und antworte mit dem genauen Weg dorthin. \
+Einstellungen wie Farbschema, Modus oder Modell änderst du nicht selbst; du sagst, wo die Person sie findet.\n\
+Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkaufwand {}; Websuche {}; Gedächtnis {}; frühere Chats {}; Beta-Versionen {}; eingeschaltete Mods: {}.",
+            self.host.app_version(), self.thinking_level(),
+            if truthy(&s["webSearch"]) { "an" } else { "aus" },
+            if self.knowledge.memory_on() { "an" } else { "aus" },
+            if truthy(&s["chatMemory"]) { "an" } else { "aus" },
+            if truthy(&u["beta"]) { "an" } else { "aus" },
+            if mods.is_empty() { "keine".to_string() } else { mods.join(", ") },
+        )
+    }
+
     pub fn current_model(&self) -> String {
         let wanted = js_string(&settings::get("model"));
         let models = self.ask.models();
@@ -837,7 +862,7 @@ impl App {
         Confirmed { ok, checked: ok && bool_of(&res, "checkboxChecked") }
     }
 
-    fn confirm_fn(&self) -> ConfirmFn {
+    pub(crate) fn confirm_fn(&self) -> ConfirmFn {
         let me = self.me.clone();
         Arc::new(move |m, d, o| {
             let me = me.clone();
@@ -924,7 +949,7 @@ impl App {
             move |chat: &str| {
                 let Some(a) = me.upgrade() else { return String::new() };
                 let history = if truthy(&settings::get("chatMemory")) { crate::history::history_prompt(Path::new(&f), chat) } else { String::new() };
-                format!("{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), project_notes(&f), crate::vorlagen::system_prompt(), a.knowledge.system_prompt(&f), history, a.thinking_switch())
+                format!("{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), project_notes(&f), crate::vorlagen::system_prompt(), a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch())
             }
         });
         o.get_command_hint = Arc::new({ let f = f.clone(); move |chat: &str| read_instruction("befehle.md", &f, chat) });
@@ -1669,6 +1694,14 @@ impl App {
 
     pub(crate) async fn host_pick_folder(&self, title: &str) -> Option<String> {
         self.host.pick_folder(title, "").await.filter(|p| !p.is_empty())
+    }
+
+    pub(crate) async fn host_pick_save(&self, title: &str, name: &str, filters: crate::host::Filters) -> Option<String> {
+        self.host.pick_save_file(title, name, filters).await.filter(|p| !p.is_empty())
+    }
+
+    pub(crate) fn host_copy(&self, text: &str) {
+        self.host.clipboard_write(text);
     }
 
     pub(crate) async fn host_open(&self, path: &str) {
