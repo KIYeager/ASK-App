@@ -30,6 +30,12 @@ Ein gespeicherter Mod ändert in ASK erst etwas, wenn er **eingeschaltet** ist, 
 - Kein verschleierter Code. Der Code soll lesbar sein, die Person darf ihn prüfen.
 - CSS **eingrenzen**: Klassen mit der Mod-Id als Anfang (`.robo-helfer-blase`). Nicht ganze Seiten mit `* { … }` umstellen. Farben immer über die Variablen (unten), damit Hell und Dunkel funktionieren.
 - Bilder und Töne in den Mod-Ordner legen und mit `ASK.datei('bild.png')` verwenden.
+- **Eigene Schriften:** nur freie Schriften (z. B. SIL Open Font License) mit ihrer Lizenzdatei (`OFL.txt`) im Mod-Ordner. Die Schriftdatei (`woff2`, `woff` oder `ttf`) daneben legen und in `style.css` mit `@font-face` und einem Pfad relativ zu `style.css` laden, dann über `--sans` oder `--mono` verwenden:
+  ```css
+  @font-face { font-family: 'Meine Schrift'; src: url("schrift.woff2") format("woff2"); font-display: swap; }
+  :root { --sans: 'Meine Schrift', system-ui, sans-serif; }
+  ```
+  Nicht als `data:`-Adresse einbetten, das ist nicht nötig. `mod_erstellen` schreibt nur Text: Die Schriftdatei und die Lizenz legt die Person selbst in den Mod-Ordner (oder sie importiert den ganzen Ordner). Danach ist der Mod geändert und muss wieder eingeschaltet werden.
 - Lieber kleine, einfache Mods. Das Ganze soll die Person verstehen können.
 
 ## Aufbau
