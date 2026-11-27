@@ -134,6 +134,9 @@ export default function App() {
   const [startError, setStartError] = useState('');
   const [selected, setSelected] = useState(null);
   const [tab, setTab] = useState('dateien');
+  // ASK Docs (ENTSCHEIDE E81): offenes Doc im Reiter und letzte Änderung durch ASK
+  const [docPath, setDocPath] = useState('');
+  const [docLive, setDocLive] = useState(null);
   const [verbose, setVerbose] = useState(false);
   const [query, setQuery] = useState('');
   const [renaming, setRenaming] = useState(null);
@@ -244,6 +247,13 @@ export default function App() {
 
   // Browser-Bereich: Live-Ereignisse von browser (visual.js)
   const onLive = useCallback((ev) => {
+    if (ev.phase === 'doc') {
+      // ASK hat ein Doc angelegt oder geändert: Reiter «Docs» zeigen, der Editor lädt neu
+      setDocLive({ path: ev.doc, comments: !!ev.comments, at: Date.now() });
+      setTab('docs');
+      if (!stateRef.current?.sidebarOpen) api().setSidebar(true);
+      return;
+    }
     if (ev.phase === 'start') {
       setBrowser((b) => ({ ...b, liveId: ev.id, running: true, mode: '', status: 'lädt …', log: [], frame: '', url: ev.path || b.url }));
       setTab('browser');
@@ -468,6 +478,9 @@ export default function App() {
 
   // Ohne Projekt gibt es kein Repository: vom Reiter «GitHub» zurück zu den Dateien
   useEffect(() => { if (free && tab === 'github') setTab('dateien'); }, [free, tab]);
+  // Anderes Projekt: dessen Docs, nicht das Doc des vorherigen (E81)
+  const folderNow = state?.folder || '';
+  useEffect(() => { setDocPath(''); setDocLive(null); }, [folderNow]);
 
   // ---------- Aktionen ----------
 
@@ -482,6 +495,14 @@ export default function App() {
   };
 
   const openFile = useCallback((p) => {
+    // Docs öffnen im eigenen Reiter (E81), nicht in der Vorschau
+    const rel = String(p || '').replaceAll('\\', '/').replace(/^\.?\//, '');
+    if (/^docs\/.+\.md$/i.test(rel)) {
+      setDocPath(rel);
+      setTab('docs');
+      if (!stateRef.current?.sidebarOpen) api().setSidebar(true);
+      return;
+    }
     const found = allFiles.find((f) => norm(f.path) === norm(p));
     setSelected(found || { path: p, name: baseName(p), modified: Date.now() });
     setTab('vorschau');
@@ -960,7 +981,10 @@ export default function App() {
             onBrowserClose={() => { api().browserClose(); setBrowser(BROWSER0); setBrowserBig(false); setTab('dateien'); }}
             onBrowserBig={() => setBrowserBig(!browserBig)} browserBig={browserBig}
             onMention={(p) => { const rel = String(p).replaceAll('\\', '/'); composer.current?.insert(/\s/.test(rel) ? `@"${rel}"` : `@${rel}`); }} notice={notice} servers={servers}
-            running={running} dialogOpen={!!dialogName} onGithub={() => setDialog({ name: 'github' })} modPanels={modState.panels} />
+            running={running} dialogOpen={!!dialogName} onGithub={() => setDialog({ name: 'github' })} modPanels={modState.panels}
+            docs={{ path: docPath, setPath: setDocPath, live: docLive,
+              onAsk: (t) => { if (runningRef.current || acts.current.blocker) composer.current?.setText(t); else acts.current.send(t, []); },
+              onCompose: (t) => composer.current?.setText(t) }} />
         ) : <span />}
       </main>
 

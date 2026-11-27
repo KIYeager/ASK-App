@@ -141,14 +141,16 @@ pub fn plan_tool() -> Value {
 }
 
 /// Werkzeuge, die im Planmodus erlaubt sind: nichts, was den Ordner oder etwas ausserhalb verändert
-const PLAN_ALLOWED: [&str; 20] = ["read_file", "list_files", "find_files", "search_text", "view_file", "web_search", "web_fetch", HELPER,
-    "chat_search", "chat_read", "github_status", "server_liste", "skill_lesen", "mod_liste", "mod_lesen", "katalog_suchen", "update_tasks", "frage_stellen", "plan_vorlegen", EFFORT_TOOL];
+const PLAN_ALLOWED: &[&str] = &["read_file", "list_files", "find_files", "search_text", "view_file", "web_search", "web_fetch", HELPER,
+    "chat_search", "chat_read", "github_status", "server_liste", "skill_lesen", "mod_liste", "mod_lesen", "katalog_suchen", "update_tasks", "frage_stellen", "plan_vorlegen", EFFORT_TOOL,
+    "doc_liste", "doc_lesen"];
 /// Chat ohne Projekt (ENTSCHEIDE E78): Gespräch, Web, Bilder, Anhänge lesen und Gedächtnis. Nichts, was Dateien
 /// ändert, Befehle ausführt oder nach aussen wirkt; andere Aufrufe lehnt `step` auch dann ab, wenn das Modell sie
-/// trotzdem schickt.
-const FREE_ALLOWED: [&str; 14] = ["read_file", "view_file", "web_search", "web_fetch", "bild_erstellen", "chat_search", "chat_read", "skill_lesen",
-    "merken", "vergessen", "update_tasks", "frage_stellen", "goal_done", EFFORT_TOOL];
-const FREE_PROMPT: &str = "\n\n# Chat ohne Projekt\nDieser Chat gehört zu keinem Projekt. Hier beantwortest du Fragen, erklärst, suchst im Web und erstellst auf Wunsch Bilder. Du kannst hier keine Dateien schreiben oder ändern, keine Befehle ausführen und keinen Server starten; es gibt keinen Projektordner. Angehängte Dateien liest du mit read_file, angehängte Bilder siehst du direkt. Will die Person, dass du Dateien erstellst oder bearbeitest, Programme ausführst oder mit einem Ordner arbeitest, sag ihr in einem Satz, dass das in einem Projekt geht: links bei «Projekte» auf + klicken und den Auftrag dort stellen. Code, Texte und Tabellen kannst du hier direkt in der Antwort schreiben.";
+/// trotzdem schickt. Docs (ENTSCHEIDE E81) gibt es auch hier: Sie liegen im Ordner dieser Chats unter docs/.
+const FREE_ALLOWED: &[&str] = &["read_file", "view_file", "web_search", "web_fetch", "bild_erstellen", "chat_search", "chat_read", "skill_lesen",
+    "merken", "vergessen", "update_tasks", "frage_stellen", "goal_done", EFFORT_TOOL,
+    "doc_liste", "doc_lesen", "doc_erstellen", "doc_bearbeiten", "doc_kommentieren"];
+const FREE_PROMPT: &str = "\n\n# Chat ohne Projekt\nDieser Chat gehört zu keinem Projekt. Hier beantwortest du Fragen, erklärst, suchst im Web und erstellst auf Wunsch Bilder. Du kannst hier keine Dateien schreiben oder ändern, keine Befehle ausführen und keinen Server starten; es gibt keinen Projektordner. Docs (doc_erstellen, doc_bearbeiten) gehen trotzdem: Sie liegen bei den Chats ohne Projekt. Angehängte Dateien liest du mit read_file, angehängte Bilder siehst du direkt. Will die Person, dass du Dateien erstellst oder bearbeitest, Programme ausführst oder mit einem Ordner arbeitest, sag ihr in einem Satz, dass das in einem Projekt geht: links bei «Projekte» auf + klicken und den Auftrag dort stellen. Code, Texte und Tabellen kannst du hier direkt in der Antwort schreiben.";
 const PLAN_PROMPT: &str = "\n\n# Planmodus\nDie Person will zuerst einen Plan sehen. Ändere nichts: keine Befehle, keine Dateien schreiben. Sieh dir mit den Lese- und Suchwerkzeugen an, was du brauchst, frag bei Unklarem mit frage_stellen, und lege dann mit plan_vorlegen einen kurzen, konkreten Plan vor (Schritte, betroffene Dateien). Danach hörst du auf.";
 
 /// Verbindung zu ASK weg oder ASK kurz überlastet: so lange warten und nochmals versuchen (Sekunden)
@@ -727,6 +729,10 @@ pub fn mod_rule_risk(name: &str, args: &Value, kinds: &[String]) -> Option<Risk>
         "write_file" | "edit_file" if has("schreiben") => {
             let path = js_string(args.get("path").unwrap_or(&Value::Null));
             risk("schreiben", format!("Darf ASK «{path}» schreiben?"), path)
+        }
+        "doc_erstellen" | "doc_bearbeiten" if has("schreiben") => {
+            let path = if name == "doc_erstellen" { js_string(args.get("titel").unwrap_or(&Value::Null)) } else { js_string(args.get("pfad").unwrap_or(&Value::Null)) };
+            risk("schreiben", format!("Darf ASK das Doc «{path}» schreiben?"), path)
         }
         "web_search" | "web_fetch" | "browser" if has("web") => {
             let what = ["query", "url", "address", "action"].iter().find_map(|k| args.get(*k).filter(|v| truthy(v)).map(js_string)).unwrap_or_default();
@@ -1969,6 +1975,9 @@ impl Agent {
                 if let Ok(a) = serde_json::from_str::<Value>(if arguments.is_empty() { "{}" } else { &arguments }) {
                     self.inner.lock().made_this_turn.insert(norm_rel(&js_string(&a["path"])));
                 }
+            }
+            if let Some(made) = result.made.as_ref().filter(|_| result.ok) {
+                self.inner.lock().made_this_turn.insert(norm_rel(made)); // z. B. ein neues Doc (E81)
             }
             if !result.sources.is_empty() {
                 if let Some(t) = self.inner.lock().turn_sources.as_mut() {
