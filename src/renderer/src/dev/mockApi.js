@@ -273,6 +273,8 @@ const extensionsApi = {
     { kind: 'skill', path: 'skills/frontend-design', name: 'frontend-design', description: 'Create distinctive, production-grade frontend interfaces with high design quality.', installiert: false },
     { kind: 'skill', path: 'skills/mcp-builder', name: 'mcp-builder', description: 'Guide for creating high-quality MCP servers.', installiert: false },
     { kind: 'skill', path: 'skills/webapp-testing', name: 'webapp-testing', description: 'Toolkit for interacting with and testing local web applications using Playwright.', installiert: true },
+    { kind: 'mod', path: 'mods/neon', name: 'Neon', description: 'Ein dunkles Neon-Design mit leuchtenden Akzenten.', installiert: false },
+    { kind: 'mod', path: 'mods/robo-helfer', name: 'Robo-Helfer', description: 'Ein kleiner Roboter, der auf ASK reagiert.', installiert: false },
   ] }; },
   catalogInstall: async () => { await wait(400); return { ok: true, kind: 'skill' }; },
   catalogLink: async (url) => (/github\.com|\//.test(url) ? { ok: true, kind: 'skill', skill: { slug: 'neu' } } : { ok: false, reason: 'Das ist kein GitHub-Repository. Beispiel: anthropics/skills' }),

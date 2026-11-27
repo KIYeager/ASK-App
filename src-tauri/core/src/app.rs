@@ -287,6 +287,7 @@ impl App {
             let m3 = me.clone();
             let m4 = me.clone();
             let host = o.host.clone();
+            let catalog = Arc::new(crate::catalog::Catalog::new(client.clone()));
             let mut kcfg = KnowledgeConfig::new(paths::user_data());
             kcfg.ask = Some(ask.clone() as Arc<dyn ChatApi>);
             kcfg.get_model = Arc::new(move || m2.upgrade().map(|a| a.current_model()).unwrap_or_default());
@@ -298,6 +299,8 @@ impl App {
             });
             kcfg.on_settings = Arc::new(move || { if let Some(a) = m3.upgrade() { a.push_state(); } });
             kcfg.standard_skills = Some(paths::standard_skills_dir());
+            kcfg.catalog = Some(catalog.clone());
+            kcfg.catalog_sources = Arc::new(|| crate::extensions::catalogs().iter().filter_map(|c| c["repo"].as_str().map(str::to_string)).collect());
             kcfg.example_mods = Some(paths::example_mods_dir());
             let knowledge = Arc::new(Knowledge::new(kcfg));
 
@@ -352,7 +355,7 @@ impl App {
                 images,
                 visual,
                 knowledge,
-                catalog: Arc::new(crate::catalog::Catalog::new(client.clone())),
+                catalog,
                 updater,
                 reviewer,
                 dns,
@@ -837,7 +840,7 @@ impl App {
         Confirmed { ok, checked: ok && bool_of(&res, "checkboxChecked") }
     }
 
-    fn confirm_fn(&self) -> ConfirmFn {
+    pub(crate) fn confirm_fn(&self) -> ConfirmFn {
         let me = self.me.clone();
         Arc::new(move |m, d, o| {
             let me = me.clone();

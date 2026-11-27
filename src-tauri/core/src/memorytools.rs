@@ -33,6 +33,10 @@ pub struct KnowledgeCtx {
     pub skills: Option<Arc<Skills>>,
     /// Mods (mods.rs): Werkzeug mod_erstellen
     pub mods: Option<Arc<crate::mods::Mods>>,
+    /// Kataloge (catalog.rs): Werkzeuge katalog_suchen und katalog_hinzufuegen
+    pub catalog: Option<Arc<crate::catalog::Catalog>>,
+    /// Repositories der Kataloge (mitgelieferte und eigene)
+    pub catalog_sources: Option<Arc<dyn Fn() -> Vec<String> + Send + Sync>>,
     /// Ist das Gedächtnis in den Einstellungen eingeschaltet? Fehlt die Funktion, gilt es als eingeschaltet.
     pub memory_on: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Wird nach jeder Änderung aufgerufen (die Oberfläche lädt dann neu)
@@ -168,7 +172,7 @@ pub fn knowledge_tools() -> Vec<KnowledgeTool> {
         },
         KnowledgeTool {
             name: "skill_lesen",
-            label: "Skill",
+            label: "Skill benutzt",
             description: "Liest die Anleitung eines Skills (Liste unter «Skills»). Lies den Skill, bevor du einen passenden Auftrag ausführst.",
             parameters: json!({ "type": "object", "properties": { "name": { "type": "string", "description": "Name des Skills aus der Liste" } }, "required": ["name"] }),
         },
@@ -206,6 +210,39 @@ pub fn knowledge_tools() -> Vec<KnowledgeTool> {
                     "datei": { "type": "string", "description": "Optional: nur diese Datei, z. B. «mod.js»" },
                 },
                 "required": ["id"],
+            }),
+        },
+        KnowledgeTool {
+            name: "katalog_suchen",
+            label: "Katalog",
+            description: concat!(
+                "Sucht Skills und Mods in den Katalogen auf GitHub (die der Schule, anthropics/skills und eigene der Person) oder in einem genannten öffentlichen Repository. ",
+                "Benutze es, wenn die Person einen fertigen Skill oder Mod sucht oder etwas will, das ein Katalog schon hat. Danach mit katalog_hinzufuegen anbieten.",
+            ),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "suche": { "type": "string", "description": "Suchwörter (alle müssen vorkommen), leer für alles" },
+                    "art": { "type": "string", "enum": ["skill", "mod", "alle"], "description": "Standard: alle" },
+                    "repo": { "type": "string", "description": "Optional: nur dieses Repository oder dieser Link, z. B. «anthropics/skills»" },
+                },
+            }),
+        },
+        KnowledgeTool {
+            name: "katalog_hinzufuegen",
+            label: "Aus Katalog hinzufügen",
+            description: concat!(
+                "Fügt einen Skill oder Mod aus einem Katalog hinzu (Angaben aus katalog_suchen). Nur, wenn die Person es will. ",
+                "Die Person sieht vorher Beschreibung und Inhalt und bestätigt. Ein Mod ist danach aus, bis sie ihn unter Einstellungen → Mods einschaltet; teste ihn vorher mit mod_testen.",
+            ),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "repo": { "type": "string", "description": "Repository aus katalog_suchen, z. B. «KIYeager/ASK-Erweiterungen»" },
+                    "art": { "type": "string", "enum": ["skill", "mod"] },
+                    "pfad": { "type": "string", "description": "Ordner im Repository aus katalog_suchen, z. B. «mods/neon»" },
+                },
+                "required": ["repo", "art", "pfad"],
             }),
         },
         KnowledgeTool {
@@ -262,6 +299,8 @@ pub fn describe(name: &str, a: &Value) -> String {
         "mod_erstellen" => a.get("dateien").and_then(|d| d.get("mod.json")).map(js_string)
             .and_then(|t| crate::mods::parse_manifest(&t).ok()).map(|m| m.name).unwrap_or_else(|| field(a, "id")),
         "mod_testen" => field(a, "id"),
+        "katalog_suchen" => [field(a, "suche"), field(a, "repo")].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · "),
+        "katalog_hinzufuegen" => format!("{} {}", field(a, "repo"), field(a, "pfad")),
         "mod_lesen" => [field(a, "id"), field(a, "datei")].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · "),
         _ => String::new(),
     }
@@ -276,6 +315,8 @@ pub async fn run(name: &str, a: &Value, ctx: &MemoryToolCtx) -> Option<Result<To
         "skill_erstellen" => skill_erstellen(a, ctx).await,
         "mod_erstellen" => mod_erstellen(a, ctx).await,
         "mod_liste" => mod_liste(ctx),
+        "katalog_suchen" => katalog_suchen(a, ctx).await,
+        "katalog_hinzufuegen" => katalog_hinzufuegen(a, ctx).await,
         "mod_lesen" => mod_lesen(a, ctx),
         _ => return None,
     })
@@ -347,6 +388,88 @@ fn skill_lesen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
     let mut out = ToolOutput::new(true, format!("Skill «{}»: {}\n\n{}", s.slug, s.description, s.body), format!("{} gelesen", s.slug));
     out.display = Some(format!("{}\n\n{}", s.description, take_chars(&s.body, 3000)));
     Ok(out)
+}
+
+fn need_catalog(ctx: &MemoryToolCtx) -> Result<Arc<crate::catalog::Catalog>> {
+    ctx.knowledge.as_ref().and_then(|k| k.catalog.clone()).ok_or_else(|| anyhow::anyhow!("Kataloge sind hier nicht verfügbar."))
+}
+
+/// Höchstens so viele Treffer zeigen
+const CATALOG_HITS: usize = 30;
+
+async fn katalog_suchen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
+    let catalog = need_catalog(ctx)?;
+    let k = ctx.knowledge.as_ref().expect("Wissen");
+    let repos: Vec<String> = match field(a, "repo") {
+        r if !r.is_empty() => vec![r],
+        _ => k.catalog_sources.as_ref().map(|f| f()).unwrap_or_default(),
+    };
+    if repos.is_empty() {
+        return Ok(ToolOutput::new(false, "Keine Kataloge eingerichtet.".into(), "keine Kataloge"));
+    }
+    let art = field(a, "art");
+    let query = field(a, "suche");
+    let own_skills: Vec<String> = k.skills.as_ref().map(|s| s.list_own().into_iter().map(|x| x.slug).collect()).unwrap_or_default();
+    let own_mods: Vec<String> = k.mods.as_ref().map(|m| m.list().into_iter().map(|x| x.manifest.id).collect()).unwrap_or_default();
+    let (mut lines, mut problems, mut total) = (Vec::new(), Vec::new(), 0usize);
+    for repo in &repos {
+        let src = match crate::catalog::parse_source(repo) {
+            Ok(s) => s,
+            Err(e) => { problems.push(format!("{repo}: {e}")); continue; }
+        };
+        let entries = match catalog.list(&src).await {
+            Ok(e) => e,
+            Err(e) => { problems.push(format!("{}: {e}", src.repo_name())); continue; }
+        };
+        for e in entries.iter().filter(|e| (art.is_empty() || art == "alle" || e.kind == art) && crate::catalog::matches(e, &query)) {
+            total += 1;
+            if lines.len() >= CATALOG_HITS {
+                continue;
+            }
+            let folder = e.path.rsplit('/').next().unwrap_or("").to_string();
+            let have = if e.kind == "skill" { own_skills.contains(&e.name) } else { own_mods.contains(&folder) };
+            let name = if e.kind == "skill" { format!("/{}", e.name) } else { e.name.clone() };
+            lines.push(format!("- [{}] {name}: {} (repo {}, pfad {}){}", if e.kind == "mod" { "Mod" } else { "Skill" },
+                clip_line(&e.description, 200), src.repo_name(), e.path, if have { " – schon hinzugefügt" } else { "" }));
+        }
+    }
+    let mut out = if lines.is_empty() {
+        format!("Nichts gefunden{} in: {}.", if query.is_empty() { String::new() } else { format!(" für «{query}»") }, repos.join(", "))
+    } else {
+        format!("{total} Treffer{}:\n{}", if total > lines.len() { format!(", die ersten {}", lines.len()) } else { String::new() }, lines.join("\n"))
+    };
+    if !problems.is_empty() {
+        out.push_str(&format!("\nNicht erreichbar: {}", problems.join(" · ")));
+    }
+    out.push_str("\nHinweis: Skills aus anthropics/skills sind auf Englisch; ASK antwortet trotzdem auf Deutsch. Dort beschriebene Skripte neben der SKILL.md kommen nicht mit.");
+    Ok(ToolOutput::new(!lines.is_empty(), out, format!("{total} Treffer")))
+}
+
+async fn katalog_hinzufuegen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
+    let catalog = need_catalog(ctx)?;
+    let k = ctx.knowledge.as_ref().expect("Wissen");
+    let (Some(skills), Some(mods)) = (k.skills.clone(), k.mods.clone()) else { bail!("Skills und Mods sind hier nicht verfügbar.") };
+    let art = field(a, "art");
+    if art != "skill" && art != "mod" {
+        bail!("art muss «skill» oder «mod» sein.");
+    }
+    let src = crate::catalog::parse_source(&field(a, "repo"))?;
+    let prepared = crate::catalog::prepare(&catalog, &src, &art, field(a, "pfad").trim_matches('/')).await?;
+    let Some(confirm) = &ctx.confirm else {
+        return Ok(ToolOutput::new(false, "Die Person hat das Hinzufügen abgelehnt.".into(), "abgelehnt"));
+    };
+    let r = crate::catalog::install(prepared, &skills, &mods, confirm, true, &src.repo_name()).await?;
+    if r["ok"] != true {
+        return Ok(ToolOutput::new(false, "Die Person hat das Hinzufügen abgelehnt.".into(), "abgelehnt"));
+    }
+    k.changed();
+    Ok(if art == "skill" {
+        let slug = js_string(&r["skill"]["slug"]);
+        ToolOutput::new(true, format!("Skill «/{slug}» hinzugefügt. Die Person kann ihn mit /{slug} aufrufen; du liest ihn mit skill_lesen."), format!("/{slug} hinzugefügt"))
+    } else {
+        let (id, name) = (js_string(&r["mod"]["id"]), js_string(&r["mod"]["name"]));
+        ToolOutput::new(true, format!("Mod «{name}» (id {id}) hinzugefügt, aber aus. Teste ihn mit mod_testen und sag der Person: Einstellungen → Mods → «{name}» → Vorschau ansehen und einschalten."), format!("{id} hinzugefügt"))
+    })
 }
 
 fn need_mods(ctx: &MemoryToolCtx) -> Result<Arc<crate::mods::Mods>> {
@@ -558,6 +681,8 @@ mod tests {
                 memory: Some(memory.clone()),
                 skills: None,
                 mods: None,
+                catalog: None,
+                catalog_sources: None,
                 memory_on: Some(Arc::new(move || on2.load(Ordering::SeqCst))),
                 changed: Some(Arc::new(move || { ch2.fetch_add(1, Ordering::SeqCst); })),
             }),
@@ -634,7 +759,7 @@ mod tests {
     fn werkzeugbeschreibungen_im_openai_format() {
         let specs: Vec<Value> = knowledge_tools().iter().map(KnowledgeTool::spec).collect();
         let names: Vec<&str> = specs.iter().map(|s| s["function"]["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["merken", "vergessen", "skill_lesen", "skill_erstellen", "mod_liste", "mod_lesen", "mod_testen", "mod_erstellen"]);
+        assert_eq!(names, ["merken", "vergessen", "skill_lesen", "skill_erstellen", "mod_liste", "mod_lesen", "katalog_suchen", "katalog_hinzufuegen", "mod_testen", "mod_erstellen"]);
         assert_eq!(specs[0]["type"], "function");
         assert_eq!(specs[0]["function"]["parameters"]["required"], json!(["text", "bereich"]));
         let keys: Vec<&String> = specs[0]["function"]["parameters"]["properties"].as_object().unwrap().keys().collect();

@@ -5,7 +5,6 @@ use crate::app::App;
 use crate::catalog::{parse_source, Source};
 use crate::host::ConfirmOptions;
 use crate::mods::Mods;
-use crate::skills::{SaveOptions, SkillInput, Skills};
 use crate::{settings, util::{js_string, truthy}};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -42,22 +41,6 @@ impl App {
         self.push_state();
     }
 
-    /// Skill speichern: fragt vor dem Ersetzen eines eigenen gleichnamigen
-    async fn install_skill(&self, data: &[u8], origin: &str) -> Result<Value, String> {
-        let parsed = Skills::read_import(data).map_err(|e| e.to_string())?;
-        if self.knowledge.skills.own(&parsed.name).is_some() {
-            let ok = self.confirm(&format!("Skill «{}» ersetzen?", parsed.name), "Es gibt schon einen eigenen Skill mit diesem Namen.", ConfirmOptions::default()).await.ok;
-            if !ok {
-                return Ok(json!({ "ok": false, "canceled": true }));
-            }
-        }
-        let body = format!("{}\n\n<!-- Quelle: {origin} -->", parsed.body);
-        let skill = self.knowledge.skills.save(&SkillInput { name: parsed.name, description: parsed.description, body }, &SaveOptions { previous: String::new(), overwrite: true })
-            .map_err(|e| e.to_string())?;
-        self.changed_mods();
-        Ok(json!({ "ok": true, "kind": "skill", "skill": skill }))
-    }
-
     /// Mod speichern (aus): fragt vor dem Ersetzen
     async fn install_mod(&self, files: Vec<(String, Vec<u8>)>) -> Result<Value, String> {
         let m = Mods::check_files(&files).map_err(|e| e.to_string())?;
@@ -73,13 +56,17 @@ impl App {
     }
 
     async fn install_entry(&self, src: &Source, kind: &str, path: &str) -> Value {
-        let files = match self.catalog.files(src, kind, path).await {
-            Ok(f) => f,
+        let prepared = match crate::catalog::prepare(&self.catalog, src, kind, path).await {
+            Ok(p) => p,
             Err(e) => return fail(e.to_string()),
         };
-        let origin = format!("https://github.com/{}{}", src.repo_name(), if path.is_empty() { String::new() } else { format!("/tree/HEAD/{path}") });
-        let r = if kind == "skill" { self.install_skill(&files[0].1, &origin).await } else { self.install_mod(files).await };
-        r.unwrap_or_else(fail)
+        match crate::catalog::install(prepared, &self.knowledge.skills, &self.knowledge.mods, &self.confirm_fn(), false, &src.repo_name()).await {
+            Ok(v) => {
+                if v["ok"] == true { self.changed_mods(); }
+                v
+            }
+            Err(e) => fail(e.to_string()),
+        }
     }
 
     /// `Some(Ergebnis)` für die Kanäle dieses Moduls, sonst `None`

@@ -7,6 +7,7 @@ description: Führt Schritt für Schritt durch das Schreiben eines eigenen Skill
 Ein Skill ist eine kurze Anleitung, die ASK bei einer bestimmten Aufgabe nachliest. ASK sieht im Alltag nur **Name** und **Beschreibung**. Die ganze Anleitung wird erst gelesen, wenn die Beschreibung zur Aufgabe passt. Die Beschreibung ist also der Auslöser und das Wichtigste am Skill.
 
 ## Vorgehen
+0. **Gibt es ihn schon?** Mit `katalog_suchen` (art «skill») nachsehen. Passt ein Eintrag, ihn mit `katalog_hinzufuegen` anbieten (die Person bestätigt), statt neu zu schreiben.
 1. **Aufgabe klären.** Stell der Person wenige, klare Fragen (nicht alle auf einmal):
    - Welche Aufgabe kommt immer wieder vor?
    - Wann soll ASK den Skill brauchen? Welche Wörter oder Situationen sind typisch?

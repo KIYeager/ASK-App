@@ -13,6 +13,7 @@ Ein Mod verändert ASK: Aussehen (CSS), Verhalten (JavaScript), eigene `/befehle
    - **Seitenpanel:** ein eigener Reiter rechts (Timer, Notizen, Spickzettel).
    - **Schwebende Figur:** ein Maskottchen, das auf ASK reagiert.
    - **Verhalten:** reagiert auf Ereignisse (Meldung bei «fertig», Knopf in der Kopfzeile).
+   Gibt es so etwas vielleicht schon? Mit `katalog_suchen` (art «mod») nachsehen und einen passenden Mod mit `katalog_hinzufuegen` anbieten, statt alles neu zu bauen.
    Will die Person einen **vorhandenen** Mod ändern oder hat sie Fragen dazu: zuerst `mod_liste`, dann `mod_lesen` (ganzer Mod oder eine Datei). Nie raten, was in einem Mod steht.
 2. **Plan vorschlagen.** Nenne Id, Name, welche Dateien entstehen und was die Person am Ende sieht. Hol ein Ja ein.
 3. **Mod erstellen** mit dem Werkzeug `mod_erstellen` (Dateien: `mod.json`, `style.css`, `mod.js`, Bilder). **Ändern:** `mod_erstellen` mit `id` und nur den geänderten Dateien; die übrigen bleiben. Ein leerer Inhalt (`""`) löscht eine Datei.

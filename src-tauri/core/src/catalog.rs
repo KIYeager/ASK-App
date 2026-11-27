@@ -244,6 +244,70 @@ impl Catalog {
     }
 }
 
+/// Was ein Eintrag mitbringt, bevor er gespeichert wird (für die Rückfrage)
+pub enum Prepared {
+    Skill { parsed: crate::skills::Parsed, origin: String },
+    Mod { manifest: crate::mods::Manifest, files: Vec<(String, Vec<u8>)> },
+}
+
+/// Eintrag laden und prüfen, noch nichts speichern
+pub async fn prepare(catalog: &Catalog, src: &Source, kind: &str, path: &str) -> Result<Prepared> {
+    let files = catalog.files(src, kind, path).await?;
+    let origin = format!("https://github.com/{}{}", src.repo_name(), if path.is_empty() { String::new() } else { format!("/tree/HEAD/{path}") });
+    if kind == "skill" {
+        let parsed = crate::skills::Skills::read_import(&files[0].1)?;
+        return Ok(Prepared::Skill { parsed, origin });
+    }
+    let manifest = crate::mods::Mods::check_files(&files)?;
+    Ok(Prepared::Mod { manifest, files })
+}
+
+/// Speichern. `ask_first`: immer vorher fragen (das Modell fügt hinzu); sonst nur vor dem Ersetzen (Klick der Person).
+/// Ergebnis wie in der Oberfläche: `{ ok, kind, skill|mod }` oder `{ ok: false, canceled: true }`.
+pub async fn install(prepared: Prepared, skills: &crate::skills::Skills, mods: &crate::mods::Mods, confirm: &crate::host::ConfirmFn, ask_first: bool, repo: &str) -> Result<Value> {
+    use crate::host::ConfirmOptions;
+    let canceled = || serde_json::json!({ "ok": false, "canceled": true });
+    match prepared {
+        Prepared::Skill { parsed, origin } => {
+            let exists = skills.own(&parsed.name).is_some();
+            if ask_first || exists {
+                let message = if exists { format!("Skill «/{}» aus {repo} ersetzen?", parsed.name) } else { format!("Skill «/{}» aus {repo} hinzufügen?", parsed.name) };
+                let preview = crate::util::take_chars(&parsed.body, 1500);
+                let detail = format!("{}\n\n{preview}{}\n\nQuelle: {origin}{}", parsed.description,
+                    if parsed.body.chars().count() > 1500 { "\n…" } else { "" },
+                    if exists { "\n\nEs gibt schon einen eigenen Skill mit diesem Namen; er wird ersetzt." } else { "" });
+                if !confirm(message, detail, ConfirmOptions::default()).await.ok {
+                    return Ok(canceled());
+                }
+            }
+            let body = format!("{}\n\n<!-- Quelle: {origin} -->", parsed.body);
+            let skill = skills.save(&crate::skills::SkillInput { name: parsed.name, description: parsed.description, body },
+                &crate::skills::SaveOptions { previous: String::new(), overwrite: true })?;
+            Ok(serde_json::json!({ "ok": true, "kind": "skill", "skill": skill }))
+        }
+        Prepared::Mod { manifest, files } => {
+            let exists = mods.info(&manifest.id).is_some();
+            if ask_first || exists {
+                let message = if exists { format!("Mod «{}» aus {repo} ersetzen?", manifest.name) } else { format!("Mod «{}» aus {repo} hinzufügen?", manifest.name) };
+                let names: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+                let code = if manifest.script.is_empty() { "" } else { "\nEnthält Code, der in ASK läuft." };
+                let detail = format!("{}\n\nDateien: {}{code}\n\nDer Mod ist danach aus. Einschalten unter Einstellungen → Mods, nach einer Vorschau.", manifest.beschreibung, names.join(", "));
+                if !confirm(message, detail, ConfirmOptions::default()).await.ok {
+                    return Ok(canceled());
+                }
+            }
+            let info = mods.save(&files, true)?;
+            Ok(serde_json::json!({ "ok": true, "kind": "mod", "mod": info }))
+        }
+    }
+}
+
+/// Einträge, die zu einer Suche passen: jedes Wort muss in Name, Beschreibung oder Pfad vorkommen
+pub fn matches(e: &Entry, query: &str) -> bool {
+    let hay = format!("{} {} {}", e.name, e.description, e.path).to_lowercase();
+    query.to_lowercase().split_whitespace().all(|w| hay.contains(w))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +325,15 @@ mod tests {
         for bad in ["", "abc", "https://example.com/a/b", "a/b/c", "https://github.com/a/b/tree/main/../x", "a b/c"] {
             assert!(parse_source(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn suche_alle_woerter_in_name_beschreibung_oder_pfad() {
+        let e = Entry { kind: "mod".into(), path: "mods/robo-helfer".into(), name: "Robo-Helfer".into(), description: "Ein kleiner Roboter, der reagiert.".into() };
+        assert!(matches(&e, ""));
+        assert!(matches(&e, "roboter KLEINER"));
+        assert!(matches(&e, "mods/robo"));
+        assert!(!matches(&e, "roboter timer"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // Einstellungen als grosses Fenster mit Bereichen links (ENTSCHEIDE E73), dazu Skills, Kataloge und Mods (E70–E72).
 // Suchen filtert alle Zeilen der Bereiche. Untere Dialoge (Skill bearbeiten, Katalog, Vorschau eines Mods) kehren
 // beim Schliessen in denselben Bereich zurück (dialog.back).
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
 import { Segmented, UPDATE_TEXT, UsageView } from './Dialogs.jsx';
@@ -388,11 +388,36 @@ function SubDialog({ id, title, onClose, children, actions, wide = true }) {
   );
 }
 
+// Mods und Skills deutlich getrennt: eigene Farbe und eigenes Symbol, Umschalter oben, Abschnitte mit Erklärung
+const KINDS = {
+  mod: { label: 'Mods', one: 'Mod', icon: 'puzzle', text: 'Verändern ASK selbst: Aussehen, Bereiche, Figuren, Knöpfe oder Befehle. Nach dem Hinzufügen aus, bis du sie unter Mods einschaltest.' },
+  skill: { label: 'Skills', one: 'Skill', icon: 'bolt', text: 'Anleitungen, die ASK bei passenden Aufträgen liest. Direkt aufrufen mit /name im Eingabefeld.' },
+};
+
+function CatalogEntry({ e, repo, state, onAdd }) {
+  const k = KINDS[e.kind] || KINDS.skill;
+  return (
+    <div className={`s-row cat-row kind-${e.kind}`}>
+      <span className="cat-icon" aria-hidden="true"><Icon name={k.icon} size={16} /></span>
+      <div className="s-row-text">
+        <div className="s-title">{e.kind === 'skill' ? `/${e.name}` : e.name}<span className={`s-badge kind-${e.kind}`}>{k.one}</span></div>
+        {e.description ? <div className="s-text">{e.description}</div> : null}
+      </div>
+      <div className="s-row-ctl">
+        <button type="button" className="btn small ghost" onClick={() => api().openLink(`https://github.com/${repo}/tree/HEAD/${e.path}`)}>Ansehen</button>
+        {e.installiert || state === 'ok' ? <span className="muted small cat-done"><Icon name="check" size={13} /> Hinzugefügt</span>
+          : <button type="button" className="btn small" disabled={state === 'lädt'} onClick={() => onAdd(e)}>{state === 'lädt' ? 'Lädt …' : 'Hinzufügen'}</button>}
+      </div>
+    </div>
+  );
+}
+
 export function CatalogDialog({ repo, kind, onClose }) {
   const [res, setRes] = useState(null);
   const [done, setDone] = useState({});
   const [msg, setMsg] = useState(null);
   const [filter, setFilter] = useState('');
+  const [show, setShow] = useState(null); // 'skill' | 'mod' | 'alle'
   useEffect(() => { api().catalogList(repo).then(setRes).catch((e) => setRes({ ok: false, reason: String(e?.message || e) })); }, [repo]);
   const add = async (e) => {
     setDone((d) => ({ ...d, [e.path]: 'lädt' }));
@@ -400,24 +425,38 @@ export function CatalogDialog({ repo, kind, onClose }) {
     setDone((d) => ({ ...d, [e.path]: r?.ok ? 'ok' : '' }));
     setMsg(r?.ok ? { text: installedText(r) } : r?.canceled ? null : { bad: true, text: r?.reason || 'Nicht hinzugefügt.' });
   };
-  const entries = useMemo(() => (res?.entries || [])
-    .filter((e) => `${e.name} ${e.description}`.toLowerCase().includes(filter.trim().toLowerCase()))
-    .sort((a, b) => (a.kind === kind ? -1 : 0) - (b.kind === kind ? -1 : 0)), [res, filter, kind]);
+  const all = res?.entries || [];
+  const count = (k) => all.filter((e) => e.kind === k).length;
+  // Zuerst die Art, von der aus der Katalog geöffnet wurde; gibt es davon keine, alle
+  const current = show || (kind && count(kind) ? kind : 'alle');
+  const q = filter.trim().toLowerCase();
+  const matching = all.filter((e) => `${e.name} ${e.description}`.toLowerCase().includes(q));
+  const kinds = current === 'alle' ? ['mod', 'skill'] : [current];
   return (
     <SubDialog id="dlg-catalog" title={`Katalog ${repo}`} onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Fertig</button>}>
-      <p className="s-text">Einträge aus <button type="button" className="linkish" onClick={() => api().openLink(`https://github.com/${repo}`)}>github.com/{repo}</button>. Lies einen Skill oder Mod, bevor du ihn hinzufügst: Er wird zu einer Anleitung für ASK.</p>
+      <p className="s-text">Einträge aus <button type="button" className="linkish" onClick={() => api().openLink(`https://github.com/${repo}`)}>github.com/{repo}</button>. Sieh dir einen Eintrag an, bevor du ihn hinzufügst.</p>
       {!res ? <p className="muted">Lädt …</p> : res.ok === false ? <p className="s-msg bad" role="alert">{res.reason}</p> : (
         <>
-          <input className="input" type="search" placeholder="Filtern" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Einträge filtern" />
-          <div className="s-list">
-            {!entries.length ? <p className="muted small">Keine Einträge.</p> : entries.map((e) => (
-              <Row key={e.path} title={e.name} badge={e.kind === 'mod' ? 'Mod' : 'Skill'} text={e.description}>
-                <button type="button" className="btn small ghost" onClick={() => api().openLink(`https://github.com/${repo}/tree/HEAD/${e.path}`)}>Ansehen</button>
-                {e.installiert || done[e.path] === 'ok' ? <span className="muted small">Hinzugefügt</span>
-                  : <button type="button" className="btn small" disabled={done[e.path] === 'lädt'} onClick={() => add(e)}>{done[e.path] === 'lädt' ? 'Lädt …' : 'Hinzufügen'}</button>}
-              </Row>
-            ))}
+          <div className="cat-tools">
+            <Segmented name="Art" value={current} onChange={setShow}
+              options={[['skill', `Skills (${count('skill')})`], ['mod', `Mods (${count('mod')})`], ['alle', `Alle (${all.length})`]]} />
+            <input className="input" type="search" placeholder="Filtern" value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Einträge filtern" />
           </div>
+          {kinds.map((k) => {
+            const list = matching.filter((e) => e.kind === k);
+            if (current === 'alle' && !list.length) return null;
+            return (
+              <section key={k} className={`cat-section kind-${k}`}>
+                <h3><Icon name={KINDS[k].icon} size={14} /> {KINDS[k].label} <span className="cat-count">{list.length}</span></h3>
+                <p className="s-text cat-lead">{KINDS[k].text}</p>
+                <div className="s-list">
+                  {!list.length ? <p className="muted small">{q ? 'Nichts gefunden.' : `Keine ${KINDS[k].label} in diesem Katalog.`}</p>
+                    : list.map((e) => <CatalogEntry key={e.path} e={e} repo={repo} state={done[e.path]} onAdd={add} />)}
+                </div>
+              </section>
+            );
+          })}
+          {current === 'alle' && !matching.length ? <p className="muted small">Nichts gefunden.</p> : null}
         </>
       )}
       <Message msg={msg} />
