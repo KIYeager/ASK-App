@@ -532,7 +532,7 @@ Der Text kommt beim Bauen in die App: Der Release-Workflow liest ihn vor dem Bau
 
 ## E65 Vorlagen der TF Bern aus C:\Vorlagen
 
-Auf den Laptops der Schule liegen alle Vorlagen der TF Bern in `C:\Vorlagen`, für Lernende nur zum Lesen. Gibt es den Ordner, darf das Terminal dort auflisten, lesen und suchen (`list_files`, `find_files`, `read_file`, `search_text`), schreiben weiterhin nur im Arbeitsordner (`FileApi::with_read_only`, Einstellung `read_only` des Terminal-Servers). Der Systemprompt nennt den Ordner, die Vorlagen darin (bis 80 Dateien, Office und PDF, drei Ebenen tief) und wie man eine .dotx/.xltx/.potx für python-docx, openpyxl und python-pptx in eine normale Datei kopiert. Befehle, die nur `C:\Vorlagen` nennen (etwa eine Vorlage kopieren), gelten bei den Rückfragen nicht als «ausserhalb des Ordners». Ohne den Ordner ändert sich nichts.
+Auf den Laptops der Schule liegen alle Vorlagen der TF Bern in `C:\Vorlagen`, für Lernende nur zum Lesen. Gibt es den Ordner, darf das Terminal dort auflisten, lesen und suchen (`list_files`, `find_files`, `read_file`, `search_text`), schreiben weiterhin nur im Arbeitsordner (`FileApi::with_read_only`, Einstellung `read_only` des Terminal-Servers). Der Systemprompt nennt den Ordner, die Vorlagen darin (bis 80 Dateien, Office und PDF, drei Ebenen tief) und wie man eine .dotx/.xltx/.potx für python-docx, openpyxl und python-pptx in eine normale Datei kopiert. Befehle, die nur `C:\Vorlagen` nennen (etwa eine Vorlage kopieren), gelten bei den Rückfragen nicht als «ausserhalb des Ordners». Mit `@` im Eingabefeld erscheinen passende Vorlagen neben den Dateien des Projekts (Kennzeichen «Vorlage»; «@vorl» zeigt alle); das Modell bekommt dazu den Hinweis, die Vorlage zu kopieren und in der Kopie zu arbeiten. Ohne den Ordner ändert sich nichts.
 
 ## E66 Schnellere CI und Releases
 
@@ -545,3 +545,11 @@ Jetzt:
 - Der Release nach einem Merge lässt «Lint und Tests» aus; die CI hat sie im PR bestanden (Pflicht vor dem Merge). Ein Tag von Hand prüft weiterhin.
 
 Nicht geändert: `lto = true` und `codegen-units = 1` im Release-Profil (kleinere EXE); «thin» LTO wäre beim Bauen schneller, die EXE etwas grösser.
+
+## E67 Python nach einem Update früher bereit
+
+Python wird nur entpackt, wenn sich seine Fassung ändert (E39; die Fassung hängt nur an `build-python.ps1` und `requirements.txt`). Nach so einem Update, etwa dem Wechsel auf Tauri mit dem schlankeren Python aus E61, beginnt das Entpacken jetzt als Erstes beim Start, nicht erst nach dem Laden von Projekt und Updates, und unten links steht «Python wird eingerichtet … 40 %» (Zustand `python`). Nur Befehle mit Python warten darauf.
+
+## E68 Hilfe bei Fehlern
+
+Fehler im Chat und in den Fenstern «ASK» und «Terminal» zeigen unter der Meldung, was sie in einfachen Worten bedeutet, und zwei, drei Schritte (`src/renderer/src/lib/errorHelp.mjs`: abgelaufene Anmeldung, keine Verbindung, zu viele Anfragen, Chat zu lang, Problem bei ASK, Terminal). «Details kopieren» legt Version, Zeit, ASK-Adresse, Anmelde- und Terminalzustand, Modell, Windows-Version und die Meldung (beim Terminal auch seine Meldungen) in die Zwischenablage, für die Lehrperson.

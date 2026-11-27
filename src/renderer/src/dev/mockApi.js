@@ -118,6 +118,7 @@ async function demoRun(text) {
   ev({ type: 'user', text, attachments: [] });
   await wait(400);
   if (state.mode === 'plan') { await demoPlan(ev); return; }
+  if (/fehler/i.test(text)) { ev({ type: 'error', text: 'error sending request for url (https://ask.ict-tfbern.ch/api/chat/completions): dns error' }); state = { ...state, chat: { ...state.chat, running: false } }; push(); ev({ type: 'done', summary: 'Fehler', failed: true }); return; }
   ev({ type: 'assistant-start' });
   for (const w of 'Ich räume den Ordner auf. '.split(' ')) { ev({ type: 'reasoning', text: `${w} ` }); await wait(40); }
   ev({ type: 'assistant-end', content: '', stats: stats(90), calls: [] });

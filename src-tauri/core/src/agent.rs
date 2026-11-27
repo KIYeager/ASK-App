@@ -287,11 +287,15 @@ fn user_text(m: &Value) -> String {
         let shown = if content.is_empty() { "Siehe Anhang.".to_string() } else { content };
         text = format!("{shown}\n\n[Angehängt, liegt im Arbeitsordner: {}]", files.join(", "));
     }
-    let mentions = arr(&m["mentions"]);
+    let (templates, mentions): (Vec<String>, Vec<String>) = arr(&m["mentions"]).iter().map(js_string).partition(|p| crate::vorlagen::is_template_ref(p));
     if !mentions.is_empty() {
+        text.push_str(&format!("\n\n[Mit @ erwähnt, liegt im Arbeitsordner: {}. Lies es, wenn du es brauchst.]", mentions.join(", ")));
+    }
+    if !templates.is_empty() {
+        // Vorlagen der TF Bern (ENTSCHEIDE E65): nur lesen, in eine Kopie im Projekt
         text.push_str(&format!(
-            "\n\n[Mit @ erwähnt, liegt im Arbeitsordner: {}. Lies es, wenn du es brauchst.]",
-            mentions.iter().map(js_string).collect::<Vec<_>>().join(", ")
+            "\n\n[Gewählte Vorlage der TF Bern (nur lesen): {}. Kopiere sie in den Arbeitsordner und arbeite in der Kopie.]",
+            templates.iter().map(|p| p.replace('/', "\\")).collect::<Vec<_>>().join(", ")
         ));
     }
     skill + &text
@@ -1148,7 +1152,7 @@ impl Agent {
         if !attachments.is_empty() {
             message["attachments"] = json!(attachments);
         }
-        let mentions = mentions_in(&text, &|rel| (self.o.file_exists)(rel));
+        let mentions = mentions_in(&text, &|rel| (self.o.file_exists)(rel) || crate::vorlagen::template_exists(rel));
         if !mentions.is_empty() {
             message["mentions"] = json!(mentions);
         }

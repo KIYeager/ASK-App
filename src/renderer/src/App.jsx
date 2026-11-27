@@ -595,6 +595,7 @@ export default function App() {
     openFileByName: (t) => { const f = findFile(t); if (f) openFile(f.path); },
     openLink: (u) => api().openLink(u),
     copy: (t) => api().copy(t),
+    state,
     approve: (id, a) => api().chatApprove(id, a),
     answer: (id, t) => api().chatAnswer(id, t),
     forgetMemory: async (id) => { try { return !!(await api().memoryRemove(id)); } catch { return false; } },

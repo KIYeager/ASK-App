@@ -197,7 +197,9 @@ Mit `/goal <Ziel>` setzt man ein Ziel für den Chat (Leiste «◎ Ziel» über d
 
 **Neu in ASK.** Nach jedem Update erscheint einmal eine Karte mit dem, was neu ist (ENTSCHEIDE E64).
 
-**Vorlagen der TF Bern.** Gibt es `C:\Vorlagen` (Laptops der Schule), kennt das Modell die Vorlagen darin, liest sie und arbeitet in einer Kopie im Projekt; in `C:\Vorlagen` schreibt es nie (E65).
+**Vorlagen der TF Bern.** Gibt es `C:\Vorlagen` (Laptops der Schule), kennt das Modell die Vorlagen darin, liest sie und arbeitet in einer Kopie im Projekt; in `C:\Vorlagen` schreibt es nie. Mit `@` lässt sich eine Vorlage direkt wählen (E65).
+
+**Hilfe bei Fehlern.** Fehler zeigen, was zu tun ist, und «Details kopieren» für die Lehrperson (E68).
 
 **Einführung.** Beim ersten Start, nach dem Hinweis, dem ersten Projekt und der Anmeldung, zeigt die App vier kurze Karten, die auf die Teile der Oberfläche zeigen: Projekte links, Eingabefeld mit Web, Denkaufwand und Modell, Arbeitsschritte, Fragen und Rückfragen im Chat, Dateien rechts mit «Rückgängig». «Weiter» (oder Pfeil nach rechts), «Überspringen» (oder Esc). Die App merkt sich, dass die Einführung gesehen ist; wer ASK schon vor dieser Version benutzt hat, bekommt sie nicht von selbst. «Einführung zeigen» in den Einstellungen zeigt sie wieder.
 

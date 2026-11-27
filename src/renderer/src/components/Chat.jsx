@@ -3,6 +3,7 @@ import Icon, { TOOL_ICONS } from './Icon.jsx';
 import Markdown from './Markdown.jsx';
 import { groupTitle, statsText } from '../lib/chatModel.mjs';
 import { baseName, extOf, fileBadge, fileUrl } from '../lib/format.js';
+import { errorDetails, errorHelp } from '../lib/errorHelp.mjs';
 
 // ---------- Eingabe der Person ----------
 
@@ -67,6 +68,29 @@ function Detail({ entry, hidden }) {
 
 // Bild aus dem Arbeitsordner; lädt es nicht (Datei eben erst geschrieben und unter Windows kurz gesperrt),
 // bis zu dreimal mit neuer Adresse nachladen, statt ein kaputtes Bild stehen zu lassen
+// Fehler im Chat mit kurzer Hilfe in einfachen Worten und «Details kopieren» (ENTSCHEIDE E68)
+function ErrorRow({ text, ctx }) {
+  const help = errorHelp(text);
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="msg error">
+      <Icon name="alert" size={14} />
+      <div className="error-body">
+        <span>{text}</span>
+        {help ? (
+          <div className="error-help">
+            <strong>{help.title}</strong>
+            <ol>{help.steps.map((s) => <li key={s}>{s}</li>)}</ol>
+          </div>
+        ) : null}
+        <button type="button" className="btn small error-copy" onClick={() => { ctx.copy(errorDetails(text, ctx.state)); setCopied(true); }}>
+          {copied ? 'Kopiert' : 'Details kopieren'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Shot({ p, big, ctx }) {
   const [tries, setTries] = useState(0);
   const [stamp] = useState(() => Date.now());
@@ -375,7 +399,7 @@ function After({ entry, ctx }) {
     case 'changes': return <Changes entry={entry} ctx={ctx} />;
     case 'stats': return <Stats entry={entry} />;
     case 'approval': return <Approval entry={entry} ctx={ctx} />;
-    case 'error': return <div className="msg error"><Icon name="alert" size={14} /> <span>{entry.text}</span></div>;
+    case 'error': return <ErrorRow text={entry.text} ctx={ctx} />;
     case 'remembered': return <Remembered entry={entry} ctx={ctx} />;
     case 'notice': return <div className={`msg notice${entry.retry ? ' retry' : ''}`}><Icon name={entry.icon || 'chevRight'} size={13} /> <span>{entry.text}</span></div>;
     case 'tool': return entry.plan ? <Plan entry={entry} ctx={ctx} /> : entry.question ? <Question entry={entry} ctx={ctx} /> : <ToolRow entry={entry} ctx={ctx} />;

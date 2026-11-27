@@ -81,6 +81,41 @@ b\"spreadsheetml.template.main\": b\"spreadsheetml.sheet.main\", b\"presentation
     s
 }
 
+/// Vorlagen, deren Pfad alle Wörter der Suche enthält (für @ im Eingabefeld); «vorl…» zeigt alle.
+/// Einträge wie bei `Workspace::find`, mit absolutem Pfad und `template: true`.
+pub fn find(query: &str) -> Vec<serde_json::Value> {
+    let Some(d) = dir() else { return Vec::new() };
+    let q = query.to_lowercase();
+    let words: Vec<&str> = q.split_whitespace().collect();
+    let all = words.len() == 1 && "vorlagen".starts_with(words[0]) && words[0].len() >= 4;
+    list(&d)
+        .0
+        .into_iter()
+        .filter(|rel| all || (!words.is_empty() && words.iter().all(|w| rel.to_lowercase().contains(w))))
+        .map(|rel| {
+            let full = d.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+            let name = rel.rsplit('/').next().unwrap_or(&rel).to_string();
+            serde_json::json!({ "name": name, "path": full.to_string_lossy(), "dir": false, "template": true })
+        })
+        .collect()
+}
+
+/// Ist das ein Pfad in den Vorlagen? (auch mit «/», wie das Eingabefeld ihn schreibt)
+pub fn is_template_ref(path: &str) -> bool {
+    let norm = |s: &str| s.replace('\\', "/").to_lowercase().trim_end_matches('/').to_string();
+    let p = norm(path);
+    let mut roots = vec![norm(DIR)];
+    if let Some(d) = dir() {
+        roots.push(norm(&d.to_string_lossy()));
+    }
+    roots.iter().any(|r| p.starts_with(&format!("{r}/")))
+}
+
+/// Gibt es die Vorlage? (Pfad aus dem Eingabefeld)
+pub fn template_exists(path: &str) -> bool {
+    is_template_ref(path) && Path::new(&path.replace('/', std::path::MAIN_SEPARATOR_STR)).is_file()
+}
+
 /// Für die Prüfung von Befehlen: Nennungen von `C:\Vorlagen` entfernen, damit sie nicht als «ausserhalb» gelten
 pub fn without_templates(command: &str) -> String {
     static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)c:[\\/]vorlagen\b").expect("Regex"));
@@ -107,5 +142,9 @@ mod tests {
         let (files, more) = list(v);
         assert_eq!(files, vec!["PowerPoint/Praesentation.potx", "Word/Briefe/Brief TF Bern.dotx"]);
         assert!(!more);
+        assert!(is_template_ref("C:/Vorlagen/Word/Brief.dotx"));
+        assert!(is_template_ref(r"c:\vorlagen\Word\Brief.dotx"));
+        assert!(!is_template_ref("C:/Vorlagenx/Brief.dotx"));
+        assert!(!is_template_ref("bericht.docx"));
     }
 }
