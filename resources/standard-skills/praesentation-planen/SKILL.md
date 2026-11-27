@@ -22,7 +22,7 @@ Ziel: Erst denken, dann Folien bauen. Ein guter Plan spart Zeit und macht den Vo
    - **Sprechnotiz:** 2 bis 4 Sätze, was die Person dazu sagt
    - **Zeit:** ungefähr in Minuten
 5. **Rückmeldung holen**, dann Plan überarbeiten.
-6. **Folien erstellen (auf Wunsch).** Frag, ob die Person eine PowerPoint-Datei will. Dann `skill_lesen("powerpoint")` lesen und dieser Anleitung folgen. Sprechnotizen in die Notizen der Folien übernehmen, wenn möglich.
+6. **Folien erstellen (auf Wunsch).** Frag, ob die Person eine PowerPoint-Datei will. Dann nach dem Skill `powerpoint-folien` vorgehen (mit `skill_lesen` lesen). Sprechnotizen in die Notizen der Folien übernehmen, wenn möglich.
 7. **Üben.** Gib 2 bis 3 Tipps zum Vortragen (laut üben, Zeit stoppen, mögliche Fragen vorbereiten). Biete an, Fragen des Publikums zu simulieren.
 
 ## Regeln
