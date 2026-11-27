@@ -72,10 +72,12 @@ jobs:
             $g.Dispose(); $bmp.Dispose()
           }
           foreach ($run in 'neu', 'update') {
+            $env:ASK_INSTALLER_DEBUG = "$out\$run-erkannt.txt"
             $p = Start-Process $setup.FullName -PassThru
             $i = 0
             while (-not $p.HasExited -and $i -lt 400) { Snap ("{0}-{1:D3}" -f $run, $i); Start-Sleep -Milliseconds 250; $i++ }
             Write-Host "$run`: $i Bilder, Exit-Code $($p.ExitCode)"
+            if (Test-Path "$out\$run-erkannt.txt") { Write-Host "$run erkannt: $(Get-Content "$out\$run-erkannt.txt" -Raw)" }
             Start-Sleep -Seconds 3
             Snap "$run-danach"
             Get-Process ASK -ErrorAction SilentlyContinue | Stop-Process -Force

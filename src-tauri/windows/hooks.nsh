@@ -50,6 +50,14 @@
       StrCpy $6 1
     ${EndIf}
 
+    ; Nur für den Workflow «Installer-Vorschau»: erkannte Werte in eine Datei schreiben
+    ReadEnvStr $9 ASK_INSTALLER_DEBUG
+    ${If} $9 != ""
+      FileOpen $9 "$9" w
+      FileWrite $9 "update=$6 updatemode=$UpdateMode instdir=$INSTDIR version=$7 exe=$INSTDIR\${MAINBINARYNAME}.exe$\r$\n"
+      FileClose $9
+    ${EndIf}
+
     CreateFont $1 "Segoe UI" 11 600
     CreateFont $2 "Segoe UI" 9 400
     ${If} $6 = 1
