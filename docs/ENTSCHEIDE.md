@@ -476,6 +476,8 @@ Nicht gewählt: Startbild (kein Fortschritt sichtbar, bei langsamen Laptops wirk
 
 Geprüft: Die Datei übersetzt mit makensis 3.0.4.1 (wie electron-builder) mit `-WX`, für Installer und Deinstaller. Aussehen nur unter Windows prüfbar (TESTPROTOKOLL, Updates).
 
+Nachtrag: Der erste Release mit diesem Fenster (0.3.9) brach beim Bauen ab. electron-builder liest `installer.nsh` vor `WinMessages.nsh`, und dort steht `!define PBM_SETBARCOLOR` ohne `!ifndef`; die Datei nennt die Werte darum `ASK_PBM_…`. Ausserdem bindet electron-builder mit `customCheckAppRunning` `getProcessInfo.nsh` und `Var pid` nicht mehr ein, die `_CHECK_APP_RUNNING` braucht; das macht jetzt `installer.nsh`. Geprüft mit einem echten Build von electron-builder (Installer und Deinstaller, `-WX`) statt nur mit einem Testskript. 0.3.9 wurde nie veröffentlicht.
+
 ## E60 Tauri 2 statt Electron, Hauptprozess in Rust
 
 Ersetzt E9 und den Teil von E42 zur Hülle. Die App läuft jetzt mit Tauri 2 (2.12) und WebView2 statt Electron. Der frühere Hauptprozess (`src/main/*.js`, rund 9’700 Zeilen Node.js) ist vollständig nach Rust portiert: die Logik ohne Fenster in den Crate `ask-core` (`src-tauri/core`, ein Modul pro früherer Datei, mit den portierten Unit-Tests), Fenster, Webansichten, Dialoge, Benachrichtigungen und Updates in die Tauri-Hülle (`src-tauri/src`). Node.js gibt es zur Laufzeit nicht mehr. Die Oberfläche (React, Vite) bleibt unverändert; `window.ask` kommt aus `src/renderer/src/bridge.js` statt aus dem Preload und ruft den einen Befehl `ipc(channel, args)` mit denselben Kanälen wie früher auf.
