@@ -318,7 +318,7 @@ function Rechner({ b }) {
 function Auswahl({ b, ctx }) {
   const [sent, setSent] = useState(null);
   const [checked, setChecked] = useState(() => new Set());
-  const send = (text) => { setSent(text); ctx.uiSend?.(text); };
+  const send = (text) => { if (ctx.uiSend?.(text) !== false) setSent(text); };
   return (
     <>
       {b.frage ? <p className="ui-q-text">{b.frage}</p> : null}
@@ -357,8 +357,8 @@ function Formular({ b, ctx }) {
     e.preventDefault();
     if (missing || sent) return;
     const lines = b.felder.filter((f) => String(vals[f.name]).trim()).map((f) => `- ${f.label}: ${String(vals[f.name]).trim()}`);
-    setSent(true);
-    ctx.uiSend?.(`${b.titel || 'Formular'}\n${lines.join('\n')}`);
+    // Läuft gerade ein Auftrag, landet der Text nur im Eingabefeld: dann nicht als gesendet sperren
+    if (ctx.uiSend?.(`${b.titel || 'Formular'}\n${lines.join('\n')}`) !== false) setSent(true);
   };
   const set = (name, v) => setVals({ ...vals, [name]: v });
   return (

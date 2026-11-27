@@ -661,6 +661,10 @@ async fn read_file(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolRes
 }
 
 async fn write_file(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolResult> {
+    // Ohne `content` würde die Datei sonst still auf 0 Bytes gekürzt (manche Modelle lassen das Feld weg)
+    if !a.get("content").is_some_and(Value::is_string) {
+        bail!("content fehlt: write_file braucht den vollständigen Inhalt der Datei als Text");
+    }
     let content = str_of(a, "content");
     let mut body = Map::new();
     if let Some(p) = a.get("path") {
@@ -676,6 +680,13 @@ async fn write_file(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolRe
 }
 
 async fn edit_file(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolResult> {
+    // Leeres old_text fügte mit replace_all zwischen jedem Zeichen ein; fehlendes new_text löschte still
+    if str_of(a, "old_text").is_empty() {
+        bail!("old_text fehlt: edit_file braucht den bisherigen Text genau wie in der Datei");
+    }
+    if !a.get("new_text").is_some_and(Value::is_string) {
+        bail!("new_text fehlt: für Löschen new_text als leeren Text angeben");
+    }
     let mut body = Map::new();
     if let Some(p) = a.get("path") {
         body.insert("path".into(), p.clone());
@@ -2184,6 +2195,13 @@ mod tests {
         let r = run_tool(Some(&t), "list_files", &json!({}), &ctx).await;
         assert_eq!(r.output, "a.txt (5 B)\nordner/");
         assert_eq!(r.summary, "2 Einträge");
+        // Fehlender Inhalt: nie eine leere Datei schreiben, sondern dem Modell den Fehler melden
+        let r = run_tool(Some(&t), "write_file", &json!({ "path": "a.txt" }), &ctx).await;
+        assert!(!r.ok && r.output.contains("content fehlt"), "{}", r.output);
+        let r = run_tool(Some(&t), "edit_file", &json!({ "path": "a.txt", "new_text": "x" }), &ctx).await;
+        assert!(!r.ok && r.output.contains("old_text fehlt"), "{}", r.output);
+        let r = run_tool(Some(&t), "edit_file", &json!({ "path": "a.txt", "old_text": "x" }), &ctx).await;
+        assert!(!r.ok && r.output.contains("new_text fehlt"), "{}", r.output);
         // Abbruch durch die Person: gemeldet statt als Fehler
         let signal = Signal::new();
         signal.cancel();

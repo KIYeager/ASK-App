@@ -328,6 +328,8 @@ const Composer = forwardRef(function Composer(props, ref) {
     const prev = shownChat.current;
     if (prev === chatId) return;
     shownChat.current = chatId;
+    // Erster Chat nach dem Start (noch keiner gezeigt): schon Getipptes und Angehängtes bleibt stehen
+    if (prev == null && !drafts.current.has(chatId)) return;
     const cur = live.current;
     const q = cur.queued && cur.queued.chat === prev ? cur.queued : null;
     stash(prev, { text: [q?.text, cur.text].filter(Boolean).join('\n'), pending: [...(q?.files || []), ...cur.pending], kept: [...(q?.kept || []), ...cur.kept] });

@@ -48,6 +48,9 @@ test('Formeln: Rechnen ohne eval, nur bekannte Namen und Funktionen', async () =
   assert.equal(evalFormula('round(betrag * 12 / 52, 2)', { betrag: 50 }), 11.54);
   assert.equal(evalFormula('max(a, b, 3)', { a: 1, b: 2 }), 3);
   assert.equal(evalFormula('1,5 * 2'), 3, 'Komma als Dezimalzeichen');
+  assert.equal(evalFormula('max(1,5)'), 5, 'in einer Funktion trennt das Komma die Argumente');
+  assert.equal(evalFormula('pow(2,10)'), 1024);
+  assert.equal(evalFormula('(1,5 + 1) * 2'), 5, 'Klammer ohne Funktion: Komma bleibt Dezimalzeichen');
   assert.ok(Math.abs(evalFormula('start * (1 + zins / 100) ^ jahre', { start: 1000, zins: 2, jahre: 10 }) - 1218.99) < 0.01);
   for (const bad of ['alert(1)', 'constructor', 'a.b', 'x => 1', '"text"', '1 +', 'toString()', '__proto__']) {
     assert.throws(() => evalFormula(bad, {}), `${bad} wird abgelehnt`);

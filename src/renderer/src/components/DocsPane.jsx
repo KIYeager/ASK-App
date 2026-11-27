@@ -218,8 +218,9 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
     const t = setTimeout(() => setWriting(false), 4000);
     return () => clearTimeout(t);
   }, [live]);  
-  // Beim Verlassen: Ungespeichertes sofort speichern
-  useEffect(() => () => { if (dirty.current) saveRef.current(); onDirty?.(false); }, []);  
+  // Beim Verlassen: Ungespeichertes sofort speichern. Als Layout-Effekt, weil React den Editor (ed.current)
+  // vor dem Aufräumen gewöhnlicher Effekte schon abgehängt hat; save liest den Text vor dem ersten await.
+  useLayoutEffect(() => () => { if (dirty.current) saveRef.current(); onDirty?.(false); }, []);  
 
   const changed = () => {
     seq.current += 1;

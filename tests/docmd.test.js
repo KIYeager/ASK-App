@@ -88,6 +88,9 @@ test('eingefügtes HTML aus Word und Browser', () => {
   assert.strictEqual(htmlToMd(parse('erste&nbsp;Zeile<div>zweite</div><div><br></div>')), 'erste Zeile\n\nzweite\n');
   assert.strictEqual(htmlToMd(parse('<p><b> fett </b>x</p>')), ' **fett** x\n'.trim() + '\n');
   assert.strictEqual(htmlToMd(parse('<p><a href="file:///C:/x">lokal</a></p>')), 'lokal\n', 'nur Web-Links bleiben Links');
+  // nach einem Zeilenumbruch im Absatz wird «- » oder «# » nicht zur Liste oder Überschrift
+  for (const md of ['Notiz\\\n\\- Punkt\n', 'a\\\n\\# b\n', 'x\\\n1\\. y\n']) assert.strictEqual(round(md), md);
+  assert.strictEqual(htmlToMd(parse('<p>Notiz<br>- Punkt</p>')), 'Notiz\\\n\\- Punkt\n');
 });
 
 test('Titel und Blöcke', () => {

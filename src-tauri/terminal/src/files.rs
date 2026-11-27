@@ -362,6 +362,7 @@ impl FileApi {
         for chunk in replacements {
             let ranged = chunk.start_line.is_some() || chunk.end_line.is_some();
             let (start, end) = if ranged { line_range_offsets(&content, chunk.start_line, chunk.end_line) } else { (0, content.len()) };
+            let end = end.max(start); // end_line vor start_line: leerer Bereich statt Absturz beim Schneiden
             let region = &content[start..end];
             let count = if chunk.target.is_empty() { region.chars().count() + 1 } else { region.matches(chunk.target.as_str()).count() };
             if count == 0 {
@@ -573,6 +574,10 @@ mod tests {
         api.replace("m.txt", &[rep("a", "b", true)]).unwrap();
         let ReadResult::Json(v) = api.read("m.txt", None, None).unwrap() else { panic!() };
         assert_eq!(v["content"], "b b");
+        // end_line vor start_line: Meldung «nicht gefunden» statt Absturz
+        api.write("z.txt", "a\nb\nc\nd\n").unwrap();
+        let ranged = Replacement { target: "c".into(), replacement: "x".into(), start_line: Some(3), end_line: Some(1), ..Default::default() };
+        assert_eq!(api.replace("z.txt", &[ranged]).unwrap_err().status, 400);
     }
 
     #[test]

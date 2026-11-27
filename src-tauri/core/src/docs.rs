@@ -66,7 +66,7 @@ pub fn doc_rel(input: &str) -> Result<String> {
     if p.is_empty() {
         bail!("Kein Doc angegeben.");
     }
-    let mut rel = if p.len() >= 5 && p[..5].eq_ignore_ascii_case("docs/") { format!("{DIR}/{}", &p[5..]) } else { format!("{DIR}/{p}") };
+    let mut rel = if p.get(..5).is_some_and(|h| h.eq_ignore_ascii_case("docs/")) { format!("{DIR}/{}", &p[5..]) } else { format!("{DIR}/{p}") };
     if !rel.to_lowercase().ends_with(".md") {
         rel.push_str(".md");
     }
@@ -733,6 +733,9 @@ mod tests {
         assert_eq!(doc_rel("docs/bericht.md").unwrap(), "docs/bericht.md");
         assert_eq!(doc_rel(".\\Docs\\a\\b.md").unwrap(), "docs/a/b.md");
         assert_eq!(doc_rel("/docs/x").unwrap(), "docs/x.md");
+        // Umlaut oder ß über Byte 5: kein Absturz beim Vergleich mit «docs/»
+        assert_eq!(doc_rel("Straße").unwrap(), "docs/Straße.md");
+        assert_eq!(doc_rel("Größe").unwrap(), "docs/Größe.md");
         for bad in ["", "docs/../geheim.md", "..\\x", "docs/a:b.md", "C:/x.md", "docs/.md"] {
             assert!(doc_rel(bad).is_err(), "{bad}");
         }

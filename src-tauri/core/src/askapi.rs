@@ -501,7 +501,7 @@ impl Completion {
         let whole = delta.is_none() && message.is_some(); // ganze Antwort: Aufrufe der Reihe nach
         if let Some(list) = d.get("tool_calls").and_then(Value::as_array) {
             for (n, tc) in list.iter().enumerate() {
-                let slot = self.slot_for(tc, if whole { Some(n) } else { None });
+                let slot = self.slot_for(tc, if whole { Some(n) } else { None }, n > 0);
                 if slot >= self.calls.len() {
                     self.calls.resize_with(slot + 1, ToolCall::default);
                 }
@@ -530,23 +530,31 @@ impl Completion {
 
     /// Platz eines gestreamten Werkzeugaufrufs. Ohne «index» (manche Server) oder mit demselben index für
     /// verschiedene Aufrufe entscheidet die Kennung: eine neue Kennung ist ein neuer Aufruf, Teile ohne
-    /// Kennung gehören zum letzten.
-    fn slot_for(&mut self, tc: &Value, fixed: Option<usize>) -> usize {
+    /// Kennung gehören zum letzten, ausser sie stehen als weiterer Eintrag in derselben Liste (`later`).
+    fn slot_for(&mut self, tc: &Value, fixed: Option<usize>, later: bool) -> usize {
         if let Some(f) = fixed {
             return f;
         }
         let id = tc.get("id").filter(|v| truthy(v)).map(js_string).unwrap_or_default();
-        if !id.is_empty() {
-            if let Some(i) = self.calls.iter().position(|c| c.id == id) {
-                return i;
-            }
-        }
         let index = tc.get("index").and_then(|v| match v {
             Value::Number(n) => n.as_i64().or_else(|| n.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)),
             _ => None,
         });
+        if !id.is_empty() {
+            if let Some(i) = self.calls.iter().position(|c| c.id == id) {
+                if let Some(index) = index.filter(|i| *i >= 0) {
+                    self.remap.entry(index).or_insert(i);
+                }
+                return i;
+            }
+        }
         if let Some(index) = index.filter(|i| *i >= 0) {
-            let slot = self.remap.get(&index).copied().unwrap_or(index as usize);
+            // Ein neuer index bekommt den nächsten freien Platz: Lücken, eine andere Reihenfolge oder ein unsinnig
+            // grosser index (z. B. 4000000000) ergeben so keine riesige Liste und keine vermischten Aufrufe
+            let Some(&slot) = self.remap.get(&index) else {
+                self.remap.insert(index, self.calls.len());
+                return self.calls.len();
+            };
             // gleicher index, aber eine andere Kennung: ein weiterer Aufruf; folgende Teile mit diesem index gehören zu ihm
             if let Some(at) = self.calls.get(slot) {
                 if !id.is_empty() && !at.id.is_empty() && at.id != id {
@@ -556,7 +564,7 @@ impl Completion {
             }
             return slot;
         }
-        if self.calls.is_empty() || (!id.is_empty() && !self.calls.last().is_some_and(|c| c.id.is_empty())) {
+        if self.calls.is_empty() || later || (!id.is_empty() && !self.calls.last().is_some_and(|c| c.id.is_empty())) {
             return self.calls.len();
         }
         self.calls.len() - 1
@@ -1797,11 +1805,12 @@ impl AskSession {
         if !is_stream {
             let body = tokio::select! {
                 _ = signal.cancelled() => return Err(AskError::abort().into()),
-                r = res.json::<Value>() => r.ok(),
+                r = res.json::<Value>() => r,
             };
-            if let Some(v) = body {
-                completion.add(&v);
-            }
+            // Abgeschnittene oder keine JSON-Antwort (z. B. HTML-Seite mit Status 200): als Verbindungsfehler
+            // melden, damit der Agent es nochmals versucht, statt «keine Antwort» still als fertig zu nehmen
+            let v = body.map_err(|e| AskError::new(format!("fetch failed: Antwort von ASK nicht lesbar ({e})")))?;
+            completion.add(&v);
             if !completion.error.is_empty() {
                 return Err(inband_error(completion).into());
             }
@@ -2251,6 +2260,19 @@ mod tests {
         let calls: Vec<(String, String, String)> = c.end().calls.iter().map(|x| (x.id.clone(), x.name.clone(), x.arguments.clone())).collect();
         let expected = [("a", "read_file", "{\"path\":\"a.txt\"}"), ("b", "read_file", "{\"path\":\"b.txt\"}"), ("c", "list_files", "{}")];
         assert_eq!(calls, expected.iter().map(|(a, b, c)| (a.to_string(), b.to_string(), c.to_string())).collect::<Vec<_>>());
+        // unsinnig grosser index, Reihenfolge 1 vor 0, mehrere Aufrufe ohne Schlüssel in einer Liste
+        let mut d = Completion::new();
+        let mut add = |list: Value| d.add(&json!({ "choices": [{ "delta": { "tool_calls": list } }] }));
+        add(json!([{ "index": 4000000000u64, "function": { "name": "x", "arguments": "{}" } }]));
+        add(json!([{ "index": 1, "function": { "name": "y", "arguments": "{\"a\":" } }]));
+        add(json!([{ "index": 0, "function": { "name": "z", "arguments": "{}" } }]));
+        add(json!([{ "index": 1, "function": { "arguments": "1}" } }]));
+        let got: Vec<(String, String)> = d.end().calls.iter().map(|x| (x.name.clone(), x.arguments.clone())).collect();
+        let want = [("x", "{}"), ("y", "{\"a\":1}"), ("z", "{}")];
+        assert_eq!(got, want.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>());
+        let mut e = Completion::new();
+        e.add(&json!({ "choices": [{ "delta": { "tool_calls": [{ "function": { "name": "u", "arguments": "{}" } }, { "function": { "name": "v", "arguments": "{}" } }] } }] }));
+        assert_eq!(e.end().calls.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), vec!["u", "v"]);
         // ganze Antwort (ohne Strom, ohne index und Kennung): der Reihe nach
         let mut w = Completion::new();
         w.add(&json!({ "choices": [{ "message": { "tool_calls": [{ "function": { "name": "x", "arguments": "{}" } }, { "function": { "name": "y", "arguments": "{}" } }] } }] }));

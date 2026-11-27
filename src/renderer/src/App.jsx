@@ -775,8 +775,9 @@ export default function App() {
     // Plan umsetzen: auf Auto wechseln und loslegen; ändern: Wunsch ins Eingabefeld schreiben lassen
     implementPlan: async () => { if (runningRef.current || acts.current.blocker) return; await api().setSettings({ mode: 'auto' }); acts.current.send('Setze den Plan um.', []); },
     revisePlan: () => composer.current?.setText('Ändere den Plan: '),
-    // Interaktive Antworten (E80): Auswahl und Formulare senden; während eines Auftrags ins Eingabefeld
-    uiSend: (t) => { if (runningRef.current || acts.current.blocker) composer.current?.setText(t); else acts.current.send(t, []); },
+    // Interaktive Antworten (E80): Auswahl und Formulare senden; während eines Auftrags ins Eingabefeld.
+    // Gibt zurück, ob wirklich gesendet wurde (sonst bleibt der Baustein bedienbar).
+    uiSend: (t) => { if (runningRef.current || acts.current.blocker) { composer.current?.setText(t); return false; } acts.current.send(t, []); return true; },
     uiCompose: (t) => composer.current?.setText(t),
     onMediaLoad: () => { const t = transcript.current; if (t && followRef.current) t.scrollTop = t.scrollHeight; },
   }), [verbose, running, activity, blocker, state, findFile, openFile, undoSnapshot, lastPlanKey]);
@@ -931,7 +932,7 @@ export default function App() {
                 </div>
               ) : null}
               <div id="messages" className="messages">
-                {turns.map((t, i) => <Turn key={t.key} turn={t} ctx={ctx} last={i === turns.length - 1} />)}
+                {turns.map((t, i) => <Turn key={`${chatId}:${t.key}`} turn={t} ctx={ctx} last={i === turns.length - 1} />)}
               </div>
             </div>
           </div>
