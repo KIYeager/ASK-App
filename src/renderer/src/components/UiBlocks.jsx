@@ -403,6 +403,13 @@ function HtmlBlock({ part, ctx }) {
   const [big, setBig] = useState(false);
   const frame = useRef(null);
   const lastSend = useRef(0);
+  // Esc verkleinert die vergrösserte Ansicht wieder (vor der Tastatur der App, die mit Esc sonst den Auftrag stoppt)
+  useEffect(() => {
+    if (!big) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); setBig(false); } };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [big]);
   useEffect(() => {
     if (!checked.ok) return undefined;
     let alive = true;
@@ -420,6 +427,7 @@ function HtmlBlock({ part, ctx }) {
       const d = e.data;
       if (!d || d.askUi !== 1 || typeof d.art !== 'string') return;
       if (d.art === 'hoehe' && Number.isFinite(d.wert)) setHeight(Math.min(MAX_H, Math.max(MIN_H, Math.ceil(d.wert) + 4)));
+      if (d.art === 'esc') setBig(false);
       const text = typeof d.wert === 'string' ? d.wert.trim() : '';
       if (!text) return;
       if (d.art === 'eingeben') ctx.uiCompose?.(text);
