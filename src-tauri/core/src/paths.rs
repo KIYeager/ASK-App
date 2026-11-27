@@ -108,6 +108,16 @@ pub fn skills_dir() -> PathBuf {
     resources(&["skills"])
 }
 
+/// Mitgelieferte Skills für alle (ENTSCHEIDE E70)
+pub fn standard_skills_dir() -> PathBuf {
+    resources(&["standard-skills"])
+}
+
+/// Mitgelieferte Beispiel-Mods (E72)
+pub fn example_mods_dir() -> PathBuf {
+    resources(&["mods-beispiele"])
+}
+
 pub fn instructions_dir() -> PathBuf {
     resources(&["anweisungen"])
 }

@@ -18,6 +18,12 @@ pub const UI: &str = "ui";
 pub const ASK: &str = "ask";
 pub const BROWSER: &str = "browser";
 
+/// Zustand des Fensters für die Knöpfe in der Kopfzeile
+pub fn window_state(v: &Views) -> Value {
+    let max = v.window().and_then(|w| w.is_maximized().ok()).unwrap_or(false);
+    serde_json::json!({ "maximized": max })
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Bounds {
     pub x: f64,
@@ -71,6 +77,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key.toLowerCase() === 'r' && !e.shiftKey) key = 'reload-ask';
   else if (e.shiftKey && e.key.toLowerCase() === 'i') key = 'devtools-ask';
   else if (e.shiftKey && e.key.toLowerCase() === 'j') key = 'devtools-ui';
+  else if (e.shiftKey && e.key.toLowerCase() === 'm') key = 'mods-off';
   if (!key) return;
   e.preventDefault();
   window.__TAURI_INTERNALS__.invoke('ipc', { channel: 'ui:shortcut', args: [key] }).catch(() => {});
@@ -129,6 +136,10 @@ impl Views {
             .auto_resize();
         window.add_child(ui, LogicalPosition::new(0.0, 0.0), size)?;
         self.create_ask(&window)?;
+        // Ohne Rahmen von Windows (E73): Titel und Knöpfe zeichnet die Oberfläche. Erst jetzt abschalten, damit
+        // Tauri die Ränder zum Ziehen der Grösse über den Webansichten anlegt (nur beim Umschalten für das Fenster).
+        let _ = window.set_decorations(false);
+        let _ = window.set_shadow(true);
         Ok(())
     }
 

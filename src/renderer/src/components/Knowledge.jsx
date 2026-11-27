@@ -37,7 +37,9 @@ export function useSkillCommands({ composer, stateRef, notice }) {
     });
     return () => { if (typeof off === 'function') off(); };
   }, []);
-  return skills.map((s) => ({ cmd: `/${s.slug}`, text: s.description, skill: true, run: () => composer.current?.setText(`/${s.slug} `) }));
+  // Eigene und eingeschaltete mitgelieferte (E70); ein eigener mit gleichem Namen ersetzt den mitgelieferten
+  return skills.filter((s) => s.enabled !== false && !s.replaced)
+    .map((s) => ({ cmd: `/${s.slug}`, text: s.description, skill: true, run: () => composer.current?.setText(`/${s.slug} `) }));
 }
 
 // ---------- Gedächtnis ----------
@@ -364,14 +366,19 @@ const slugOf = (name) => String(name || '').toLowerCase().replace(/ä/g, 'ae').r
 
 const EMPTY = { name: '', description: '', body: '' };
 
-export function SkillsDialog({ onClose }) {
+// Eigene Skills bearbeiten. initial: Name zum Öffnen ('' = neu); copy: Vorlage für einen neuen (mitgelieferten kopieren)
+export function SkillsDialog({ onClose, initial, copy }) {
   const [list, setList] = useState(null);
   const [current, setCurrent] = useState(null); // slug, '' für neu, null für keinen
   const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
-  const load = () => api().skillsList().then((l) => { setList(l); return l; });
-  useEffect(() => { load(); }, []);
+  const load = () => api().skillsList().then((l) => { const own = (l || []).filter((x) => x.source !== 'standard'); setList(own); return own; });
+  useEffect(() => {
+    load();
+    if (copy) { setCurrent(''); setDraft({ name: copy.name, description: copy.description, body: copy.body }); }
+    else if (typeof initial === 'string') open(initial);
+  }, []);
   const open = async (slug) => {
     setError(''); setInfo('');
     if (slug === '') { setCurrent(''); setDraft(EMPTY); return; }

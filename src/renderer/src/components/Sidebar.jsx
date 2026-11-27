@@ -6,8 +6,9 @@ import { formatTime, shortTime } from '../lib/format.js';
 
 // Linke Leiste: Projekte (ein Projekt = ein Arbeitsordner) mit ihren Chats
 export default function Sidebar({ groups, chatId, running, runningChats = [], query, setQuery, renaming, onRenameDone, onNewChat, onOpenChat, onDeleteChat,
-  onNewProject, onProjectMenu, onNewInProject, state, onSettings, onStatus, update, onUpdate, onRefresh }) {
+  onNewProject, onProjectMenu, onNewInProject, state, onSettings, onStatus, onOpen, update, onUpdate, onRefresh }) {
   const [collapsed, setCollapsed] = useState(() => new Set());
+  const [profile, setProfile] = useState(null); // Menü am Profil: { x, y }
   const [menu, setMenu] = useState(null); // { folder, chat, x, y }
   const closeMenu = useCallback(() => setMenu(null), []);
   const [renamingChat, setRenamingChat] = useState(null); // { folder, id }
@@ -39,6 +40,32 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
   const term = state.terminal || {};
   const termOk = term.state === 'läuft';
   const askOk = ask.state === 'angemeldet';
+  // Menü am Profil wie in Claude: Konto, Einstellungen, Abkürzungen, Hilfe, Version
+  const profileItems = () => {
+    const u = state.update || {};
+    let host = state.askUrl || '';
+    try { host = new URL(state.askUrl).host; } catch { /* keine Adresse */ }
+    return [
+      { heading: true, label: ask.user || 'ASK', sub: askOk ? host : 'Nicht angemeldet' },
+      { icon: 'settings', label: 'Einstellungen', hint: 'Ctrl+,', run: () => onSettings() },
+      { icon: 'chart', label: 'Nutzung', run: () => onOpen({ name: 'settings', pane: 'nutzung' }) },
+      { separator: true },
+      { icon: 'bolt', label: 'Skills', run: () => onOpen({ name: 'settings', pane: 'skills' }) },
+      { icon: 'puzzle', label: 'Mods', hint: state.modsCode ? 'Code an' : '', run: () => onOpen({ name: 'settings', pane: 'mods' }) },
+      { icon: 'pin', label: 'Gedächtnis', run: () => onOpen({ name: 'memory' }) },
+      { icon: 'github', label: 'GitHub', run: () => onOpen({ name: 'github' }) },
+      { separator: true },
+      { icon: 'help', label: 'Hilfe und Einführung', run: () => onOpen({ name: 'tour' }) },
+      { icon: 'keyboard', label: 'Tastenkombinationen', run: () => onOpen({ name: 'shortcuts' }) },
+      state.releasesUrl ? { icon: 'gift', label: 'Neu in ASK', run: () => api().openLink(state.releasesUrl) } : null,
+      { separator: true },
+      u.enabled ? { icon: 'reload', label: 'Nach Updates suchen', hint: `ASK ${state.version || ''}`, run: () => api().updateAction() }
+        : { icon: 'info', label: `ASK ${state.version || ''}`, enabled: false },
+      u.enabled ? { icon: 'spark', label: 'Beta-Versionen erhalten', hint: u.beta ? 'An' : 'Aus', run: () => api().setBetaUpdates(!u.beta, true) } : null,
+      { separator: true },
+      askOk ? { icon: 'logout', label: 'Abmelden', run: () => api().logout() } : { icon: 'logout', label: 'Anmelden …', run: () => onStatus('ask') },
+    ];
+  };
   return (
     <aside id="chatbar" className="chatbar">
       <button id="new-btn" type="button" className="new-chat" onClick={onNewChat} disabled={running || !state.folder} title="Neuer Chat im aktuellen Projekt (/neu)">
@@ -148,30 +175,38 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
             <span id="update-text">{`Update ${update.version}${/-/.test(update.version) ? ' (Beta)' : ''}`}</span>
           </button>
         ) : null}
-        <div className="account">
-          <span className="avatar" aria-hidden="true">{initials(ask.user)}</span>
-          <div className="who">
-            <div className="ell">{ask.user || 'ASK'}</div>
-            {/* Status nur, wenn etwas nicht stimmt; sonst ruhig */}
-            <div className="status">
-              <button type="button" id="ask-pill" className={`dot-btn ${askOk ? 'ok quiet' : ask.state === 'fehler' ? 'bad' : 'warn'}`} onClick={() => onStatus('ask')}
-                title={ask.message || (askOk ? `Angemeldet bei ${state.askUrl}` : '')}>{askOk ? 'Verbunden' : ask.state === 'fehler' ? 'ASK: Fehler' : 'Nicht angemeldet'}</button>
-              {!termOk ? (
-                <button type="button" id="terminal-pill" className={`dot-btn ${term.state === 'fehler' ? 'bad' : 'warn'}`}
-                  onClick={() => onStatus('terminal')} title={term.error || 'Terminal'}>
-                  {term.state === 'startet' ? (term.detail || 'Terminal startet') : term.state === 'fehler' ? 'Terminal: Fehler' : 'Terminal gestoppt'}
-                </button>
-              ) : <button type="button" id="terminal-pill" className="dot-btn ok quiet" hidden onClick={() => onStatus('terminal')}>Terminal</button>}
-              {/* Python wird nach einer neuen Fassung einmal entpackt (E68); nur Befehle mit Python warten darauf */}
-              {state.python ? (
-                <span id="python-pill" className="dot-btn warn" title="Einmalig nach einem Update. Befehle mit Python warten, bis es fertig ist.">
-                  {`Python wird eingerichtet … ${state.python.percent || 0} %`}
-                </span>
-              ) : null}
-            </div>
+        {/* Terminal und Python nur, wenn etwas nicht stimmt; sonst ruhig */}
+        {!termOk || state.python ? (
+          <div className="side-status">
+            {!termOk ? (
+              <button type="button" id="terminal-pill" className={`dot-btn ${term.state === 'fehler' ? 'bad' : 'warn'}`}
+                onClick={() => onStatus('terminal')} title={term.error || 'Terminal'}>
+                {term.state === 'startet' ? (term.detail || 'Terminal startet') : term.state === 'fehler' ? 'Terminal: Fehler' : 'Terminal gestoppt'}
+              </button>
+            ) : null}
+            {/* Python wird nach einer neuen Fassung einmal entpackt (E68); nur Befehle mit Python warten darauf */}
+            {state.python ? (
+              <span id="python-pill" className="dot-btn warn" title="Einmalig nach einem Update. Befehle mit Python warten, bis es fertig ist.">
+                {`Python wird eingerichtet … ${state.python.percent || 0} %`}
+              </span>
+            ) : null}
           </div>
-          <button type="button" className="icon-btn" title="Einstellungen" aria-label="Einstellungen" onClick={onSettings}><Icon name="settings" size={16} /></button>
-        </div>
+        ) : null}
+        {/* Das ganze Profil ist ein Knopf und öffnet ein Menü (ENTSCHEIDE E73) */}
+        <button type="button" id="account-btn" className={`account${profile ? ' open' : ''}`} aria-haspopup="menu" aria-expanded={!!profile}
+          title={ask.message || (askOk ? `Angemeldet bei ${state.askUrl}` : 'Konto und Einstellungen')}
+          onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setProfile(profile ? null : { x: r.left, y: r.top - 6, w: r.width }); }}>
+          <span className="avatar" aria-hidden="true">{initials(ask.user)}</span>
+          <span className="who">
+            <span className="ell name">{ask.user || 'ASK'}</span>
+            <span id="ask-pill" className={`status-text ${askOk ? 'ok' : ask.state === 'fehler' ? 'bad' : 'warn'}`}>
+              {askOk ? 'Verbunden' : ask.state === 'fehler' ? 'ASK: Fehler' : 'Nicht angemeldet'}
+            </span>
+          </span>
+          {state.modsCode ? <span className="mods-dot" title="Ein Mod mit Code ist eingeschaltet"><Icon name="puzzle" size={13} /></span> : null}
+          <Icon name="chevUpDown" size={14} className="account-chev" />
+        </button>
+        {profile ? <PopMenu x={profile.x} y={profile.y} above label="Konto" className="profile-menu" onClose={() => setProfile(null)} items={profileItems()} /> : null}
       </div>
     </aside>
   );

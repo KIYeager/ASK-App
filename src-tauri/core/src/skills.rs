@@ -143,6 +143,8 @@ pub struct Skill {
     /// Änderungszeit in Millisekunden (wie `mtimeMs`)
     pub updated: f64,
     pub size: u64,
+    /// «eigen» (userData) oder «standard» (mit der App geliefert, E70)
+    pub source: String,
 }
 
 /// Eintrag der Liste (ohne Anleitung)
@@ -153,6 +155,11 @@ pub struct SkillInfo {
     pub description: String,
     pub updated: f64,
     pub size: u64,
+    pub source: String,
+    /// Mitgelieferte Skills lassen sich ausschalten; eigene sind immer an
+    pub enabled: bool,
+    /// Ein eigener Skill mit demselben Namen ersetzt den mitgelieferten
+    pub replaced: bool,
 }
 
 /// Angaben zum Speichern
@@ -171,50 +178,43 @@ pub struct SaveOptions {
     pub overwrite: bool,
 }
 
+/// Namen ausgeschalteter mitgelieferter Skills (Einstellung `skillsOff`)
+pub type OffFn = std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>;
+
 pub struct Skills {
     dir: PathBuf,
+    /// Mitgelieferte Skills (resources/standard-skills, nur lesen, ENTSCHEIDE E70)
+    standard: Option<PathBuf>,
+    off: Option<OffFn>,
 }
 
 impl Skills {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Skills { dir: dir.into() }
+        Skills { dir: dir.into(), standard: None, off: None }
     }
 
-    pub fn dir(&self) -> &std::path::Path {
-        &self.dir
+    /// Mit mitgelieferten Skills aus `standard`; `off` nennt die ausgeschalteten
+    pub fn with_standard(dir: impl Into<PathBuf>, standard: impl Into<PathBuf>, off: OffFn) -> Self {
+        Skills { dir: dir.into(), standard: Some(standard.into()), off: Some(off) }
     }
 
-    fn file_of(&self, slug: &str) -> PathBuf {
-        self.dir.join(slug).join("SKILL.md")
+    fn is_off(&self, slug: &str) -> bool {
+        self.off.as_ref().is_some_and(|f| f().iter().any(|n| n == slug))
     }
 
-    /// Alle Skills, nach Name. Kaputte Dateien fallen weg.
-    pub fn list(&self) -> Vec<SkillInfo> {
-        let Ok(rd) = std::fs::read_dir(&self.dir) else { return Vec::new() };
-        let names: Vec<String> = rd
-            .filter_map(Result::ok)
+    /// Ordnernamen der Skills in einem Ordner (nur sichere Namen)
+    fn slugs_in(dir: &std::path::Path) -> Vec<String> {
+        let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+        rd.filter_map(Result::ok)
             .filter(|d| d.file_type().is_ok_and(|t| t.is_dir()))
             .map(|d| d.file_name().to_string_lossy().to_string())
-            .collect();
-        let mut out = Vec::new();
-        for slug in names {
-            if slugify(&slug) != slug {
-                continue;
-            }
-            if let Some(s) = self.get(&slug) {
-                out.push(SkillInfo { slug: s.slug, name: s.name, description: s.description, updated: s.updated, size: s.size });
-            }
-        }
-        out.sort_by(|a, b| a.slug.cmp(&b.slug));
-        out
+            .filter(|n| slugify(n) == *n)
+            .collect()
     }
 
-    pub fn get(&self, name: &str) -> Option<Skill> {
-        let slug = slugify(name);
-        if slug.is_empty() {
-            return None;
-        }
-        let file = self.file_of(&slug);
+    /// Skill aus einem Ordner lesen, ohne Rücksicht auf «aus»
+    fn read_from(dir: &std::path::Path, slug: &str, source: &str) -> Option<Skill> {
+        let file = dir.join(slug).join("SKILL.md");
         let meta = std::fs::metadata(&file).ok()?;
         if meta.len() > MAX_FILE as u64 {
             return None;
@@ -225,7 +225,69 @@ impl Skills {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs_f64() * 1000.0)
             .unwrap_or(0.0);
-        Some(Skill { slug: slug.clone(), name: slug, description: parsed.description, body: parsed.body, updated, size: meta.len() })
+        Some(Skill { slug: slug.to_string(), name: slug.to_string(), description: parsed.description, body: parsed.body, updated, size: meta.len(), source: source.to_string() })
+    }
+
+    /// Nur eigene Skills (für Speichern, Löschen und die Höchstzahl)
+    pub fn own(&self, name: &str) -> Option<Skill> {
+        let slug = slugify(name);
+        if slug.is_empty() {
+            return None;
+        }
+        Self::read_from(&self.dir, &slug, "eigen")
+    }
+
+    /// Mitgelieferter Skill, auch wenn er aus ist
+    pub fn standard(&self, name: &str) -> Option<Skill> {
+        let slug = slugify(name);
+        let dir = self.standard.as_ref()?;
+        if slug.is_empty() {
+            return None;
+        }
+        Self::read_from(dir, &slug, "standard")
+    }
+
+    pub fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
+    fn file_of(&self, slug: &str) -> PathBuf {
+        self.dir.join(slug).join("SKILL.md")
+    }
+
+    /// Eigene Skills, nach Name. Kaputte Dateien fallen weg.
+    pub fn list_own(&self) -> Vec<SkillInfo> {
+        let mut out: Vec<SkillInfo> = Self::slugs_in(&self.dir).iter().filter_map(|slug| Self::read_from(&self.dir, slug, "eigen"))
+            .map(|s| SkillInfo { slug: s.slug, name: s.name, description: s.description, updated: s.updated, size: s.size, source: s.source, enabled: true, replaced: false })
+            .collect();
+        out.sort_by(|a, b| a.slug.cmp(&b.slug));
+        out
+    }
+
+    /// Eigene und mitgelieferte Skills, nach Name. Ein mitgelieferter mit dem Namen eines eigenen ist «ersetzt».
+    pub fn list(&self) -> Vec<SkillInfo> {
+        let mut out = self.list_own();
+        if let Some(dir) = &self.standard {
+            for slug in Self::slugs_in(dir) {
+                if let Some(s) = Self::read_from(dir, &slug, "standard") {
+                    let replaced = out.iter().any(|o| o.source == "eigen" && o.slug == slug);
+                    out.push(SkillInfo { enabled: !self.is_off(&slug), replaced, slug: s.slug, name: s.name, description: s.description, updated: s.updated, size: s.size, source: s.source });
+                }
+            }
+        }
+        out.sort_by(|a, b| a.slug.cmp(&b.slug).then(a.source.cmp(&b.source)));
+        out
+    }
+
+    /// Skill zum Benutzen: zuerst ein eigener, sonst ein eingeschalteter mitgelieferter
+    pub fn get(&self, name: &str) -> Option<Skill> {
+        let slug = slugify(name);
+        if slug.is_empty() {
+            return None;
+        }
+        Self::read_from(&self.dir, &slug, "eigen").or_else(|| {
+            if self.is_off(&slug) { None } else { self.standard(&slug) }
+        })
     }
 
     /// Speichern (neu oder geändert)
@@ -251,7 +313,7 @@ impl Skills {
         if !opts.overwrite && slug != prev && file.exists() {
             bail!("Es gibt schon einen Skill «{slug}».");
         }
-        if !file.exists() && self.list().len() >= MAX_SKILLS {
+        if !file.exists() && self.list_own().len() >= MAX_SKILLS {
             bail!("Höchstens {MAX_SKILLS} Skills.");
         }
         if let Some(dir) = file.parent() {
@@ -265,7 +327,7 @@ impl Skills {
         if !prev.is_empty() && prev != slug {
             self.remove(&prev)?;
         }
-        match self.get(&slug) {
+        match self.own(&slug) {
             Some(s) => Ok(s),
             None => bail!("Der Skill «{slug}» liess sich nach dem Speichern nicht lesen."),
         }
@@ -316,11 +378,11 @@ impl Skills {
     }
 
     pub fn prompt_with(&self, max: usize) -> String {
-        let list = self.list();
+        let list: Vec<SkillInfo> = self.list().into_iter().filter(|s| s.enabled && !s.replaced).collect();
         if list.is_empty() {
             return String::new();
         }
-        let mut text = String::from("\n\n# Eigene Skills\nAnleitungen der Person für wiederkehrende Aufträge. Passt ein Skill zum Auftrag, lies ihn zuerst mit skill_lesen und halte dich daran.");
+        let mut text = String::from("\n\n# Skills\nAnleitungen für wiederkehrende Aufträge (eigene der Person und mitgelieferte). Passt ein Skill zum Auftrag, lies ihn zuerst mit skill_lesen und halte dich daran.");
         let mut shown = 0;
         for s in &list {
             let line = format!("\n- {}: {}", s.slug, one_line(&s.description, PROMPT_DESCRIPTION));
@@ -444,7 +506,7 @@ mod tests {
         let s = Skills::new(t.path());
         let d = SaveOptions::default();
         s.save(&skill("bericht", "Bericht schreiben", "x"), &d).unwrap();
-        let re = Regex::new(r"# Eigene Skills\n.*skill_lesen.*\n- bericht: Bericht schreiben$").unwrap();
+        let re = Regex::new(r"# Skills\n.*skill_lesen.*\n- bericht: Bericht schreiben$").unwrap();
         assert!(re.is_match(&s.prompt()), "{}", s.prompt());
         for i in 0..40 {
             s.save(&skill(&format!("skill-{i}"), &format!("Beschreibung {}", "lang ".repeat(60)), "x"), &d).unwrap();
@@ -460,5 +522,31 @@ mod tests {
         assert_eq!(invocation("  /Bericht"), Some(Invocation { slug: "bericht".into(), rest: String::new() }));
         assert_eq!(invocation("bitte /bericht"), None);
         assert_eq!(invocation("/"), None);
+    }
+
+    #[test]
+    fn mitgelieferte_skills_ausschalten_und_ersetzen() {
+        let t = tempfile::tempdir().unwrap();
+        let std_dir = t.path().join("standard");
+        std::fs::create_dir_all(std_dir.join("code-erklaeren")).unwrap();
+        std::fs::write(std_dir.join("code-erklaeren/SKILL.md"), format("code-erklaeren", "Code erklären", "Schritt für Schritt.")).unwrap();
+        let off = std::sync::Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
+        let off2 = off.clone();
+        let s = Skills::with_standard(t.path().join("eigen"), &std_dir, std::sync::Arc::new(move || off2.lock().clone()));
+        let l = s.list();
+        assert_eq!((l.len(), l[0].source.as_str(), l[0].enabled), (1, "standard", true));
+        assert_eq!(s.get("code-erklaeren").unwrap().source, "standard");
+        assert!(s.prompt().contains("code-erklaeren"));
+        off.lock().push("code-erklaeren".into());
+        assert!(s.get("code-erklaeren").is_none(), "aus");
+        assert!(s.standard("code-erklaeren").is_some(), "zum Ansehen weiter da");
+        assert!(!s.prompt().contains("code-erklaeren"));
+        assert!(!s.remove("code-erklaeren").unwrap(), "mitgelieferte lassen sich nicht löschen");
+        s.save(&skill("code-erklaeren", "Meine Fassung", "Anders."), &SaveOptions::default()).unwrap();
+        assert_eq!(s.get("code-erklaeren").unwrap().source, "eigen", "eigener ersetzt mitgelieferten");
+        let l = s.list();
+        assert_eq!(l.len(), 2);
+        assert!(l.iter().any(|x| x.source == "standard" && x.replaced));
+        assert_eq!(s.list_own().len(), 1);
     }
 }

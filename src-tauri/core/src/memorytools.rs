@@ -31,6 +31,8 @@ pub const SKILL_SHOWN: usize = 3000;
 pub struct KnowledgeCtx {
     pub memory: Option<Arc<Memory>>,
     pub skills: Option<Arc<Skills>>,
+    /// Mods (mods.rs): Werkzeug mod_erstellen
+    pub mods: Option<Arc<crate::mods::Mods>>,
     /// Ist das Gedächtnis in den Einstellungen eingeschaltet? Fehlt die Funktion, gilt es als eingeschaltet.
     pub memory_on: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Wird nach jeder Änderung aufgerufen (die Oberfläche lädt dann neu)
@@ -167,7 +169,7 @@ pub fn knowledge_tools() -> Vec<KnowledgeTool> {
         KnowledgeTool {
             name: "skill_lesen",
             label: "Skill",
-            description: "Liest die Anleitung eines eigenen Skills der Person (Liste unter «Eigene Skills»). Lies den Skill, bevor du einen passenden Auftrag ausführst.",
+            description: "Liest die Anleitung eines Skills (Liste unter «Skills»). Lies den Skill, bevor du einen passenden Auftrag ausführst.",
             parameters: json!({ "type": "object", "properties": { "name": { "type": "string", "description": "Name des Skills aus der Liste" } }, "required": ["name"] }),
         },
         KnowledgeTool {
@@ -187,6 +189,22 @@ pub fn knowledge_tools() -> Vec<KnowledgeTool> {
                 "required": ["name", "beschreibung", "anleitung"],
             }),
         },
+        KnowledgeTool {
+            name: "mod_erstellen",
+            label: "Mod erstellen",
+            description: concat!(
+                "Legt einen Mod für die Oberfläche von ASK an oder ersetzt einen gleichnamigen (Aussehen, /Befehle, Bereiche, Figuren, Regeln). ",
+                "Lies vorher den Skill «mod-erstellen» (Format und JavaScript-Schnittstelle). Nur, wenn die Person es wünscht. ",
+                "Die Person bestätigt das Speichern; der Mod ist danach aus, bis sie ihn unter Einstellungen → Mods nach einer Vorschau einschaltet.",
+            ),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "dateien": { "type": "object", "description": "Dateiname → Inhalt (Text), mindestens «mod.json»; dazu z. B. «style.css», «mod.js», «bild.svg»", "additionalProperties": { "type": "string" } },
+                },
+                "required": ["dateien"],
+            }),
+        },
     ]
 }
 
@@ -198,6 +216,8 @@ pub fn describe(name: &str, a: &Value) -> String {
             if a.get("id").is_some_and(truthy) { field(a, "id") } else { field(a, "text") }
         }
         "skill_lesen" | "skill_erstellen" => field(a, "name"),
+        "mod_erstellen" => a.get("dateien").and_then(|d| d.get("mod.json")).map(js_string)
+            .and_then(|t| crate::mods::parse_manifest(&t).ok()).map(|m| m.name).unwrap_or_default(),
         _ => String::new(),
     }
 }
@@ -209,6 +229,7 @@ pub async fn run(name: &str, a: &Value, ctx: &MemoryToolCtx) -> Option<Result<To
         "vergessen" => vergessen(a, ctx),
         "skill_lesen" => skill_lesen(a, ctx),
         "skill_erstellen" => skill_erstellen(a, ctx).await,
+        "mod_erstellen" => mod_erstellen(a, ctx).await,
         _ => return None,
     })
 }
@@ -281,6 +302,33 @@ fn skill_lesen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
     Ok(out)
 }
 
+async fn mod_erstellen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
+    let Some(mods) = ctx.knowledge.as_ref().and_then(|k| k.mods.clone()) else { bail!("Mods sind hier nicht verfügbar.") };
+    let files = crate::mods::files_from_json(a.get("dateien").unwrap_or(&Value::Null))?;
+    let m = match crate::mods::Mods::check_files(&files) {
+        Ok(m) => m,
+        Err(e) => return Ok(ToolOutput::new(false, format!("Nicht gespeichert: {e}"), "ungültig")),
+    };
+    let exists = mods.info(&m.id).is_some();
+    let names: Vec<String> = files.iter().map(|(p, d)| format!("{p} ({} Bytes)", d.len())).collect();
+    let ok = match &ctx.confirm {
+        Some(confirm) => {
+            let message = if exists { format!("Mod «{}» ersetzen?", m.name) } else { format!("Mod «{}» speichern?", m.name) };
+            let detail = format!("{}\n\nDateien: {}\n\nDer Mod ist danach aus. Einschalten unter Einstellungen → Mods, nach einer Vorschau des Codes.", clip_line(&m.beschreibung, 200), names.join(", "));
+            confirm(message, detail, ConfirmOptions::default()).await.ok
+        }
+        None => false,
+    };
+    if !ok {
+        return Ok(ToolOutput::new(false, "Die Person hat das Speichern abgelehnt.".into(), "abgelehnt"));
+    }
+    let info = mods.save(&files, true)?;
+    if let Some(k) = &ctx.knowledge {
+        k.changed();
+    }
+    Ok(ToolOutput::new(true, format!("Mod «{}» gespeichert (aus). Sag der Person: Einstellungen → Mods → «{}» → Vorschau ansehen und einschalten.", info.manifest.name, info.manifest.name), format!("{} gespeichert", info.manifest.id)))
+}
+
 async fn skill_erstellen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
     let skills = need_skills(ctx)?;
     let slug = slugify(&field(a, "name"));
@@ -288,7 +336,7 @@ async fn skill_erstellen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
     if !problem.is_empty() {
         bail!("{problem}");
     }
-    let exists = skills.get(&slug).is_some();
+    let exists = skills.own(&slug).is_some();
     // Die Person sieht vor dem Speichern die ganze Anleitung: Was danach in jedem passenden Auftrag gilt,
     // darf nicht hinter einem «…» stehen. Längere Skills legt die Person selbst in den Einstellungen an.
     let anleitung = field(a, "anleitung");
@@ -360,6 +408,7 @@ mod tests {
             knowledge: Some(KnowledgeCtx {
                 memory: Some(memory.clone()),
                 skills: None,
+                mods: None,
                 memory_on: Some(Arc::new(move || on2.load(Ordering::SeqCst))),
                 changed: Some(Arc::new(move || { ch2.fetch_add(1, Ordering::SeqCst); })),
             }),
@@ -436,10 +485,38 @@ mod tests {
     fn werkzeugbeschreibungen_im_openai_format() {
         let specs: Vec<Value> = knowledge_tools().iter().map(KnowledgeTool::spec).collect();
         let names: Vec<&str> = specs.iter().map(|s| s["function"]["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["merken", "vergessen", "skill_lesen", "skill_erstellen"]);
+        assert_eq!(names, ["merken", "vergessen", "skill_lesen", "skill_erstellen", "mod_erstellen"]);
         assert_eq!(specs[0]["type"], "function");
         assert_eq!(specs[0]["function"]["parameters"]["required"], json!(["text", "bereich"]));
         let keys: Vec<&String> = specs[0]["function"]["parameters"]["properties"].as_object().unwrap().keys().collect();
         assert_eq!(keys, ["text", "bereich", "tags"], "Reihenfolge wie im Original");
+    }
+
+    #[tokio::test]
+    async fn werkzeug_mod_erstellen_fragt_und_speichert_aus() {
+        let t = tempfile::tempdir().unwrap();
+        let mods = Arc::new(crate::mods::Mods::new(t.path().join("mods"), None));
+        let answer = Arc::new(AtomicBool::new(false));
+        let answer2 = answer.clone();
+        let confirm: ConfirmFn = Arc::new(move |_m, _d, _o| {
+            let ok = answer2.load(Ordering::SeqCst);
+            Box::pin(async move { Confirmed { ok, checked: false } })
+        });
+        let ctx = MemoryToolCtx {
+            knowledge: Some(KnowledgeCtx { mods: Some(mods.clone()), ..Default::default() }),
+            confirm: Some(confirm),
+            ..Default::default()
+        };
+        let args = json!({ "dateien": { "mod.json": "{\"id\":\"neon\",\"name\":\"Neon\",\"style\":\"style.css\"}", "style.css": ":root{--accent:#0ff}" } });
+        let r = run_tool("mod_erstellen", args.clone(), &ctx).await;
+        assert!(!r.ok, "abgelehnt");
+        assert!(mods.list().is_empty());
+        answer.store(true, Ordering::SeqCst);
+        let r = run_tool("mod_erstellen", args, &ctx).await;
+        assert!(r.ok, "{}", r.output);
+        let m = mods.info("neon").unwrap();
+        assert!(!m.aktiv, "neu ist aus");
+        let r = run_tool("mod_erstellen", json!({ "dateien": { "mod.json": "{}" } }), &ctx).await;
+        assert!(!r.ok && r.output.contains("Nicht gespeichert"), "{}", r.output);
     }
 }

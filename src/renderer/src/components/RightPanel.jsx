@@ -293,10 +293,21 @@ function BrowserTab({ browser, active, onClose, onBig, big, servers, root, notic
   );
 }
 
+// Bereich eines Mods: das Element bleibt bestehen (Zustand des Mods), es wird nur ein- und ausgehängt
+function ModPanel({ el }) {
+  const host = useRef(null);
+  useEffect(() => {
+    const box = host.current;
+    box?.appendChild(el);
+    return () => { if (el.parentNode === box) box.removeChild(el); };
+  }, [el]);
+  return <div ref={host} className="mod-panel-host" />;
+}
+
 // ---------- Panel ----------
 
 export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice,
-  servers = [], running, dialogOpen, onGithub }) {
+  servers = [], running, dialogOpen, onGithub, modPanels = [] }) {
   const serversUp = servers.some((s) => s.state === 'läuft' || s.state === 'startet');
   const entry = selected ? (files.recent.find((f) => f.path === selected.path) || selected) : null;
   return (
@@ -309,6 +320,10 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
             : serversUp ? <span className="srv-dot up" title="Ein Server läuft" aria-hidden="true" /> : null}
         </button>
         <button id="tab-github" type="button" role="tab" aria-selected={tab === 'github'} className={tab === 'github' ? 'on' : ''} onClick={() => setTab('github')}><Icon name="github" size={15} /> GitHub</button>
+        {modPanels.map((p) => (
+          <button key={p.key} type="button" role="tab" aria-selected={tab === `mod:${p.key}`} className={`mod-tab${tab === `mod:${p.key}` ? ' on' : ''}`}
+            title={`${p.titel} (Mod)`} onClick={() => setTab(`mod:${p.key}`)}><Icon name="puzzle" size={14} /> {p.titel}</button>
+        ))}
       </div>
       <div className="rp-body">
         {tab === 'dateien' ? (
@@ -335,6 +350,7 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
         {tab === 'browser' ? <BrowserTab browser={browser} active={browserActive} onClose={onBrowserClose} onBig={onBrowserBig} big={browserBig}
           servers={servers} root={root} notice={notice} /> : null}
         {tab === 'github' ? <GithubPane root={root} files={files} running={running} dialogOpen={dialogOpen} onConnect={onGithub} /> : null}
+        {modPanels.filter((p) => tab === `mod:${p.key}`).map((p) => <ModPanel key={p.key} el={p.el} />)}
       </div>
     </aside>
   );

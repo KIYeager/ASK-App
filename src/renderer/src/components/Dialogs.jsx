@@ -6,6 +6,7 @@ import { baseName, formatCount, formatDuration } from '../lib/format.js';
 import { PreviewBody } from './RightPanel.jsx';
 import Tour from './Tour.jsx';
 import { MemoryDialog, SkillsDialog } from './Knowledge.jsx';
+import SettingsDialog, { CatalogDialog, ModPreviewDialog, ShortcutsDialog, SkillViewDialog } from './Settings.jsx';
 
 function Dialog({ id, title, wide, full, children, actions, onClose }) {
   return (
@@ -264,7 +265,7 @@ function GithubDialog({ onClose }) {
   );
 }
 
-const UPDATE_TEXT = {
+export const UPDATE_TEXT = {
   sucht: 'Sucht nach Updates …',
   aktuell: 'Du hast die neueste Version.',
   verfügbar: 'Eine neue Version ist da.',
@@ -274,108 +275,13 @@ const UPDATE_TEXT = {
   fehler: 'Prüfen nicht möglich.',
 };
 
-function Segmented({ value, options, onChange, name }) {
+export function Segmented({ value, options, onChange, name }) {
   return (
     <div className="segmented" role="radiogroup" aria-label={name}>
       {options.map(([v, label]) => (
         <button key={v} type="button" role="radio" aria-checked={value === v} className={value === v ? 'on' : ''} onClick={() => onChange(v)}>{label}</button>
       ))}
     </div>
-  );
-}
-
-function SettingsDialog({ state, onClose, onGithub, onVerbose, onTerminal, onUsage, onTour, onMemory, onSkills, onAskToken }) {
-  const u = state.update || {};
-  return (
-    <Dialog id="dlg-settings" title="Einstellungen" onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Fertig</button>}>
-      <div className="setting">
-        <div><div className="s-title">ASK-Konto</div><div className="s-text">{state.ask?.state === 'angemeldet' ? `Angemeldet als ${state.ask.user || '(unbekannt)'} · ${state.askUrl}`
-          : 'Nicht angemeldet. «Anmelden» öffnet die Anmeldung von ASK in einem eigenen Fenster. Lädt ASK nur im Browser, nimm «Im Browser».'}</div></div>
-        {state.ask?.state === 'angemeldet' ? <button type="button" className="btn" onClick={async () => { onClose(); await api().logout(); }}><Icon name="logout" size={15} /> Abmelden</button> : (
-          <div className="checks">
-            <button type="button" id="settings-login" className="btn" onClick={() => api().askLoginWindow()}>Anmelden</button>
-            <button type="button" id="settings-login-browser" className="btn small" onClick={onAskToken}>Im Browser …</button>
-          </div>
-        )}
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Darstellung</div><div className="s-text">Hell, Dunkel oder wie in Windows eingestellt.</div></div>
-        <Segmented name="Darstellung" value={state.theme || 'system'} onChange={(theme) => api().setSettings({ theme })}
-          options={[['system', 'System'], ['hell', 'Hell'], ['dunkel', 'Dunkel']]} />
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Prüfung im Modus «Auto»</div>
-          <div className="s-text">Ein Modell in ASK prüft jeden Befehl und fragt nur bei Gefährlichem. Ein schnelles Modell genügt.</div></div>
-        <label className="s-select">
-          <select id="review-model" value={state.reviewModel || ''} onChange={(e) => api().setSettings({ reviewModel: e.target.value })} aria-label="Modell für die Prüfung">
-            <option value="">Wie im Chat</option>
-            {(state.models || []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-          <Icon name="chevDown" size={13} />
-        </label>
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Hilfsagenten</div>
-          <div className="s-text">ASK kann Teilfragen an Hilfsagenten abgeben, die nur lesen und recherchieren (bis 3 gleichzeitig). Ein schnelles Modell spart Zeit.</div></div>
-        <label className="s-select">
-          <select id="helper-model" value={state.helperModel || ''} onChange={(e) => api().setSettings({ helperModel: e.target.value })} aria-label="Modell für Hilfsagenten">
-            <option value="">Wie im Chat</option>
-            {(state.models || []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-          <Icon name="chevDown" size={13} />
-        </label>
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Frühere Chats</div><div className="s-text">ASK darf frühere Chats im selben Projekt durchsuchen und lesen (/chats).</div></div>
-        <Segmented name="Frühere Chats" value={state.chatMemory ? 'an' : 'aus'} onChange={(v) => api().setChatMemory(v === 'an')}
-          options={[['aus', 'Aus'], ['an', 'An']]} />
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Gedächtnis</div><div className="s-text">ASK merkt sich Vorlieben, Kenntnisse und Projektwissen für alle Chats, nur auf diesem Laptop (/gedaechtnis).</div></div>
-        <div className="setting-ctl">
-          <Segmented name="Gedächtnis" value={state.memory !== false ? 'an' : 'aus'} onChange={(v) => api().setMemoryEnabled(v === 'an')} options={[['aus', 'Aus'], ['an', 'An']]} />
-          <button type="button" id="settings-memory" className="btn small" onClick={onMemory}>Ansehen …</button>
-        </div>
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Skills</div><div className="s-text">Eigene Anleitungen für wiederkehrende Aufträge, aufrufen mit /name (/skills).</div></div>
-        <button type="button" id="settings-skills" className="btn" onClick={onSkills}>Skills …</button>
-      </div>
-      <div className="setting">
-        <div><div className="s-title">GitHub</div><div className="s-text">Projekte von GitHub holen und hochladen.</div></div>
-        <button type="button" className="btn" onClick={onGithub}><Icon name="github" size={15} /> GitHub …</button>
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Benachrichtigungen</div><div className="s-text">Meldung von Windows, wenn ASK fertig ist oder etwas fragt und du woanders bist.</div></div>
-        <Segmented name="Benachrichtigungen" value={state.prefs?.notify === false ? 'aus' : 'an'} onChange={(v) => api().setPrefs({ notify: v === 'an' })}
-          options={[['aus', 'Aus'], ['an', 'An']]} />
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Nutzung</div><div className="s-text">Aufträge, Token und Dateien pro Projekt (/nutzung).</div></div>
-        <button type="button" id="settings-usage" className="btn" onClick={onUsage}><Icon name="chart" size={15} /> Nutzung …</button>
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Ansicht</div><div className="s-text">Gedanken und alle Details zeigen (Ctrl+O), Aufgabenliste nach dem Auftrag einklappen.</div></div>
-        <div className="checks">
-          <label className="check"><input type="checkbox" id="pref-verbose" checked={!!state.prefs?.verbose} onChange={(e) => onVerbose(e.target.checked)} /> Details</label>
-          <label className="check"><input type="checkbox" id="pref-todo" checked={state.prefs?.todoCollapsed ?? true} onChange={(e) => api().setPrefs({ todoCollapsed: e.target.checked })} /> Einklappen</label>
-        </div>
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Version {state.version}</div>
-          <div className="s-text">{UPDATE_TEXT[u.state] || (u.enabled ? '' : 'Updates gibt es nur in der installierten App.')}{u.state === 'fehler' && u.error ? ` ${u.error}` : ''}</div>
-          <label className="check small"><input type="checkbox" id="pref-beta" checked={!!u.beta} onChange={(e) => api().setBetaUpdates(e.target.checked, false)} /> Beta-Versionen erhalten</label></div>
-        {u.enabled ? <button type="button" id="settings-update" className="btn" onClick={() => api().updateAction()}>Nach Updates suchen</button> : null}
-      </div>
-      <div className="setting">
-        <div><div className="s-title">Mehr</div><div className="s-text">Kurze Einführung, Meldungen des Terminals, Anmeldungen im Browser der App.</div></div>
-        <div className="checks">
-          <button type="button" id="settings-tour" className="btn small" onClick={onTour}>Einführung zeigen</button>
-          <button type="button" className="btn small" onClick={onTerminal}>Terminal …</button>
-          <button type="button" className="btn small" onClick={() => api().browserClear()}>Browser-Anmeldungen löschen</button>
-        </div>
-      </div>
-    </Dialog>
   );
 }
 
@@ -412,6 +318,15 @@ function UsageChart({ days, measure }) {
 }
 
 function UsageDialog({ onClose }) {
+  return (
+    <Dialog id="dlg-usage" title="Nutzung" wide onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Schliessen</button>}>
+      <UsageView />
+    </Dialog>
+  );
+}
+
+// Inhalt der Nutzung, auch im Bereich «Nutzung» der Einstellungen
+export function UsageView() {
   const [u, setU] = useState(null);
   const [measure, setMeasure] = useState('tasks');
   useEffect(() => {
@@ -426,7 +341,7 @@ function UsageDialog({ onClose }) {
   const files = (p) => p.files.added + p.files.changed;
   const a = u?.ask;
   return (
-    <Dialog id="dlg-usage" title="Nutzung" wide onClose={onClose} actions={<button type="button" className="btn primary" onClick={onClose}>Schliessen</button>}>
+    <div className="usage-view">
       {!u ? <p className="muted">Lädt …</p> : (
         <>
           <div className="u-tiles">
@@ -470,7 +385,7 @@ function UsageDialog({ onClose }) {
           <p className="muted small">Gezählt aus den Chats in deinen Projektordnern, nur auf diesem Laptop.{t.estimatedTokens > 0 ? ' ≈ heisst teilweise geschätzt.' : ''}{a ? ' ASK-Webseite: Angaben von ASK.' : ''}</p>
         </>
       )}
-    </Dialog>
+    </div>
   );
 }
 
@@ -496,10 +411,13 @@ export function activeDialog(state, dialog) {
   return null;
 }
 
-export default function Dialogs({ state, dialog, setDialog, selected, startError, onVerbose }) {
+export default function Dialogs({ state, dialog, setDialog, selected, startError, onVerbose, onCompose }) {
   const name = activeDialog(state, dialog);
   if (!name) return null;
-  const close = () => setDialog(null);
+  // Aus den Einstellungen geöffnete Dialoge kehren dorthin zurück (dialog.back)
+  const close = () => setDialog(dialog?.back || null);
+  const here = dialog?.name === 'settings' ? { name: 'settings', pane: dialog.pane } : dialog;
+  const go = (next, extra = {}) => setDialog(next === 'settings' ? { name: 'settings', ...extra } : { name: next, ...extra, back: here });
   if (name === 'tour') return <Tour state={state} onDone={() => { api().setPrefs({ tourDone: true }); close(); }} />;
   if (name === 'whatsnew') {
     return (
@@ -509,7 +427,7 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
     );
   }
   return (
-    <div id="overlay" className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && dialog && name === dialog.name) close(); }}>
+    <div id="overlay" className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && dialog && name === dialog.name) setDialog(null); }}>
       {name === 'warning' ? <WarningDialog /> : null}
       {name === 'url' ? <UrlDialog state={state} /> : null}
       {name === 'start' ? <ProjectDialog state={state} first error={startError} /> : null}
@@ -517,13 +435,18 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
       {name === 'ask' ? <AskDialog state={state} onClose={close} onToken={() => setDialog({ name: 'ask-token' })} /> : null}
       {name === 'terminal' ? <TerminalDialog state={state} text={dialog.text} onClose={close} /> : null}
       {name === 'github' ? <GithubDialog onClose={close} /> : null}
-      {name === 'settings' ? <SettingsDialog state={state} onClose={close} onGithub={() => setDialog({ name: 'github' })} onVerbose={onVerbose}
-        onTerminal={() => setDialog({ name: 'terminal' })} onUsage={() => setDialog({ name: 'usage' })} onTour={() => setDialog({ name: 'tour' })}
-        onMemory={() => setDialog({ name: 'memory' })} onSkills={() => setDialog({ name: 'skills' })} onAskToken={() => setDialog({ name: 'ask-token' })} /> : null}
+      {name === 'settings' ? <SettingsDialog key="settings" state={state} pane={dialog.pane} go={go} onClose={close} onVerbose={onVerbose}
+        onPane={(pane) => setDialog({ name: 'settings', pane })}
+        onCompose={(t) => { setDialog(null); onCompose(t); }} /> : null}
+      {name === 'shortcuts' ? <ShortcutsDialog onClose={close} /> : null}
+      {name === 'catalog' ? <CatalogDialog repo={dialog.repo} kind={dialog.kind} onClose={close} /> : null}
+      {name === 'mod-preview' ? <ModPreviewDialog id={dialog.id} onClose={close} /> : null}
+      {name === 'skill-view' ? <SkillViewDialog slug={dialog.slug} onClose={close}
+        onCopy={(sk) => setDialog({ name: 'skills', copy: { name: sk.slug, description: sk.description, body: sk.body }, back: dialog.back })} /> : null}
       {name === 'ask-token' ? <TokenDialog state={state} onClose={close} /> : null}
       {name === 'usage' ? <UsageDialog onClose={close} /> : null}
       {name === 'memory' ? <MemoryDialog state={state} onClose={close} /> : null}
-      {name === 'skills' ? <SkillsDialog onClose={close} /> : null}
+      {name === 'skills' ? <SkillsDialog onClose={close} initial={dialog.slug} copy={dialog.copy} /> : null}
       {name === 'preview' ? <BigPreview entry={selected} onClose={close} /> : null}
     </div>
   );
