@@ -12,7 +12,7 @@ import { useSkillCommands } from './components/Knowledge.jsx';
 import { Turn } from './components/Chat.jsx';
 import { applyEvent, buildTurns, emptyChat, fromTranscript, lastTasks } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
-import { emitMod, fillTemplate, loadMods, modCommandFor, modsChanged, setModHost, useMods } from './lib/mods.js';
+import { emitMod, fillTemplate, loadMods, modCommandFor, modsChanged, setModHost, takeDialogAfterReload, useMods } from './lib/mods.js';
 
 // Knöpfe des Fensters (ohne Rahmen von Windows, ENTSCHEIDE E73): minimieren, maximieren, schliessen
 function WindowControls() {
@@ -324,6 +324,9 @@ export default function App() {
       await loadTranscript();
       await loadChats();
       loadMods();
+      // Nach dem Neuladen wegen Mods: wieder dort, wo man war (Einstellungen → Mods)
+      const back = takeDialogAfterReload();
+      if (back) setDialog(back);
       setFiles(await a.files());
       composer.current?.focus();
     })();

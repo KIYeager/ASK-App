@@ -1183,9 +1183,31 @@ impl Visual {
         let report = page.eval("window.__modtest.report()").await.unwrap_or(Value::Null);
         let name = format!("mod-{}-{}.png", t.id, base36(now_ms() as u64));
         let saved = self.save(root, &t.chat, &name, &png)?;
+        let (out, errors) = mod_test_report(t, &report, &steps);
+        let mut out = out;
+        out.push_str(&format!("\n{SHOT_NEXT}"));
+        Ok(json!({ "ok": errors.is_empty(), "output": out, "summary": if errors.is_empty() { "läuft".to_string() } else { format!("{} Fehler", errors.len()) }, "images": [saved] }))
+    }
+}
+
+
+/// Bericht von mod_testen aus dem, was die Testseite meldet (`window.__modtest.report()`); dazu die Fehler
+pub fn mod_test_report(t: &ModTest, report: &Value, steps: &[String]) -> (String, Vec<String>) {
         let errors: Vec<String> = report["fehler"].as_array().cloned().unwrap_or_default().iter().map(crate::util::js_string).take(20).collect();
         let mut out = format!("Mod «{}» in einer Testansicht von ASK geladen ({}, Beispieldaten, nicht eingeschaltet).", t.id, if t.dark { "dunkel" } else { "hell" });
         out.push_str(&format!("\nGeladen: CSS {}, Code {}.", yes_no(&report["css"]), yes_no(&report["code"])));
+        let rules = num_or(&report["regeln"], 0.0) as i64;
+        let unmatched: Vec<String> = report["ohneTreffer"].as_array().cloned().unwrap_or_default().iter().map(crate::util::js_string).collect();
+        let vars: Vec<String> = report["variablen"].as_array().cloned().unwrap_or_default().iter().map(crate::util::js_string).collect();
+        if rules > 0 {
+            out.push_str(&format!("\nCSS: {rules} Regeln, geänderte Variablen: {}.", if vars.is_empty() { "keine".to_string() } else { vars.join(", ") }));
+            if !unmatched.is_empty() {
+                out.push_str(&format!("\nDiese Selektoren treffen in der Oberfläche nichts (wirkungslos, ausser die Elemente entstehen erst später durch den Code des Mods): {}. Nimm die Selektoren aus «Aufbau der Oberfläche» im Skill mod-erstellen.", unmatched.join(" · ")));
+            }
+            if vars.is_empty() && unmatched.len() as i64 >= rules {
+                out.push_str("\nAchtung: Keine Regel trifft etwas und keine Variable ist geändert. Der Mod ändert so sichtbar nichts.");
+            }
+        }
         out.push_str(&format!("\nVom Mod angelegt: {} Elemente mit Klasse «{}…», Bereiche: {}, Knöpfe: {}, Befehle: {}.",
             num_or(&report["elemente"], 0.0), t.id, list_or_none(&report["panels"]), list_or_none(&report["knoepfe"]), list_or_none(&report["befehle"])));
         if !steps.is_empty() {
@@ -1196,9 +1218,7 @@ impl Visual {
         } else {
             out.push_str(&format!("\nFehler ({}):\n- {}", errors.len(), errors.join("\n- ")));
         }
-        out.push_str(&format!("\n{SHOT_NEXT}"));
-        Ok(json!({ "ok": errors.is_empty(), "output": out, "summary": if errors.is_empty() { "läuft".to_string() } else { format!("{} Fehler", errors.len()) }, "images": [saved] }))
-    }
+    (out, errors)
 }
 
 const SHOT_NEXT: &str = "Das Bildschirmfoto folgt in der nächsten Nachricht.";
@@ -1244,6 +1264,20 @@ impl crate::tools::VisualTools for Visual {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn bericht_meldet_css_ohne_wirkung() {
+        let t = ModTest { id: "pink".into(), dark: true, ..Default::default() };
+        let r = json!({ "css": true, "code": null, "fehler": [], "regeln": 2, "ohneTreffer": [".chat-window", ".gibts-nicht"], "variablen": [], "elemente": 0 });
+        let (out, errors) = mod_test_report(&t, &r, &[]);
+        assert!(errors.is_empty());
+        assert!(out.contains("treffen in der Oberfläche nichts") && out.contains(".chat-window · .gibts-nicht"), "{out}");
+        assert!(out.contains("ändert so sichtbar nichts"), "{out}");
+        let r = json!({ "css": true, "regeln": 2, "ohneTreffer": [".chat-window"], "variablen": ["--acc"], "fehler": ["x is not defined"] });
+        let (out, errors) = mod_test_report(&t, &r, &["ereignis → ok".into()]);
+        assert_eq!(errors, ["x is not defined"]);
+        assert!(out.contains("--acc") && !out.contains("sichtbar nichts") && out.contains("Fehler (1)"), "{out}");
+    }
 
     #[test]
     fn testansicht_fuer_mods_abfrage_und_aktionen() {

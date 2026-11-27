@@ -51,6 +51,28 @@ export function emitMod(event, data = {}) {
 }
 
 // ---------- Testansicht: Fehler sammeln und Aktionen für mod_testen ----------
+
+// Treffen die CSS-Regeln des Mods etwas? Zustände wie :hover und ::before zählen nicht, die Grundform muss passen.
+function cssCheck() {
+  const sheet = [...document.styleSheets].find((s) => s.ownerNode?.dataset?.mod === TEST);
+  if (!sheet) return { regeln: 0, ohneTreffer: [], variablen: [] };
+  let rules = [];
+  try { rules = [...sheet.cssRules]; } catch { return { regeln: -1, ohneTreffer: [], variablen: [] }; }
+  const flat = (list) => list.flatMap((r) => (r.cssRules && !(r instanceof CSSStyleRule) ? flat([...r.cssRules]) : [r]));
+  const styleRules = flat(rules).filter((r) => r instanceof CSSStyleRule);
+  const ohneTreffer = [];
+  const variablen = new Set();
+  for (const r of styleRules) {
+    for (let i = 0; i < r.style.length; i++) if (r.style[i].startsWith('--')) variablen.add(r.style[i]);
+    for (const part of r.selectorText.split(',')) {
+      const base = part.replace(/::?[a-z-]+(\([^)]*\))?/gi, (m) => (/^:(root|not|is|where|has)/i.test(m) ? m : '')).trim() || ':root';
+      let hit = 0;
+      try { hit = document.querySelectorAll(base).length; } catch { hit = -1; }
+      if (hit === 0) ohneTreffer.push(part.trim());
+    }
+  }
+  return { regeln: styleRules.length, ohneTreffer: [...new Set(ohneTreffer)].slice(0, 15), variablen: [...variablen].slice(0, 20) };
+}
 const testState = { done: false, fehler: [], css: null, code: null };
 function testError(text) {
   if (TEST && testState.fehler.length < 50) testState.fehler.push(String(text).slice(0, 300));
@@ -82,7 +104,7 @@ if (TEST) {
     input: (text) => { host.composer?.setText(String(text)); return 'eingetippt'; },
     send: (text) => { host.send?.(String(text)); return 'gesendet (Beispielantwort)'; },
     report: () => ({
-      css: testState.css, code: testState.code, fehler: testState.fehler,
+      css: testState.css, code: testState.code, fehler: testState.fehler, ...cssCheck(),
       elemente: document.querySelectorAll(`[class*="${CSS.escape(TEST)}"]`).length,
       panels: store.panels.map((p) => p.titel), knoepfe: store.buttons.map((b) => `${b.symbol} ${b.titel}`), befehle: store.commands.map((c) => c.cmd),
     }),
@@ -173,6 +195,20 @@ function loadScript(src) {
   });
 }
 
+// Ein- und Ausschalten lädt die Oberfläche neu (Code eines Mods lässt sich nicht sauber entfernen). Damit man danach
+// nicht aus den Einstellungen fällt, merkt sich die Oberfläche kurz, wo man war, und öffnet es nach dem Neuladen wieder.
+const AFTER_RELOAD = 'ask.nachNeuladen';
+export function keepDialogOverReload(dialog = { name: 'settings', pane: 'mods' }) {
+  try { sessionStorage.setItem(AFTER_RELOAD, JSON.stringify({ dialog, t: Date.now() })); } catch { /* gesperrt */ }
+}
+export function takeDialogAfterReload() {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(AFTER_RELOAD) || 'null');
+    sessionStorage.removeItem(AFTER_RELOAD);
+    return v && Date.now() - v.t < 20000 ? v.dialog : null;
+  } catch { return null; }
+}
+
 let started = false;
 /** Einmal beim Start: aktive Mods laden. Gibt die Liste zurück (für den Vergleich nach «mods:changed»). */
 export async function loadMods() {
@@ -187,6 +223,7 @@ export async function loadMods() {
       link.rel = 'stylesheet';
       link.href = fileUrl(m, m.style);
       link.dataset.mod = m.id;
+      link.crossOrigin = 'anonymous'; // damit die Testansicht die Regeln lesen kann (Trefferprüfung)
       link.onload = () => { testState.css = true; };
       link.onerror = () => { testState.css = false; testError(`${m.style} liess sich nicht laden`); };
       document.head.appendChild(link);

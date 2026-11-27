@@ -656,11 +656,17 @@ async fn mod_erstellen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
     if !ok {
         return Ok(ToolOutput::new(false, "Die Person hat das Speichern abgelehnt.".into(), "abgelehnt"));
     }
+    let was_on = exists && mods.info(&id).is_some_and(|i| i.aktiv);
     let info = mods.save(&files, true)?;
     if let Some(k) = &ctx.knowledge {
         k.changed();
+        if was_on { if let Some(f) = &k.mods_changed { f(); } }
     }
-    Ok(ToolOutput::new(true, format!("Mod «{}» gespeichert (aus; {what}). Sag der Person: Einstellungen → Mods → «{}» → Vorschau ansehen und einschalten.", info.manifest.name, info.manifest.name), format!("{} gespeichert", info.manifest.id)))
+    let state = if was_on { "Er war eingeschaltet und ist jetzt aus, weil er geändert wurde" } else { "Er ist aus" };
+    Ok(ToolOutput::new(true, format!(
+        "Mod «{}» gespeichert ({what}). {state}: Noch ist in ASK nichts davon zu sehen. Prüfe ihn jetzt mit mod_testen (Bildschirmfoto, Fehler, CSS ohne Treffer) und verbessere ihn, bis die Wirkung stimmt. \
+Sag der Person erst dann, dass er fertig ist, und biete an, ihn mit mod_einschalten einzuschalten.", info.manifest.name),
+        format!("{} gespeichert", info.manifest.id)))
 }
 
 async fn skill_erstellen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {

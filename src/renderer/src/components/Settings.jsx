@@ -6,6 +6,7 @@ import Icon from './Icon.jsx';
 import { api } from '../api.js';
 import { Segmented, UPDATE_TEXT, UsageView } from './Dialogs.jsx';
 import { formatSize } from '../lib/format.js';
+import { keepDialogOverReload } from '../lib/mods.js';
 
 export const PANES = [
   [
@@ -317,8 +318,10 @@ function useModsList() {
 function ModsPane({ state, go, onCompose }) {
   const data = useModsList();
   const [msg, setMsg] = useState(null);
-  const run = async (p) => {
-    const r = await p.catch((e) => ({ ok: false, reason: String(e?.message || e) }));
+  // Ein-/Ausschalten und Löschen laden die Oberfläche neu; danach geht es hier weiter
+  const run = async (p, reload = false) => {
+    if (reload) keepDialogOverReload({ name: 'settings', pane: 'mods' });
+    const r = await (typeof p === 'function' ? p() : p).catch((e) => ({ ok: false, reason: String(e?.message || e) }));
     if (r?.ok === false && !r.canceled) setMsg({ bad: true, text: r.reason });
     else if (r?.kind) setMsg({ text: installedText(r) });
     else setMsg(null);
@@ -331,14 +334,14 @@ function ModsPane({ state, go, onCompose }) {
         <div className="s-note warn" role="status">
           <Icon name="shield" size={16} />
           <div><strong>Ein Mod mit Code ist eingeschaltet.</strong> Heikle Schritte (Befehle erlauben, Modus «Auto», Skills speichern …) bestätigst du jetzt in einem Fenster von Windows. Ctrl+Shift+M schaltet alle Mods sofort aus.</div>
-          <button type="button" className="btn small" onClick={() => run(api().modsOffAll())}>Alle ausschalten</button>
+          <button type="button" className="btn small" onClick={() => run(() => api().modsOffAll(), true)}>Alle ausschalten</button>
         </div>
       ) : (
         <div className="s-note"><Icon name="shield" size={16} /><div>Code in einem Mod sieht und bedient alles in ASK. Schalte nur Mods ein, deren Code du angesehen hast oder deren Quelle du vertraust. Neue und geänderte Mods sind aus.</div></div>
       )}
       <div className="s-actions">
         <button type="button" className="btn primary" onClick={() => onCompose('/mod-erstellen ')}><Icon name="spark" size={14} /> Mit ASK erstellen</button>
-        <button type="button" className="btn" onClick={() => run(api().modsImport())}>Aus Ordner importieren …</button>
+        <button type="button" className="btn" onClick={() => run(() => api().modsImport(), true)}>Aus Ordner importieren …</button>
         <button type="button" className="btn" onClick={() => api().modsFolder()}>Ordner öffnen</button>
       </div>
       <Message msg={msg} />
@@ -352,9 +355,9 @@ function ModsPane({ state, go, onCompose }) {
           text={<>{m.beschreibung}{m.geaendert ? <span className="s-warn"> Seit dem Einschalten geändert: erst nach erneuter Vorschau wieder aktiv.</span> : null}{m.fehler ? <span className="s-warn"> {m.fehler}</span> : null}
             <span className="s-tags">{modParts(m).map((t) => <span key={t} className={`s-tag${t === 'Code' ? ' code' : ''}`}>{t}</span>)}</span></>}>
           <button type="button" className="btn small" onClick={() => go('mod-preview', { id: m.id })}>Vorschau</button>
-          <button type="button" className="icon-btn" title="Löschen" aria-label={`Mod ${m.name} löschen`} onClick={() => run(api().modsRemove(m.id))}><Icon name="trash" size={14} /></button>
+          <button type="button" className="icon-btn" title="Löschen" aria-label={`Mod ${m.name} löschen`} onClick={() => run(() => api().modsRemove(m.id), m.aktiv)}><Icon name="trash" size={14} /></button>
           <Toggle label={`Mod ${m.name}`} checked={m.aktiv} disabled={!!m.fehler}
-            onChange={(v) => (v ? go('mod-preview', { id: m.id }) : run(api().modsEnable(m.id, false)))} />
+            onChange={(v) => (v ? go('mod-preview', { id: m.id }) : run(() => api().modsEnable(m.id, false), true))} />
         </Row>
       ))}
       {data?.examples?.length ? (
@@ -363,7 +366,7 @@ function ModsPane({ state, go, onCompose }) {
           {data.examples.map((e) => (
             <Row key={`x-${e.id}`} title={e.name} text={<>{e.beschreibung}<span className="s-tags">{modParts(e).map((t) => <span key={t} className={`s-tag${t === 'Code' ? ' code' : ''}`}>{t}</span>)}</span></>}>
               {e.installiert ? <span className="muted small">Hinzugefügt</span>
-                : <button type="button" className="btn small" onClick={() => run(api().modsExample(e.id))}>Hinzufügen</button>}
+                : <button type="button" className="btn small" onClick={() => run(() => api().modsExample(e.id), true)}>Hinzufügen</button>}
             </Row>
           ))}
         </>
@@ -481,6 +484,7 @@ export function ModPreviewDialog({ id, onClose }) {
   if (!m) return <SubDialog id="dlg-mod" title="Mod" onClose={onClose}><p className="muted">Den Mod gibt es nicht mehr.</p></SubDialog>;
   const shown = m.files.find((f) => f.path === file);
   const enable = async () => {
+    keepDialogOverReload({ name: 'settings', pane: 'mods' });
     const r = await api().modsEnable(m.id, true).catch((e) => ({ ok: false, reason: String(e?.message || e) }));
     if (r?.ok) onClose();
     else setMsg({ bad: true, text: r?.reason || 'Nicht eingeschaltet.' });
@@ -491,7 +495,7 @@ export function ModPreviewDialog({ id, onClose }) {
         {m.script && !m.aktiv ? <label className="check"><input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} /> Ich habe den Code angesehen und vertraue der Quelle</label> : null}
         <span className="spacer" />
         <button type="button" className="btn" onClick={onClose}>{m.aktiv ? 'Schliessen' : 'Abbrechen'}</button>
-        {m.aktiv ? <button type="button" className="btn" onClick={async () => { await api().modsEnable(m.id, false); onClose(); }}>Ausschalten</button>
+        {m.aktiv ? <button type="button" className="btn" onClick={async () => { keepDialogOverReload({ name: 'settings', pane: 'mods' }); await api().modsEnable(m.id, false); onClose(); }}>Ausschalten</button>
           : <button type="button" className="btn primary" disabled={(!!m.script && !trust) || !!m.fehler} onClick={enable}>Einschalten</button>}
       </>
     )}>

@@ -48,3 +48,28 @@ test('Anleitung für andere KI nennt die ganze Schnittstelle ASK', () => {
   const reserved = /RESERVED: &\[&str\] = &\[([^\]]+)\]/.exec(fs.readFileSync('src-tauri/core/src/skills.rs', 'utf8'))[1].match(/"([a-z]+)"/g).map((x) => x.slice(1, -1));
   for (const r of reserved) assert.ok(guide.includes(` ${r}`) || guide.includes(`\`${r}`), `gesperrter Befehl ${r} fehlt in der Anleitung`);
 });
+
+test('Karte der Oberfläche für Mods: gleich in beiden Anleitungen, jede Klasse gibt es', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const section = (p) => {
+    const t = fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
+    const m = /<!-- OBERFLAECHE START[^\n]*-->\n([\s\S]*?)<!-- OBERFLAECHE ENDE -->/.exec(t);
+    assert.ok(m, `${p}: Abschnitt fehlt`);
+    return m[1];
+  };
+  const a = section('resources/mod-anleitung/SKILL.md');
+  assert.strictEqual(section('resources/standard-skills/mod-erstellen/SKILL.md'), a, 'beide Anleitungen gleich');
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]));
+  const src = walk('src/renderer/src').filter((f) => /\.(jsx?|mjs|css)$/.test(f)).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  const codes = [...a.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter((c) => /^[.#]/.test(c));
+  const names = new Set(codes.flatMap((c) => [...c.matchAll(/([.#])([a-z][a-z0-9-]*)/g)].map((m) => m[1] + m[2])));
+  assert.ok(names.size > 25, [...names].join(' '));
+  for (const n of names) {
+    const word = n.slice(1);
+    const found = n[0] === '#'
+      ? new RegExp(`id="${word}"|#${word}\\b`).test(src)
+      : new RegExp(`\\.${word}\\b`).test(src) && new RegExp(`className=[^>]*\\b${word}\\b|'${word}'|"${word}"|\\b${word}\\b`).test(src);
+    assert.ok(found, `${n} gibt es in der Oberfläche nicht`);
+  }
+});
