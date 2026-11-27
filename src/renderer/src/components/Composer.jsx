@@ -573,7 +573,8 @@ const Composer = forwardRef(function Composer(props, ref) {
 
   const showTodoOpen = running && tasksLive ? todoOpen : (todoPeek ?? !todoCollapsed);
   const answering = !!pendingQuestion;
-  const placeholder = answering ? 'Antworte auf die Frage von ASK …'
+  const placeholder = dropping ? 'Loslassen, um die Dateien anzuhängen'
+    : answering ? 'Antworte auf die Frage von ASK …'
     : pendingApproval ? 'ASK wartet oben auf deine Entscheidung …'
     : running ? 'Folgenachricht (wird nach dem Auftrag gesendet) · Esc stoppt'
     : (block || (free ? 'Frag ASK etwas …' : mode === 'plan' ? 'Was soll ASK planen? …' : 'Auftrag beschreiben · @ für Dateien'));
