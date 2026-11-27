@@ -4,6 +4,7 @@ import Markdown from './Markdown.jsx';
 import { groupTitle, statsText } from '../lib/chatModel.mjs';
 import { baseName, extOf, fileBadge, fileUrl } from '../lib/format.js';
 import { errorDetails, errorHelp } from '../lib/errorHelp.mjs';
+import { api } from '../api.js';
 
 // ---------- Eingabe der Person ----------
 
@@ -91,13 +92,19 @@ function ErrorRow({ text, ctx }) {
   );
 }
 
+// Bild aus dem Projekt: zuerst über das Protokoll askfile, bei Fehlern mehrmals neu (eine eben geschriebene Datei
+// kann kurz gesperrt sein, etwa vom Virenschutz), zuletzt als data:-Adresse direkt vom Hauptprozess
 function Shot({ p, big, ctx }) {
   const [tries, setTries] = useState(0);
   const [stamp] = useState(() => Date.now());
+  const [data, setData] = useState('');
+  const fail = () => {
+    if (tries < 4) { setTimeout(() => setTries((t) => t + 1), 500 * (tries + 1)); return; }
+    if (!data) api().fileData?.(p).then((url) => { if (url) setData(url); }).catch(() => {});
+  };
   return (
-    <img src={fileUrl(p, `${stamp}-${tries}`)} alt={big ? baseName(p) : ''} title={`${p} · klicken für die Vorschau`}
-      onClick={(e) => { e.stopPropagation(); ctx.openFile(p); }} onLoad={ctx.onMediaLoad}
-      onError={() => { if (tries < 3) setTimeout(() => setTries((t) => t + 1), 600 * (tries + 1)); }} />
+    <img src={data || fileUrl(p, `${stamp}-${tries}`)} alt={big ? baseName(p) : ''} title={`${p} · klicken für die Vorschau`}
+      onClick={(e) => { e.stopPropagation(); ctx.openFile(p); }} onLoad={ctx.onMediaLoad} onError={fail} />
   );
 }
 

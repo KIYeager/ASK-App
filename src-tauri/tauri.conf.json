@@ -16,11 +16,12 @@
     "security": {
       "csp": {
         "default-src": "'self'",
-        "img-src": "'self' askfile: http://askfile.localhost data: blob:",
+        "img-src": "'self' askfile: http://askfile.localhost askmod: http://askmod.localhost data: blob:",
         "frame-src": "askfile: http://askfile.localhost",
-        "media-src": "askfile: http://askfile.localhost",
-        "style-src": "'self' 'unsafe-inline'",
-        "script-src": "'self'",
+        "media-src": "askfile: http://askfile.localhost askmod: http://askmod.localhost",
+        "style-src": "'self' 'unsafe-inline' askmod: http://askmod.localhost",
+        "font-src": "'self' data: askmod: http://askmod.localhost",
+        "script-src": "'self' askmod: http://askmod.localhost",
         "connect-src": "'self' ipc: http://ipc.localhost"
       },
       "freezePrototype": false
@@ -36,6 +37,8 @@
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico", "icons/icon.png"],
     "resources": {
       "../resources/skills/": "skills/",
+      "../resources/standard-skills/": "standard-skills/",
+      "../resources/mods-beispiele/": "mods-beispiele/",
       "../resources/anweisungen/": "anweisungen/",
       "../resources/app-config.json": "app-config.json",
       "../resources/icon.ico": "icon.ico",

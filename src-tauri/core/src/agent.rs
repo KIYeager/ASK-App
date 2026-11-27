@@ -533,6 +533,10 @@ pub struct AgentOptions {
     pub get_siblings: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     /// Modell der Hilfsagenten; leer: Modell des Chats
     pub get_helper_model: Arc<dyn Fn() -> String + Send + Sync>,
+    /// Regeln eingeschalteter Mods: vor diesen Arten von Schritten immer fragen (mods.rs, E72)
+    pub get_ask_before: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
+    /// Nach der ersten Antwort einen Titel von ASK schreiben lassen (in Tests aus, sonst bekäme die Attrappe eine Anfrage mehr)
+    pub auto_title: bool,
 }
 
 impl AgentOptions {
@@ -569,7 +573,39 @@ impl AgentOptions {
             knowledge: None,
             get_siblings: Arc::new(Vec::new),
             get_helper_model: Arc::new(String::new),
+            get_ask_before: Arc::new(Vec::new),
+            auto_title: false,
         }
+    }
+}
+
+/// Antwort des Modells → Titel: erste Zeile ohne Denkblock, Vorsilben, Anführungszeichen und Schlusspunkt
+pub fn clean_title(text: &str) -> String {
+    let without_think = re!(r"(?s)<think>.*?</think>").replace_all(text, "");
+    let line = without_think.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line = re!(r"^(?i)(titel|title)\s*:\s*").replace(line, "");
+    let line = line.trim_matches(|c: char| "«»\"'„“”*#`.!:".contains(c) || c.is_whitespace());
+    let clean = re!(r"\s+").replace_all(line, " ").to_string();
+    if clean.chars().count() < 2 { String::new() } else { take_chars(&clean, 60) }
+}
+
+/// Rückfrage aus einer Regel eines Mods («nachfragen»): Mods können ASK nur strenger machen
+pub fn mod_rule_risk(name: &str, args: &Value, kinds: &[String]) -> Option<Risk> {
+    let has = |k: &str| kinds.iter().any(|x| x == k);
+    let command = || js_string(args.get(if name == "server_starten" { "befehl" } else { "command" }).unwrap_or(&Value::Null));
+    let risk = |kind: &str, title: String, detail: String| Some(Risk { kind: format!("mod-{kind}"), title, detail, reason: "Ein eingeschalteter Mod verlangt hier eine Rückfrage.".into() });
+    match name {
+        "run_command" | "server_starten" if has("loeschen") && crate::approvals::analyze(&command(), 0).del => risk("loeschen", "Darf ASK Dateien löschen?".into(), take_chars(&command(), 300)),
+        "run_command" | "server_starten" if has("befehle") => risk("befehle", "Befehl ausführen?".into(), take_chars(&command(), 300)),
+        "write_file" | "edit_file" if has("schreiben") => {
+            let path = js_string(args.get("path").unwrap_or(&Value::Null));
+            risk("schreiben", format!("Darf ASK «{path}» schreiben?"), path)
+        }
+        "web_search" | "web_fetch" | "browser" if has("web") => {
+            let what = ["query", "url", "address", "action"].iter().find_map(|k| args.get(*k).filter(|v| truthy(v)).map(js_string)).unwrap_or_default();
+            risk("web", "Darf ASK ins Internet?".into(), take_chars(&what, 300))
+        }
+        _ => None,
     }
 }
 
@@ -635,6 +671,8 @@ pub struct Agent {
     undoing: AtomicBool,
     controller: Mutex<Option<Signal>>,
     approvals: Mutex<HashMap<String, oneshot::Sender<String>>>,
+    /// Titel und Details offener Rückfragen (für die Bestätigung bei eingeschalteten Mods, E72)
+    approval_text: Mutex<HashMap<String, (String, String)>>,
     questions: Mutex<HashMap<String, oneshot::Sender<String>>>,
 }
 
@@ -667,6 +705,7 @@ impl Agent {
             undoing: AtomicBool::new(false),
             controller: Mutex::new(None),
             approvals: Mutex::new(HashMap::new()),
+            approval_text: Mutex::new(HashMap::new()),
             questions: Mutex::new(HashMap::new()),
         })
     }
@@ -938,7 +977,10 @@ impl Agent {
 
     pub fn rename(&self, folder: &str, id: &str, title: &str) -> bool {
         let clean = take_chars(re!(r"\s+").replace_all(title, " ").trim(), 80);
-        !clean.is_empty() && self.patch(folder, id, |chat| chat["title"] = json!(clean))
+        !clean.is_empty() && self.patch(folder, id, |chat| {
+            chat["title"] = json!(clean);
+            if let Some(o) = chat.as_object_mut() { o.remove("titleAuto"); } // selbst benannt: ASK ändert ihn nicht mehr
+        })
     }
 
     pub fn pin(&self, folder: &str, id: &str, on: bool) -> bool {
@@ -1146,7 +1188,10 @@ impl Agent {
         }
         if self.chat_title().is_empty() {
             let source = if text.is_empty() { attachments.iter().map(|a| js_string(&a["name"])).collect::<Vec<_>>().join(", ") } else { text.clone() };
-            self.inner.lock().chat["title"] = json!(take_chars(&re!(r"\s+").replace_all(&source, " "), 80));
+            let mut g = self.inner.lock();
+            g.chat["title"] = json!(take_chars(&re!(r"\s+").replace_all(&source, " "), 80));
+            // Vorläufig aus der Eingabe; nach der ersten Antwort schreibt ASK einen kurzen Titel (auto_title)
+            g.chat["titleAuto"] = json!(true);
         }
         let mut message = json!({ "role": "user", "content": text, "time": now_ms() });
         if !attachments.is_empty() {
@@ -1245,6 +1290,54 @@ impl Agent {
         self.save();
         self.event(json!({ "type": "done", "stopped": signal.is_cancelled(), "failed": failed })); // main.js: danach im Hintergrund merken (memory.rs)
         self.emit_changed();
+        if self.o.auto_title && self.inner.lock().chat["titleAuto"] == true && !signal.is_cancelled() {
+            let me = self.clone();
+            tokio::spawn(async move { me.auto_title().await });
+        }
+    }
+
+    /// Titel des Chats von ASK statt der ersten Eingabe: nach der ersten Antwort, im Hintergrund, mit dem Modell
+    /// der Hilfsagenten (sonst dem des Chats). Ein Titel, den die Person selbst gesetzt hat, bleibt.
+    async fn auto_title(self: Arc<Self>) {
+        let (id, folder, request, answer) = {
+            let g = self.inner.lock();
+            let msgs = g.chat["messages"].as_array().cloned().unwrap_or_default();
+            let request = msgs.iter().find(|m| m["role"] == "user").map(|m| js_string(&m["content"])).unwrap_or_default();
+            let answer = msgs.iter().rev().find(|m| m["role"] == "assistant" && truthy(&m["content"])).map(|m| js_string(&m["content"])).unwrap_or_default();
+            (js_string(&g.chat["id"]), (self.o.get_folder)(), request, answer)
+        };
+        if request.trim().is_empty() {
+            return;
+        }
+        let helper = (self.o.get_helper_model)();
+        let model = if helper.is_empty() { (self.o.get_model)() } else { helper };
+        if model.is_empty() {
+            return;
+        }
+        let prompt = format!("Auftrag:\n{}\n\nAntwort (Anfang):\n{}", take_chars(&request, 1500), take_chars(&answer, 800));
+        let req = ChatRequest {
+            model,
+            messages: vec![
+                json!({ "role": "system", "content": "Du gibst Chats einen Titel. Antworte nur mit dem Titel: 2 bis 6 Wörter auf Deutsch (Schweizer Rechtschreibung, ss statt ß), ohne Anführungszeichen, ohne Punkt am Ende. Nenne das Thema, nicht «Frage zu …»." }),
+                json!({ "role": "user", "content": prompt }),
+            ],
+            tools: None,
+            web_search: false,
+            thinking: "standard".into(),
+            signal: None,
+            on_delta: None,
+        };
+        let Ok(Ok(done)) = tokio::time::timeout(Duration::from_secs(45), self.o.ask.chat(req)).await else { return };
+        let title = clean_title(&done.content);
+        if title.is_empty() {
+            return;
+        }
+        self.patch(&folder, &id, |chat| {
+            if chat["titleAuto"] == true {
+                chat["title"] = json!(title);
+                if let Some(o) = chat.as_object_mut() { o.remove("titleAuto"); }
+            }
+        });
     }
 
     /// Eine Antwort des Modells und die verlangten Werkzeuge. true, wenn das Modell fertig ist.
@@ -1645,6 +1738,7 @@ impl Agent {
         if signal.is_cancelled() {
             return "no".into();
         }
+        let asked = asked.or_else(|| mod_rule_risk(&name, &args, &(self.o.get_ask_before)()).map(|risk| Asked { risk, reviewed: false }));
         let Some(asked) = asked else { return "yes".into() };
         if self.inner.lock().allowed.contains(&asked.risk.kind) {
             return "yes".into();
@@ -1654,6 +1748,7 @@ impl Agent {
         let (tx, rx) = oneshot::channel::<String>();
         if self.o.auto_approve.is_none() {
             self.approvals.lock().insert(id.clone(), tx);
+            self.approval_text.lock().insert(id.clone(), (asked.risk.title.clone(), asked.risk.detail.clone()));
         }
         self.event(json!({ "type": "approval", "id": id, "kind": asked.risk.kind, "title": asked.risk.title, "detail": asked.risk.detail,
             "reason": asked.risk.reason, "reviewed": asked.reviewed }));
@@ -1666,6 +1761,7 @@ impl Agent {
             }
         };
         self.approvals.lock().remove(&id);
+        self.approval_text.lock().remove(&id);
         if answer == "always" {
             self.inner.lock().allowed.insert(asked.risk.kind.clone());
         }
@@ -1789,6 +1885,11 @@ impl Agent {
         let Some(tx) = self.questions.lock().remove(id) else { return false };
         let _ = tx.send(take_chars(text, 4000));
         true
+    }
+
+    /// Titel und Details einer offenen Rückfrage
+    pub fn approval_text(&self, id: &str) -> Option<(String, String)> {
+        self.approval_text.lock().get(id).cloned()
     }
 
     /// Antwort der Person auf eine Rückfrage: «yes» | «always» | «no»
@@ -2024,6 +2125,27 @@ fn propose_plan(raw_args: &str) -> ToolResult {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn titel_aus_der_antwort_des_modells() {
+        assert_eq!(clean_title("<think>hm</think>\n«Budget 2027 planen».\nmehr"), "Budget 2027 planen");
+        assert_eq!(clean_title("Titel: Python-Passwortprüfer"), "Python-Passwortprüfer");
+        assert_eq!(clean_title("**Excel-Auswertung der Ausgaben**"), "Excel-Auswertung der Ausgaben");
+        assert_eq!(clean_title("  \n"), "");
+        assert_eq!(clean_title(&"x".repeat(100)).chars().count(), 60);
+    }
+
+    #[test]
+    fn regeln_der_mods_machen_nur_strenger() {
+        let k = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(mod_rule_risk("run_command", &json!({ "command": "dir" }), &[]).is_none());
+        assert_eq!(mod_rule_risk("run_command", &json!({ "command": "dir" }), &k(&["befehle"])).unwrap().kind, "mod-befehle");
+        assert_eq!(mod_rule_risk("run_command", &json!({ "command": "del a.txt" }), &k(&["loeschen"])).unwrap().kind, "mod-loeschen");
+        assert!(mod_rule_risk("run_command", &json!({ "command": "dir" }), &k(&["loeschen"])).is_none());
+        assert_eq!(mod_rule_risk("write_file", &json!({ "path": "a.md" }), &k(&["schreiben"])).unwrap().title, "Darf ASK «a.md» schreiben?");
+        assert_eq!(mod_rule_risk("web_fetch", &json!({ "url": "https://x.ch" }), &k(&["web"])).unwrap().detail, "https://x.ch");
+        assert!(mod_rule_risk("read_file", &json!({ "path": "a.md" }), &k(&["schreiben", "web", "befehle", "loeschen"])).is_none());
+    }
     use super::*;
     use crate::askapi::ToolCall;
     use crate::memory::Memory;
@@ -2983,7 +3105,7 @@ mod tests {
         t.send("Frage").await;
         let saved = t.saved();
         let keys: Vec<&String> = saved.as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["id", "title", "created", "updated", "messages"]);
+        assert_eq!(keys, ["id", "title", "created", "updated", "messages", "titleAuto"]);
         assert_eq!(saved["messages"][1]["stats"]["promptTokens"], 0);
         let id = t.agent.chat_id();
         t.agent.new_chat();

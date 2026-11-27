@@ -101,8 +101,68 @@ fn mime_of(path: &std::path::Path) -> &'static str {
     }
 }
 
+// ---- Protokoll askmod (ENTSCHEIDE E72): Dateien eingeschalteter Mods für die Oberfläche ----------------------
+// Adresse: askmod://mod/<id>/<fingerabdruck>/<pfad> bzw. http://askmod.localhost/mod/<id>/<fingerabdruck>/<pfad>.
+// Geliefert wird nur, was mods.rs für einen eingeschalteten, unveränderten Mod freigibt.
+
+pub fn handle_mod(_ctx: UriSchemeContext<'_, Wry>, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
+    let uri = request.uri().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        responder.respond(respond_mod(&uri));
+    });
+}
+
+/// (Kennung, Fingerabdruck, Pfad) aus der Adresse
+pub fn mod_path(host: &str, path: &str) -> Option<(String, String, String)> {
+    let rest = if host == "mod" { path.trim_start_matches('/') } else { path.strip_prefix("/mod/")? };
+    let decoded = percent_encoding::percent_decode_str(rest).decode_utf8().ok()?.to_string();
+    let mut parts = decoded.splitn(3, '/');
+    let (id, hash, file) = (parts.next()?, parts.next()?, parts.next()?);
+    if id.is_empty() || hash.is_empty() || file.is_empty() {
+        return None;
+    }
+    Some((id.to_string(), hash.to_string(), file.to_string()))
+}
+
+fn mod_mime(file: &str) -> &'static str {
+    match file.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        _ => mime_of(std::path::Path::new(file)),
+    }
+}
+
+fn respond_mod(uri: &tauri::http::Uri) -> Response<Vec<u8>> {
+    let Some((id, hash, file)) = mod_path(uri.host().unwrap_or(""), uri.path()) else { return not_found() };
+    let core = crate::shell().core();
+    let mods = &core.knowledge.mods;
+    if mods.info(&id).is_none_or(|m| m.hash != hash) {
+        return not_found();
+    }
+    let Some(data) = mods.file(&id, &file) else { return not_found() };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mod_mime(&file))
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(data)
+        .expect("Antwort")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn adressen_der_mods() {
+        use super::mod_path;
+        assert_eq!(mod_path("mod", "/robo/abc/bilder/a%20b.png"), Some(("robo".into(), "abc".into(), "bilder/a b.png".into())));
+        assert_eq!(mod_path("askmod.localhost", "/mod/robo/abc/mod.js"), Some(("robo".into(), "abc".into(), "mod.js".into())));
+        assert_eq!(mod_path("askmod.localhost", "/x/robo/abc/mod.js"), None);
+        assert_eq!(mod_path("mod", "/robo/abc"), None);
+    }
+
     use super::*;
 
     #[test]

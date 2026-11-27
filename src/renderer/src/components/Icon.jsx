@@ -51,6 +51,16 @@ const PATHS = {
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></>,
   chart: <path d="M4 20h16M7 16v-5M12 16V6M17 16v-8" />,
   branch: <><circle cx="6" cy="5.5" r="2.2" /><circle cx="6" cy="18.5" r="2.2" /><circle cx="18" cy="7.5" r="2.2" /><path d="M6 7.7v8.6M18 9.7c0 4-3 5.3-7 5.8-2 .3-3.4 1-4.3 2" /></>,
+  user: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+  palette: <><path d="M12 3a9 9 0 0 0 0 18c1.1 0 1.8-.9 1.5-1.9-.3-1 .4-2.1 1.5-2.1H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10z" /><circle cx="7.5" cy="11" r="1" /><circle cx="10" cy="7" r="1" /><circle cx="15" cy="7.5" r="1" /></>,
+  puzzle: <path d="M10 4a2 2 0 1 1 4 0v2h4a1 1 0 0 1 1 1v4h-2a2 2 0 1 0 0 4h2v4a1 1 0 0 1-1 1h-4v-2a2 2 0 1 0-4 0v2H6a1 1 0 0 1-1-1v-4h2a2 2 0 1 0 0-4H5V7a1 1 0 0 1 1-1h4z" />,
+  info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8v.5" /></>,
+  keyboard: <><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10" /></>,
+  gift: <><rect x="4" y="9" width="16" height="11" rx="1.5" /><path d="M3 9h18M12 9v11M12 9S10.5 4 8 4.5 7 9 12 9zM12 9s1.5-5 4-4.5S17 9 12 9z" /></>,
+  winMin: <path d="M6 12h12" />,
+  winMax: <rect x="6" y="6" width="12" height="12" rx="1" />,
+  winRestore: <><rect x="6" y="9" width="9" height="9" rx="1" /><path d="M9 9V7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-2" /></>,
+  chevUpDown: <path d="m8 9 4-4 4 4M8 15l4 4 4-4" />,
   pr: <><circle cx="6" cy="5.5" r="2.2" /><circle cx="6" cy="18.5" r="2.2" /><circle cx="18" cy="18.5" r="2.2" /><path d="M6 7.7v8.6M18 16.3V10a3 3 0 0 0-3-3h-4.5M12.5 4.5 10 7l2.5 2.5" /></>,
 };
 
@@ -71,5 +81,5 @@ export const TOOL_ICONS = {
   view_file: 'eye', bild_erstellen: 'image', chat_search: 'history', chat_read: 'history', goal_done: 'target',
   github_status: 'github', github_clone: 'github', github_pull: 'github', github_push: 'github', github_create: 'github', github_branch: 'branch', github_pr: 'pr',
   frage_stellen: 'help', plan_vorlegen: 'map', server_starten: 'server', server_stoppen: 'server', server_liste: 'server',
-  hilfsagent: 'spark', merken: 'pin', vergessen: 'trash', skill_lesen: 'read', skill_erstellen: 'plus', // Gedächtnis und Skills (memorytools.js)
+  hilfsagent: 'spark', merken: 'pin', vergessen: 'trash', skill_lesen: 'read', skill_erstellen: 'plus', mod_erstellen: 'puzzle', // Gedächtnis und Skills (memorytools.js)
 };

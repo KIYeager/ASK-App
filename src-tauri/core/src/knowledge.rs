@@ -18,6 +18,7 @@ use crate::askapi::{ChatApi, ChatRequest};
 use crate::host::{ConfirmFn, ConfirmOptions, Filters, Host, SendFn};
 use crate::memory::{self, clean_tags, ChatRef, CompleteFn, ItemPatch, LearnParams, Memory, NewItem};
 use crate::memorytools::KnowledgeCtx;
+use crate::mods::Mods;
 use crate::skills::{invocation, slugify, SaveOptions, SkillInput, Skills};
 use crate::util::{js_string, str_of, take_chars, truthy};
 use anyhow::{anyhow, Result};
@@ -71,6 +72,10 @@ pub struct KnowledgeConfig {
     pub projects: Arc<dyn Fn() -> Value + Send + Sync>,
     /// Nach `memory:enable` (in JS `onSettings`)
     pub on_settings: Arc<dyn Fn() + Send + Sync>,
+    /// Mitgelieferte Skills (resources/standard-skills, ENTSCHEIDE E70); `None`: keine
+    pub standard_skills: Option<PathBuf>,
+    /// Mitgelieferte Beispiel-Mods (resources/mods-beispiele, E72)
+    pub example_mods: Option<PathBuf>,
 }
 
 impl KnowledgeConfig {
@@ -84,8 +89,15 @@ impl KnowledgeConfig {
             log: Arc::new(|_| {}),
             projects: Arc::new(|| json!([])),
             on_settings: Arc::new(|| {}),
+            standard_skills: None,
+            example_mods: None,
         }
     }
+}
+
+/// Namen der ausgeschalteten mitgelieferten Skills (Einstellung `skillsOff`)
+fn skills_off(settings: &Arc<dyn KnowledgeSettings>) -> Vec<String> {
+    settings.get("skillsOff").as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
 }
 
 /// «/name …» in der Eingabe: der Skill mit gekürzter Anleitung (`{ name, text }`)
@@ -114,6 +126,8 @@ struct LearnState {
 pub struct Knowledge {
     pub memory: Arc<Memory>,
     pub skills: Arc<Skills>,
+    /// Mods in userData/mods (mods.rs, E72)
+    pub mods: Arc<Mods>,
     cfg: KnowledgeConfig,
     state: Arc<Mutex<LearnState>>,
 }
@@ -154,7 +168,14 @@ impl Knowledge {
     pub fn new(cfg: KnowledgeConfig) -> Self {
         Knowledge {
             memory: Arc::new(Memory::new(cfg.dir.join("gedaechtnis.json"))),
-            skills: Arc::new(Skills::new(cfg.dir.join("skills"))),
+            skills: Arc::new(match &cfg.standard_skills {
+                Some(std_dir) => {
+                    let settings = cfg.settings.clone();
+                    Skills::with_standard(cfg.dir.join("skills"), std_dir.clone(), Arc::new(move || skills_off(&settings)))
+                }
+                None => Skills::new(cfg.dir.join("skills")),
+            }),
+            mods: Arc::new(Mods::new(cfg.dir.join("mods"), cfg.example_mods.clone())),
             cfg,
             state: Arc::new(Mutex::new(LearnState::default())),
         }
@@ -172,6 +193,7 @@ impl Knowledge {
         KnowledgeCtx {
             memory: Some(self.memory.clone()),
             skills: Some(self.skills.clone()),
+            mods: Some(self.mods.clone()),
             memory_on: Some(Arc::new(move || memory_on(&cfg))),
             changed: Some(Arc::new(move || send("memory:changed", json!({})))),
         }
@@ -184,6 +206,7 @@ impl Knowledge {
             text.push_str(&self.memory.prompt(folder)); // Gedächtnis nicht lesbar: leer (das Modul meldet nichts)
         }
         text.push_str(&self.skills.prompt());
+        text.push_str(&self.mods.prompt());
         text
     }
 
@@ -351,7 +374,25 @@ impl Knowledge {
                 Ok(Value::Null)
             }
             "skills:list" => Ok(to_value(&self.skills.list())),
-            "skills:get" => Ok(self.skills.get(&text_arg(arg(0))).map(|s| to_value(&s)).unwrap_or(Value::Null)),
+            // arg(1) «standard»: den mitgelieferten zeigen, auch wenn er aus oder durch einen eigenen ersetzt ist
+            "skills:get" => {
+                let name = text_arg(arg(0));
+                let found = if js_string(arg(1)) == "standard" { self.skills.standard(&name) } else { self.skills.own(&name).or_else(|| self.skills.get(&name)) };
+                Ok(found.map(|s| to_value(&s)).unwrap_or(Value::Null))
+            }
+            // Mitgelieferten Skill ein- oder ausschalten (E70)
+            "skills:enable" => {
+                let name = slugify(&text_arg(arg(0)));
+                if self.skills.standard(&name).is_none() {
+                    return Some(Ok(Value::Bool(false)));
+                }
+                let mut off: Vec<String> = skills_off(&self.cfg.settings).into_iter().filter(|n| *n != name).collect();
+                if !truthy(arg(1)) {
+                    off.push(name);
+                }
+                self.cfg.settings.set(json!({ "skillsOff": off }));
+                Ok(Value::Bool(true))
+            }
             "skills:save" => {
                 let v = arg(0);
                 safe(self.skills.save(
@@ -360,7 +401,7 @@ impl Knowledge {
                 ).map(|skill| json!({ "skill": skill })))
             }
             "skills:remove" => {
-                let Some(s) = self.skills.get(&text_arg(arg(0))) else { return Some(Ok(Value::Bool(false))) };
+                let Some(s) = self.skills.own(&text_arg(arg(0))) else { return Some(Ok(Value::Bool(false))) };
                 let message = format!("Skill «{}» löschen?", s.slug);
                 let detail = "Die Anleitung wird von diesem Laptop entfernt. Exportiere sie vorher, wenn du sie behalten willst.".to_string();
                 if !confirm(message, detail, ConfirmOptions { danger: true, ..Default::default() }).await.ok {
@@ -393,7 +434,7 @@ impl Knowledge {
             return Err(anyhow!("Die Datei ist grösser als 100 KB."));
         }
         let data = Skills::read_import(&std::fs::read(&file)?)?;
-        let exists = self.skills.get(&data.name).is_some();
+        let exists = self.skills.own(&data.name).is_some();
         if exists {
             let message = format!("Skill «{}» ersetzen?", data.name);
             let detail = "Es gibt schon einen Skill mit diesem Namen. Die importierte Datei ersetzt ihn.".to_string();

@@ -20,6 +20,7 @@ let state = {
   version: '0.2.3', update: { state: params.get('update') || 'verfügbar', current: '0.2.3', version: '0.2.4', percent: 42, countdown: 7, beta: false, enabled: true, portable: false, postponed: false },
   prefs: { verbose: false, todoCollapsed: true, tourDone: !params.get('tour') }, // ?tour=1 zeigt die Einführung
   chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null, pinned: false, context: { tokens: 18400, estimated: false, limit: 131072 } },
+  modsCode: params.get('mods') === 'an', catalogs: [{ repo: 'KIYeager/ASK-Erweiterungen', eigen: false }, { repo: 'anthropics/skills', eigen: false }],
 };
 if (params.get('offline')) state = { ...state, ask: { state: 'unbekannt', loadError: { code: -106, description: 'ERR_INTERNET_DISCONNECTED' } }, models: [], model: '' }; // ?offline=1
 if (params.get('dns')) state = { ...state, secureDns: true, askUrl: 'https://ask.ict-tfbern.ch', ask: { state: 'unbekannt', loadError: { code: -105, description: 'ERR_NAME_NOT_RESOLVED', url: 'https://ask.ict-tfbern.ch/', proxy: 'DIRECT' } }, models: [], model: '' }; // ?dns=1
@@ -194,8 +195,16 @@ const memoryApi = {
   memoryClear: async () => { if (!window.confirm('Alles vergessen?')) return false; memoryItems = []; return true; },
   setMemoryEnabled: async (on) => { state = { ...state, memory: !!on }; push(); },
   onMemoryChanged: on('memory:changed'),
-  skillsList: async () => skillItems.map(({ slug, description, updated, size }) => ({ slug, name: slug, description, updated, size })),
-  skillsGet: async (slug) => { const s = skillItems.find((x) => x.slug === slug); return s ? { ...s, name: s.slug } : null; },
+  skillsList: async () => [
+    ...skillItems.map(({ slug, description, updated, size }) => ({ slug, name: slug, description, updated, size, source: 'eigen', enabled: true, replaced: false })),
+    ...standardSkills.map(([slug, description]) => ({ slug, name: slug, description, updated: now, size: 2000, source: 'standard', enabled: !skillsOff.has(slug), replaced: skillItems.some((x) => x.slug === slug) })),
+  ].sort((a, b) => a.slug.localeCompare(b.slug)),
+  skillsGet: async (slug, source) => {
+    const std = standardSkills.find(([n]) => n === slug);
+    if (source === 'standard' && std) return { slug, name: slug, description: std[1], body: '# Mitgelieferter Skill\n\n1. …', source: 'standard' };
+    const s = skillItems.find((x) => x.slug === slug); return s ? { ...s, name: s.slug, source: 'eigen' } : null;
+  },
+  skillsEnable: async (slug, on) => { if (on) skillsOff.delete(slug); else skillsOff.add(slug); emit('memory:changed', {}); return true; },
   skillsSave: async (v, previous) => {
     const slug = String(v.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     if (!slug) return { ok: false, reason: 'Der Name fehlt.' };
@@ -207,6 +216,64 @@ const memoryApi = {
   skillsRemove: async (slug) => { if (!window.confirm(`Skill «${slug}» löschen?`)) return false; skillItems = skillItems.filter((s) => s.slug !== slug); emit('memory:changed', {}); return true; },
   skillsExport: async () => ({ ok: false, reason: 'Exportieren geht nur in der App.' }),
   skillsImport: async () => ({ ok: false, reason: 'Importieren geht nur in der App.' }),
+};
+
+const standardSkills = [
+  ['code-erklaeren', 'Code Schritt für Schritt erklären, passend zum Wissensstand. Benutzen, wenn jemand Code verstehen will.'],
+  ['code-review', 'Code auf Fehler, Lesbarkeit und Sicherheit prüfen und freundlich erklären, was besser geht.'],
+  ['commit-nachricht', 'Aus den Änderungen eine gute Commit-Nachricht schreiben.'],
+  ['fehler-suchen', 'Fehler systematisch finden: nachstellen, Meldung lesen, eingrenzen, beheben, prüfen.'],
+  ['lernjournal', 'Lernjournal oder Wochenbericht schreiben: was gemacht, was gelernt, Probleme, nächste Schritte.'],
+  ['mod-erstellen', 'Einen Mod für ASK erstellen: Aussehen, Befehle, Bereiche, Figuren oder Regeln.'],
+  ['praesentation-planen', 'Eine Präsentation planen: Ziel, Publikum, Aufbau, eine Botschaft pro Folie.'],
+  ['quellen-pruefen', 'Quellen und Behauptungen prüfen: wer, wann, Belege, Vergleich mit anderen Quellen.'],
+  ['skill-erstellen', 'Einen eigenen Skill schreiben: wiederkehrenden Auftrag als Anleitung festhalten.'],
+  ['tests-schreiben', 'Tests für vorhandenen Code schreiben und ausführen.'],
+  ['webseite-gestalten', 'Gut aussehende Webseiten mit HTML und CSS gestalten.'],
+];
+const skillsOff = new Set();
+let mods = [
+  { id: 'robo-helfer', name: 'Robo-Helfer', version: '1.0.0', beschreibung: 'Ein kleiner Roboter, der auf ASK reagiert, Tipps gibt und sich verschieben lässt.', autor: 'ASK', style: 'style.css', script: 'mod.js', befehle: [], anweisungen: '', nachfragen: [], aktiv: params.get('mods') === 'an', geaendert: false, groesse: 6400, dateien: 3, hash: 'abc', fehler: '' },
+  { id: 'vokabeln', name: 'Vokabeln und einfach erklärt', version: '1.0.0', beschreibung: 'Zwei Befehle zum Lernen: /vokabeln und /erklaer-einfach.', autor: 'ASK', style: '', script: '', befehle: [{ name: 'vokabeln', beschreibung: 'Vokabeln abfragen', prompt: 'Frag mich 10 Vokabeln ab: {{text}}' }], anweisungen: 'Korrigiere freundlich.', nachfragen: ['loeschen'], aktiv: true, geaendert: false, groesse: 700, dateien: 1, hash: 'def', fehler: '' },
+];
+const examples = [
+  { id: 'neon', name: 'Neon', beschreibung: 'Ein dunkles Neon-Design mit leuchtenden Akzenten.', style: 'style.css', script: '', befehle: [] },
+  { id: 'pomodoro', name: 'Pomodoro-Timer', beschreibung: 'Ein Lern-Timer im Seitenpanel: 25 Minuten arbeiten, 5 Minuten Pause.', style: 'style.css', script: 'mod.js', befehle: [] },
+  { id: 'robo-helfer', name: 'Robo-Helfer', beschreibung: 'Ein kleiner Roboter, der auf ASK reagiert.', style: 'style.css', script: 'mod.js', befehle: [] },
+];
+let ownCatalogs = [];
+const catalogsNow = () => [{ repo: 'KIYeager/ASK-Erweiterungen', eigen: false }, { repo: 'anthropics/skills', eigen: false }, ...ownCatalogs.map((repo) => ({ repo, eigen: true }))];
+const modsChanged = () => { state = { ...state, modsCode: mods.some((m) => m.aktiv && m.script) }; emit('mods:changed', {}); push(); };
+const extensionsApi = {
+  modsList: async () => ({ mods, examples: examples.map((e) => ({ ...e, installiert: mods.some((m) => m.id === e.id) })), code: mods.some((m) => m.aktiv && m.script), folder: 'C:\\Users\\lernende\\AppData\\Roaming\\ASK\\mods' }),
+  modsGet: async (id) => { const m = mods.find((x) => x.id === id); return m ? { ...m, files: [
+    { path: 'mod.json', size: 300, text: JSON.stringify({ id: m.id, name: m.name, version: m.version, style: m.style, script: m.script }, null, 2) },
+    ...(m.style ? [{ path: m.style, size: 900, text: '.robo-helfer-figur {\n  position: fixed;\n  right: 24px;\n  bottom: 120px;\n}' }] : []),
+    ...(m.script ? [{ path: m.script, size: 5200, text: "(function (ASK) {\n  ASK.on('fertig', function () {\n    ASK.meldung('Geschafft!');\n  });\n})(ASK);" }] : []),
+  ] } : null; },
+  // ?mods=demo: Beispiel-Mods laden (die Dateien liefert der Test unter http://askmod.localhost/mod/…)
+  modsActive: async () => (params.get('mods') === 'demo' ? [
+    { id: 'neon', name: 'Neon', hash: 'h', style: 'style.css', script: '', befehle: [] },
+    { id: 'robo-helfer', name: 'Robo-Helfer', hash: 'h', style: 'style.css', script: 'mod.js', befehle: [] },
+    { id: 'pomodoro', name: 'Pomodoro-Timer', hash: 'h', style: 'style.css', script: 'mod.js', befehle: [] },
+    { id: 'vokabeln', name: 'Vokabeln', hash: 'h', style: '', script: '', befehle: [{ name: 'vokabeln', beschreibung: 'Vokabeln abfragen', prompt: 'Frag mich ab: {{text}}' }] },
+  ] : []),
+  modsEnable: async (id, on) => { mods = mods.map((m) => (m.id === id ? { ...m, aktiv: !!on } : m)); modsChanged(); return { ok: true }; },
+  modsOffAll: async () => { mods = mods.map((m) => ({ ...m, aktiv: false })); modsChanged(); return { ok: true }; },
+  modsRemove: async (id) => { if (!window.confirm('Mod löschen?')) return false; mods = mods.filter((m) => m.id !== id); modsChanged(); return true; },
+  modsImport: async () => ({ ok: false, reason: 'Importieren geht nur in der App.' }),
+  modsExample: async (id) => { const e = examples.find((x) => x.id === id); mods = [...mods.filter((m) => m.id !== id), { ...e, version: '1.0.0', autor: 'ASK', anweisungen: '', nachfragen: [], aktiv: false, geaendert: false, groesse: 4000, dateien: 3, hash: 'x', fehler: '' }]; modsChanged(); return { ok: true, kind: 'mod' }; },
+  modsFolder: async () => {},
+  onModsChanged: on('mods:changed'),
+  catalogSources: async (list) => { if (Array.isArray(list)) ownCatalogs = list; state = { ...state, catalogs: catalogsNow() }; push(); return { ok: true, catalogs: catalogsNow() }; },
+  catalogList: async (repo) => { await wait(500); return /ASK-Erweiterungen/.test(repo) ? { ok: false, reason: 'Das Repository gibt es nicht oder es ist nicht öffentlich.' } : { ok: true, entries: [
+    { kind: 'skill', path: 'skills/frontend-design', name: 'frontend-design', description: 'Create distinctive, production-grade frontend interfaces with high design quality.', installiert: false },
+    { kind: 'skill', path: 'skills/mcp-builder', name: 'mcp-builder', description: 'Guide for creating high-quality MCP servers.', installiert: false },
+    { kind: 'skill', path: 'skills/webapp-testing', name: 'webapp-testing', description: 'Toolkit for interacting with and testing local web applications using Playwright.', installiert: true },
+  ] }; },
+  catalogInstall: async () => { await wait(400); return { ok: true, kind: 'skill' }; },
+  catalogLink: async (url) => (/github\.com|\//.test(url) ? { ok: true, kind: 'skill', skill: { slug: 'neu' } } : { ok: false, reason: 'Das ist kein GitHub-Repository. Beispiel: anthropics/skills' }),
+  winMinimize: async () => {}, winMaximize: async () => {}, winClose: async () => {}, winDrag: () => {}, winState: async () => ({ maximized: false }), onWinState: on('win:state'),
 };
 
 let pendingAnswer = null;
@@ -339,5 +406,6 @@ export function install() {
     preview: async (rel) => (/\.(csv|py|txt)$/.test(rel) ? { kind: 'text', text: rel.endsWith('.csv') ? 'Datum;Kategorie;Beschreibung;Betrag CHF\n02.08.2026;Bücher;Fachbuch Netzwerktechnik;32.75\n02.08.2026;Verpflegung;Mittagessen Mensa;15.85' : 'import pandas as pd\n\ndf = pd.read_csv("ausgaben.csv", sep=";", encoding="cp1252")\nsummen = df.groupby("Kategorie")["Betrag CHF"].sum()' } : { kind: 'office', name: rel }),
     openFile: async () => '', toPdf: async () => ({ fehler: 'Nur in der App.' }), showFile: async () => {},
     ...memoryApi,
+    ...extensionsApi,
   };
 }

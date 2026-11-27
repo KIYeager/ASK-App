@@ -91,6 +91,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol("askfile", protocol::handle)
+        .register_asynchronous_uri_scheme_protocol("askmod", protocol::handle_mod)
         .invoke_handler(tauri::generate_handler![ipc::ipc])
         .setup(|app| {
             setup(app.handle().clone())?;
@@ -111,6 +112,11 @@ pub fn run() {
                     }
                     handle.exit(0);
                 });
+            }
+        }
+        RunEvent::WindowEvent { label, event: tauri::WindowEvent::Resized(_), .. } if label == views::MAIN => {
+            if let Some(s) = SHELL.get() {
+                s.send("win:state", views::window_state(&s.views));
             }
         }
         RunEvent::WindowEvent { label, event: tauri::WindowEvent::Focused(true), .. } if label == views::MAIN => {

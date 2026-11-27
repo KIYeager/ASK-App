@@ -128,6 +128,10 @@ function ThinkSlider({ auto, pos, onPick }) {
   const canvas = useRef(null);
   const [raw, setRaw] = useState(null); // Stelle 0..1 während des Ziehens
   const [dragging, setDragging] = useState(false);
+  // Immer die aktuelle Auswahl-Funktion: die vom Drücken vergleicht mit der Stufe von damals, und zurück auf die
+  // Ausgangsstufe ziehen schickte dann nichts (Mittel → Tief → Mittel blieb auf Tief)
+  const pickRef = useRef(onPick);
+  pickRef.current = onPick;
   const at = (x) => {
     const r = track.current.getBoundingClientRect(), inset = r.height / 2;
     return Math.max(0, Math.min(1, (x - r.left - inset) / (r.width - 2 * inset)));
@@ -137,7 +141,7 @@ function ThinkSlider({ auto, pos, onPick }) {
     const x0 = e.clientX;
     let f = at(x0), moved = false;
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    onPick(Math.round(f * LAST_STEP));
+    pickRef.current(Math.round(f * LAST_STEP));
     const target = e.currentTarget;
     const move = (ev) => {
       if (!moved && Math.abs(ev.clientX - x0) < 4) return;
@@ -145,9 +149,10 @@ function ThinkSlider({ auto, pos, onPick }) {
       setDragging(true);
       f = at(ev.clientX);
       setRaw(f);
-      onPick(Math.round(f * LAST_STEP));
+      pickRef.current(Math.round(f * LAST_STEP));
     };
     const up = () => {
+      if (moved) pickRef.current(Math.round(f * LAST_STEP)); // dort einrasten, wo losgelassen wurde
       setDragging(false); setRaw(null);
       target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
     };
@@ -201,7 +206,13 @@ function ThinkPicker({ level, autoLevel = '', onChange }) {
   const idx = THINK_STEPS.indexOf(level);
   const pos = idx < 0 ? 1 : idx; // Automatisch: Regler bei «Mittel», aber grau
   const autoStep = autoLevel ? THINK_STEPS.indexOf(autoLevel) : -1; // während eines Auftrags: Wahl des Modells
-  const pick = (i) => { const next = THINK_STEPS[Math.min(LAST_STEP, Math.max(0, i))]; if (next !== level) onChange(next); };
+  // Mit der zuletzt gesendeten Stufe vergleichen: Beim schnellen Ziehen ist der Zustand der App noch nicht zurück
+  const sent = useRef(level);
+  useEffect(() => { sent.current = level; }, [level]);
+  const pick = (i) => {
+    const next = THINK_STEPS[Math.min(LAST_STEP, Math.max(0, i))];
+    if (next !== sent.current) { sent.current = next; onChange(next); }
+  };
   return (
     <div className="think-wrap" ref={ref}>
       <button type="button" id="think-btn" className={`chip think-chip${!auto ? ' on' : ''}`} data-step={auto ? -1 : idx}
@@ -293,6 +304,7 @@ const Composer = forwardRef(function Composer(props, ref) {
   useImperativeHandle(ref, () => ({
     focus: () => input.current?.focus(),
     setText: (t) => { setText(t); setTimeout(() => { input.current?.focus(); autosize(); }, 0); },
+    getText: () => input.current?.value ?? '',
     addFiles: (list) => addFiles(list),
     toggleTodo: () => toggleTodo(),
     // Text und Anhänge zurück ins Eingabefeld (zurückgenommene Eingabe, Senden fehlgeschlagen)

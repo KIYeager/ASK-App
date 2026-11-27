@@ -2,8 +2,10 @@
 <html lang="de-CH">
 <head>
   <meta charset="utf-8">
+  <!-- Tauri hängt seine CSP (tauri.conf.json) als zweites meta an; der Browser verlangt beide. Darum hier dieselben
+       Quellen, auch die Adressen unter Windows (http://askfile.localhost, http://askmod.localhost, ENTSCHEIDE E74). -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' askfile: data: blob:; frame-src askfile:; media-src askfile:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws://localhost:*">
+        content="default-src 'self'; img-src 'self' askfile: http://askfile.localhost askmod: http://askmod.localhost data: blob:; frame-src askfile: http://askfile.localhost; media-src askfile: http://askfile.localhost askmod: http://askmod.localhost; style-src 'self' 'unsafe-inline' askmod: http://askmod.localhost; font-src 'self' data: askmod: http://askmod.localhost; script-src 'self' askmod: http://askmod.localhost; connect-src 'self' ipc: http://ipc.localhost ws://localhost:*">
   <meta name="color-scheme" content="light dark">
   <title>ASK</title>
 </head>

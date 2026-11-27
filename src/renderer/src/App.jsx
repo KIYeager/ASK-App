@@ -12,6 +12,34 @@ import { useSkillCommands } from './components/Knowledge.jsx';
 import { Turn } from './components/Chat.jsx';
 import { applyEvent, buildTurns, emptyChat, fromTranscript, lastTasks } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
+import { emitMod, fillTemplate, loadMods, modCommandFor, modsChanged, setModHost, useMods } from './lib/mods.js';
+
+// Knöpfe des Fensters (ohne Rahmen von Windows, ENTSCHEIDE E73): minimieren, maximieren, schliessen
+function WindowControls() {
+  const [max, setMax] = useState(false);
+  useEffect(() => {
+    api().winState?.().then((s) => setMax(!!s?.maximized)).catch(() => {});
+    const off = api().onWinState?.((s) => setMax(!!s?.maximized));
+    return () => { if (typeof off === 'function') off(); };
+  }, []);
+  return (
+    <div className="win-ctl">
+      <button type="button" className="win-btn" title="Minimieren" aria-label="Minimieren" onClick={() => api().winMinimize()}><Icon name="winMin" size={16} strokeWidth={1.4} /></button>
+      <button type="button" className="win-btn" title={max ? 'Verkleinern' : 'Maximieren'} aria-label={max ? 'Verkleinern' : 'Maximieren'} onClick={() => api().winMaximize()}>
+        <Icon name={max ? 'winRestore' : 'winMax'} size={15} strokeWidth={1.4} />
+      </button>
+      <button type="button" className="win-btn close" title="Schliessen" aria-label="Schliessen" onClick={() => api().winClose()}><Icon name="close" size={16} strokeWidth={1.4} /></button>
+    </div>
+  );
+}
+
+// Leere Stellen der Kopfzeile ziehen das Fenster, Doppelklick maximiert (Knöpfe, Tabs und Felder nicht)
+const DRAG_SKIP = 'button, a, input, select, textarea, [role="tab"], .tab, .win-ctl, .mod-btns';
+function onBarMouseDown(e) {
+  if (e.button !== 0 || e.target.closest(DRAG_SKIP)) return;
+  e.preventDefault();
+  if (e.detail === 2) api().winMaximize(); else api().winDrag();
+}
 
 // Einträge eines Menüs aus dem Hauptprozess (nur Texte und Schlüssel) für PopMenu; ein Klick meldet den Schlüssel zurück
 function menuItems(list, pick) {
@@ -81,6 +109,9 @@ const BROWSER0 = { url: '', back: false, forward: false, loading: false, running
 export default function App() {
   const [state, setState] = useState(null);
   const [model, dispatch] = useReducer(reducer, undefined, emptyChat);
+  const modelRef = useRef(model);
+  modelRef.current = model;
+  const modState = useMods(); // Befehle, Bereiche und Knöpfe von Mods (lib/mods.js)
   const [chatId, setChatId] = useState(null);
   const [running, setRunning] = useState(false);
   const [runStarted, setRunStarted] = useState(0);
@@ -208,14 +239,23 @@ export default function App() {
       case 'assistant-start': setAct(ev.webSearch ? 'Sucht im Web …' : 'Denkt nach …'); break;
       case 'reasoning': setAct('Denkt nach …'); break;
       case 'text': setAct('Schreibt …'); break;
-      case 'tool-start': setAct(ev.name === 'frage_stellen' ? 'Wartet auf deine Antwort' : `${ev.label} …`); break;
+      case 'tool-start':
+        setAct(ev.name === 'frage_stellen' ? 'Wartet auf deine Antwort' : `${ev.label} …`);
+        if (ev.name === 'frage_stellen') emitMod('frage', { text: ev.detail || '' });
+        break;
       case 'tool-end': setAct('Denkt nach …'); break;
-      case 'approval': setAct('Wartet auf deine Entscheidung'); break;
+      case 'approval': setAct('Wartet auf deine Entscheidung'); emitMod('frage', { text: ev.title || '' }); break;
       case 'review': setAct('Prüft, ob der Schritt sicher ist …'); break;
       case 'approval-end': setAct('Denkt nach …'); break;
       case 'user':
-        if (!ev.auto) { followRef.current = true; setFollow(true); setAutoEffort(''); }
+        if (!ev.auto) { followRef.current = true; setFollow(true); setAutoEffort(''); emitMod('gesendet', { text: ev.text || '' }); }
         break;
+      case 'done': setTimeout(() => {
+        const last = [...(modelRef.current?.entries || [])].reverse().find((e) => e.k === 'assistant' && e.text);
+        emitMod('antwort', { text: last?.text || '' });
+        emitMod('fertig', { gestoppt: !!ev.stopped, fehler: !!ev.failed });
+      }, 0); break;
+      case 'error': emitMod('fehler', { meldung: ev.text || '' }); break;
       case 'effort': setAutoEffort(ev.level || ''); break;
       default:
     }
@@ -240,7 +280,7 @@ export default function App() {
           runningRef.current = s.chat.running;
           setRunning(s.chat.running);
         }
-        if (s.chat.id !== chatIdRef.current) loadTranscript();
+        if (s.chat.id !== chatIdRef.current) { loadTranscript(); emitMod('chat', { id: s.chat.id, titel: s.chat.title || '' }); }
       }),
       a.onChatEvent(onChatEvent),
       a.onChatChanged((c) => {
@@ -268,6 +308,8 @@ export default function App() {
         setUiMenu({ ...m, ...pointer.current });
       }),
       a.onFolderError((reason) => setDialog({ name: 'terminal', text: reason })),
+      // Andere Mods aktiv: neu laden, damit Code und Aussehen genau den eingeschalteten Mods entsprechen
+      a.onModsChanged?.(async () => { if (await modsChanged()) window.location.reload(); }),
       a.onBrowserState((s) => setBrowser((b) => ({ ...b, ...s }))),
       a.onServers?.((list) => setServers(list || [])),
       a.onBrowserNotice((text) => setBrowser((b) => ({ ...b, log: [...b.log, { text, level: 'warning' }].slice(-6) }))),
@@ -279,6 +321,7 @@ export default function App() {
       if (s.servers) setServers(s.servers);
       await loadTranscript();
       await loadChats();
+      loadMods();
       setFiles(await a.files());
       composer.current?.focus();
     })();
@@ -389,6 +432,13 @@ export default function App() {
   }, [allFiles]);
 
   const send = async (text, fileList, kept = []) => {
+    // Befehle von Mods: Vorlage aus mod.json einsetzen oder den Code des Mods ausführen
+    const hit = modCommandFor(text, modState.commands);
+    if (hit?.cmd.js) {
+      try { await hit.cmd.js(hit.rest); } catch (err) { notice(`Mod: ${err?.message || err}`); }
+      return { ok: true };
+    }
+    if (hit?.cmd.prompt) text = fillTemplate(hit.cmd.prompt, hit.rest);
     runningRef.current = true;
     setRunning(true);
     setRunStarted(Date.now());
@@ -478,9 +528,19 @@ export default function App() {
     { cmd: '/neustart', text: 'Terminal neu starten', run: () => api().restartTerminal() },
     { cmd: '/abmelden', text: 'Bei ASK abmelden', run: () => api().logout() },
     { cmd: '/gedaechtnis', text: 'Gedächtnis: was ASK sich über dich und deine Projekte merkt', run: () => setDialog({ name: 'memory' }) },
-    { cmd: '/skills', text: 'Eigene Skills ansehen, erstellen, teilen', run: () => setDialog({ name: 'skills' }) },
+    { cmd: '/skills', text: 'Skills: eigene, mitgelieferte und aus Katalogen', run: () => setDialog({ name: 'settings', pane: 'skills' }) },
+    { cmd: '/mods', text: 'Mods: Aussehen, Befehle und Erweiterungen', run: () => setDialog({ name: 'settings', pane: 'mods' }) },
     ...skillCommands,
+    ...modState.commands.map((c) => ({ cmd: c.cmd, text: c.text, skill: true, run: () => composer.current?.setText(`${c.cmd} `) })),
   ];
+
+  // Was Mods von der Oberfläche benutzen dürfen (immer die aktuelle Fassung)
+  setModHost({
+    composer: composer.current,
+    send: (t) => { if (!runningRef.current && !blocker && t.trim()) send(t, []); else if (t.trim()) composer.current?.setText(t); },
+    chat: () => ({ id: stateRef.current?.chat?.id || '', titel: stateRef.current?.chat?.title || '',
+      nachrichten: (modelRef.current?.entries || []).filter((e) => e.k === 'user' || e.k === 'assistant').map((e) => ({ rolle: e.k === 'user' ? 'person' : 'ask', text: e.text || '' })) }),
+  });
 
   // ---------- Tastatur ----------
 
@@ -490,6 +550,7 @@ export default function App() {
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 't') { e.preventDefault(); composer.current?.toggleTodo(); }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'o') { e.preventDefault(); setVerboseSaved(!verbose); }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'n') { e.preventDefault(); newChat(); }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') { e.preventDefault(); setDialog({ name: 'settings' }); }
       // Tabs: Ctrl+W schliesst, Ctrl+Tab wechselt, Ctrl+1 bis 9 springt, Ctrl+Shift+T holt den zuletzt geschlossenen zurück
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'w') { e.preventDefault(); if (!dialog) closeTab(shownTabs.find((t) => t.id === chatId)); }
       if (e.ctrlKey && !e.altKey && e.key === 'Tab') { e.preventDefault(); switchTab(e.shiftKey ? -1 : 1); }
@@ -650,7 +711,7 @@ export default function App() {
 
   return (
     <div className={`app${browserBig && rightOpen && tab === 'browser' ? ' browser-big' : ''}${verbose ? ' verbose' : ''}`} style={{ '--left-w': leftOpen ? cols[0] : '324px' }}>
-      <header className="topbar">
+      <header className="topbar" onMouseDown={onBarMouseDown}>
         <div className="brand" style={{ width: leftOpen ? `calc(${cols[0]} - 8px)` : 'auto' }}>
           <button type="button" id="chatbar-btn" className="icon-btn" title="Projekte ein- oder ausblenden" aria-label="Projekte ein- oder ausblenden"
             onClick={() => api().setChatbar(!leftOpen)}><Icon name="sidebar" size={17} /></button>
@@ -669,8 +730,17 @@ export default function App() {
           <span id="folder-name">{project?.name || (state.folder ? baseName(state.folder) : 'Kein Projekt')}</span>
           <Icon name="chevDown" size={13} />
         </button>
+        {modState.buttons.length ? (
+          <div className="mod-btns">
+            {modState.buttons.map((b) => (
+              <button key={b.key} type="button" className="icon-btn mod-btn" title={b.titel} aria-label={b.titel}
+                onClick={() => { try { b.klick(); } catch (err) { console.error(err); } }}>{b.symbol}</button>
+            ))}
+          </div>
+        ) : null}
         <button type="button" id="sidebar-btn" className={`icon-btn${rightOpen ? ' on' : ''}`} title="Dateien, Vorschau und Browser ein- oder ausblenden" aria-label="Seitenleiste rechts"
           onClick={() => api().setSidebar(!rightOpen)}><Icon name="panel" size={17} /></button>
+        <WindowControls />
       </header>
 
       <UpdateBar u={state.update} />
@@ -682,7 +752,7 @@ export default function App() {
             onDeleteChat={async (folder, id, title) => { if (await api().chatDelete(folder, id, title)) loadChats(); }}
             onNewProject={() => setDialog({ name: 'project' })} onProjectMenu={(folder) => api().projectMenu(folder)}
             onNewInProject={(folder) => newChat(folder)} state={state}
-            onSettings={() => setDialog({ name: 'settings' })} onStatus={(name) => setDialog({ name })}
+            onSettings={() => setDialog({ name: 'settings' })} onStatus={(name) => setDialog({ name })} onOpen={setDialog}
             update={state.update} onUpdate={() => api().updateAction()}
             onRefresh={loadChats} />
         ) : <span />}
@@ -784,11 +854,12 @@ export default function App() {
             onBrowserClose={() => { api().browserClose(); setBrowser(BROWSER0); setBrowserBig(false); setTab('dateien'); }}
             onBrowserBig={() => setBrowserBig(!browserBig)} browserBig={browserBig}
             onMention={(p) => { const rel = String(p).replaceAll('\\', '/'); composer.current?.insert(/\s/.test(rel) ? `@"${rel}"` : `@${rel}`); }} notice={notice} servers={servers}
-            running={running} dialogOpen={!!dialogName} onGithub={() => setDialog({ name: 'github' })} />
+            running={running} dialogOpen={!!dialogName} onGithub={() => setDialog({ name: 'github' })} modPanels={modState.panels} />
         ) : <span />}
       </main>
 
-      <Dialogs state={state} dialog={dialog} setDialog={setDialog} selected={selected} startError={startError} onVerbose={setVerboseSaved} />
+      <Dialogs state={state} dialog={dialog} setDialog={setDialog} selected={selected} startError={startError} onVerbose={setVerboseSaved}
+        onCompose={(t) => setTimeout(() => composer.current?.setText(t), 0)} />
       {uiAsk ? <AppAsk key={uiAsk.id} ask={uiAsk} onAnswer={answerUiAsk} /> : null}
       {uiMenu ? <PopMenu key={uiMenu.id} x={uiMenu.right && uiMenu.right > window.innerWidth - 280 ? uiMenu.right - 260 : uiMenu.x} y={uiMenu.y} label="Menü"
         onClose={closeUiMenu} items={menuItems(uiMenu.items, pickUiMenu)} /> : null}

@@ -562,3 +562,39 @@ Python wird nur entpackt, wenn sich seine Fassung ändert (E39; die Fassung hän
 ## E69 Hilfe bei Fehlern
 
 Fehler im Chat und in den Fenstern «ASK» und «Terminal» zeigen unter der Meldung, was sie in einfachen Worten bedeutet, und zwei, drei Schritte (`src/renderer/src/lib/errorHelp.mjs`: abgelaufene Anmeldung, keine Verbindung, zu viele Anfragen, Chat zu lang, Problem bei ASK, Terminal). «Details kopieren» legt Version, Zeit, ASK-Adresse, Anmelde- und Terminalzustand, Modell, Windows-Version und die Meldung (beim Terminal auch seine Meldungen) in die Zwischenablage, für die Lehrperson.
+
+## E70 Mitgelieferte Skills
+
+Elf Skills kommen mit der App (`resources/standard-skills/<name>/SKILL.md`): skill-erstellen, mod-erstellen, code-erklaeren, lernjournal, quellen-pruefen, fehler-suchen, tests-schreiben, code-review, commit-nachricht, webseite-gestalten, praesentation-planen. Sie gelten wie eigene Skills (E51: Name und Beschreibung im Systemprompt, `skill_lesen`, Aufruf mit `/name`), lassen sich aber nur lesen und einzeln ausschalten (Einstellung `skillsOff`). Ein eigener Skill mit gleichem Namen ersetzt den mitgelieferten; «Als eigenen Skill kopieren» ist der Weg, einen anzupassen. Die Höchstzahl von 100 zählt nur eigene.
+
+## E71 Kataloge und «Von Link hinzufügen»
+
+Skills und Mods lassen sich aus öffentlichen GitHub-Repositories holen (`src-tauri/core/src/catalog.rs`). Ein Katalog ist ein ganzes Repository; darin zählt jeder Ordner mit `SKILL.md` (Skill) oder `mod.json` (Mod). Mitgeliefert sind `KIYeager/ASK-Erweiterungen` (das Repository der Schule; der Inhalt dafür liegt in `katalog/`, das Repository muss noch angelegt werden, bis dahin meldet der Katalog «gibt es nicht») und `anthropics/skills` (Englisch; nur die Skills unter Apache 2.0 sind frei, die Dokument-Skills von Anthropic sind nur einsehbar, darum nicht mitgeliefert). Eigene Kataloge (`owner/repo`) kommen in die Einstellung `kataloge`, die festen in `app-config.json` («kataloge»).
+
+Gelesen wird ohne Anmeldung: einmal `repos/{o}/{r}` (Standard-Branch) und `git/trees/{branch}?recursive=1`, 10 Minuten zwischengespeichert (GitHub erlaubt ohne Anmeldung 60 Abfragen pro Stunde), dann die Dateien über raw.githubusercontent.com. Ein Skill bringt nur seine `SKILL.md` mit (Skripte daneben nicht), am Ende mit der Quelle als Kommentar. «Von Link hinzufügen» nimmt `owner/repo`, einen Link auf das Repository, auf einen Ordner (`…/tree/main/…`) oder eine Datei (`…/blob/…/SKILL.md`). Liegt dort genau ein Eintrag, wird er hinzugefügt, sonst zeigt die App die Auswahl.
+
+## E72 Mods
+
+Mods passen ASK an: Aussehen (CSS), Code in der Oberfläche (JavaScript), eigene `/Befehle` mit Vorlage, Zusatzanweisungen an das Modell und Regeln, vor welchen Schritten ASK fragt (`nachfragen`: loeschen, schreiben, befehle, web). Ein Mod ist ein Ordner `%APPDATA%\ASK\mods\<id>\` mit `mod.json` (`src-tauri/core/src/mods.rs`); erlaubt sind nur Text-, Bild-, Ton- und Schriftdateien, höchstens 60 Dateien und 3 MB. Herkunft: selbst (Ordner importieren), von ASK erstellt (Werkzeug `mod_erstellen`, mit Rückfrage; Anleitung im Skill `mod-erstellen`), Beispiele (`resources/mods-beispiele`: neon, robo-helfer, pomodoro, vokabeln) oder ein Katalog (E71).
+
+Code eines Mods läuft auf Wunsch der Person mit vollem Zugriff auf die Oberfläche (Entscheid des Auftraggebers: «full access to UI but no way to change security stuff»). Die Oberfläche lädt CSS und Code über das Protokoll `askmod` (CSP: `script-src`, `style-src`, `img-src`, `font-src`); der Code bekommt die Schnittstelle `ASK` (`src/renderer/src/lib/mods.js`: Ereignisse, Eingabefeld, senden, Chat lesen, Meldungen, Befehle, Bereiche in der Seitenleiste, Knöpfe in der Kopfzeile, eigene Dateien und Ablage). Ins Internet kommt er nicht (CSP `connect-src`).
+
+Schutz, weil Code in der Oberfläche dort jeden Knopf drücken könnte:
+- Neu und geändert ist ein Mod aus. Einschalten geht nur nach einer Vorschau aller Dateien; bei Code mit dem Häkchen «Ich habe den Code angesehen». Beim Einschalten merkt die App einen SHA-256-Fingerabdruck aller Dateien. Ändert sich danach etwas (auch von aussen, z. B. durch einen Befehl des Modells), liefert `askmod` nichts mehr, bis die Person ihn erneut einschaltet.
+- Solange Code eines Mods in der geladenen Oberfläche läuft (oder eingeschaltet ist), kommen alle heiklen Bestätigungen als Dialog von Windows, den Code nicht bedienen kann: Rückfragen im Chat erlauben, Modus «Auto», Stufe der Rückfragen, Prüfmodell, ASK-Adresse und Token, GitHub-Token, Server starten, Skills speichern oder einschalten, Gedächtnis-Einträge, Mods einschalten, Kataloge und Installationen, dazu jede Rückfrage des Hauptprozesses (`confirm`, z. B. Löschen, Dateien öffnen, GitHub hochladen). Nur Hinweise zu Updates bleiben in der Oberfläche (`App::secure`, `guard_text`).
+- Ausschalten: Die Hülle lädt die Oberfläche selbst neu (sonst liefe der Code weiter). Bis zum Neuladen gilt der Code als aktiv. Ctrl+Shift+M schaltet alle Mods aus und lädt neu; das Tastenkürzel hört die App vor jedem Mod.
+- Regeln eines Mods machen ASK nur strenger, Anweisungen stehen im Systemprompt unter «Mods» mit dem Satz, dass sie nie gegen Sicherheit und Rückfragen gelten.
+
+Grenzen: Code eines Mods sieht Chats und kann im Namen der Person Aufträge schicken; Ergebnisse von Befehlen prüfen weiter die Rückfragen und im Modus «Auto» der Prüfer. Ein Link, den der Code öffnet (`link:open`), geht an den Browser.
+
+## E73 Fenster ohne Rahmen, Profilmenü, neue Einstellungen
+
+Die Titelleiste von Windows ist weg: Kopfzeile der Oberfläche mit Projekten-Knopf, Logo, Tabs, Seitenleisten-Knopf und den Knöpfen Minimieren, Maximieren, Schliessen (`win:*` in `ipc.rs`). Leere Stellen der Kopfzeile ziehen das Fenster, Doppelklick maximiert. Tauri legt die Ränder zum Ändern der Grösse nur an, wenn der Rahmen nach dem Anlegen der Webansichten abgeschaltet wird (`set_decorations(false)` in `views.rs`), darum geschieht es dort.
+
+Das Profil unten links ist ein Knopf mit Menü wie in Claude: Name und ASK-Adresse, Einstellungen (Ctrl+,), Nutzung, Skills, Mods, Gedächtnis, GitHub, Hilfe und Einführung, Tastenkombinationen, Neu in ASK (Releases), Nach Updates suchen, Beta-Versionen, Abmelden. Die Einstellungen sind ein grosses Fenster mit Suche und Bereichen links (Konto, Nutzung · Darstellung, Chat, Modelle, Gedächtnis, Benachrichtigungen · Skills, Mods, GitHub · Über ASK); Ein/Aus sind Schalter. Dialoge, die aus den Einstellungen kommen, kehren in denselben Bereich zurück.
+
+## E74 Titel von ASK, Regler für den Denkaufwand, Bilder im Chat
+
+- Der Titel eines Chats ist zuerst die Eingabe (vorläufig, `titleAuto`). Nach der ersten Antwort schreibt ASK im Hintergrund einen kurzen Titel (2 bis 6 Wörter, Modell der Hilfsagenten, sonst des Chats, höchstens 45 s). Wer den Chat selbst umbenennt, behält seinen Titel. In Tests aus (`AgentOptions::auto_title`).
+- Regler für den Denkaufwand: Beim Ziehen zurück auf die Ausgangsstufe blieb die Zwischenstufe stehen (die Funktion vom Drücken verglich mit der alten Stufe). Jetzt zählt die zuletzt gesendete Stufe, und beim Loslassen rastet der Regler dort ein.
+- Bilder im Chat (z. B. von `bild_erstellen`) laden bei Fehlern länger nach und zuletzt direkt vom Hauptprozess als `data:`-Adresse (`file:data`), falls das Protokoll askfile sie nicht liefert.

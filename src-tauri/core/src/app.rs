@@ -115,6 +115,17 @@ pub const THEMES: [(&str, &str); 3] = [("system", "system"), ("hell", "light"), 
 /// Modus im Eingabefeld (ENTSCHEIDE E52): auto (ohne Rückfragen), nachfragen, plan
 pub const CHAT_MODES: [&str; 3] = ["auto", "nachfragen", "plan"];
 const NOTES: &str = ".ask/projekt.md";
+/// Seite mit den Neuerungen aller Versionen (Release-Repository aus app-config.json)
+fn releases_url() -> String {
+    let c = settings::app_config()["updates"].clone();
+    match (c.get("owner").and_then(Value::as_str), c.get("repo").and_then(Value::as_str)) {
+        (Some(o), Some(r)) if !o.is_empty() && !r.is_empty() => format!("https://github.com/{o}/{r}/releases"),
+        _ => String::new(),
+    }
+}
+
+/// Zusatz in Rückfragen von Windows, solange Code eines Mods läuft (E72)
+const MOD_NOTE: &str = "Diese Abfrage kommt von Windows, weil ein Mod mit Code eingeschaltet ist; ein Mod kann sie nicht beantworten. Hast du das nicht selbst ausgelöst, wähle «Nein» und schalte die Mods aus (Ctrl+Shift+M).";
 const NOTES_MAX: usize = 6000;
 const BUSY: &str = "Das Modell arbeitet noch in diesem Projekt. Zuerst stoppen (Esc).";
 const NOTIFY_MIN_MS: i64 = 8000; // kurze Aufträge ohne Meldung
@@ -193,6 +204,8 @@ pub struct App {
     images: Arc<Images>,
     visual: Arc<Visual>,
     pub knowledge: Arc<Knowledge>,
+    /// Kataloge für Skills und Mods auf GitHub (catalog.rs, E71)
+    pub(crate) catalog: Arc<crate::catalog::Catalog>,
     pub updater: Arc<Updater>,
     reviewer: ReviewFn,
     /// Ausweich-DNS über Quad9 für die Anfragen der App (ENTSCHEIDE E57, E58)
@@ -205,6 +218,8 @@ pub struct App {
     st: Mutex<St>,
     snapshots: Mutex<HashMap<String, Arc<Snapshots>>>,
     ui: Mutex<Ui>,
+    /// Die geladene Oberfläche hat Code eines Mods ausgeführt (bis sie neu lädt, E72)
+    ui_mod_code: std::sync::atomic::AtomicBool,
     orders: Mutex<HashSet<PathBuf>>,
     me: Weak<App>,
 }
@@ -282,6 +297,8 @@ impl App {
                 Value::Array(p.iter().map(|x| json!({ "folder": x["folder"], "name": x["name"], "color": x["color"] })).collect())
             });
             kcfg.on_settings = Arc::new(move || { if let Some(a) = m3.upgrade() { a.push_state(); } });
+            kcfg.standard_skills = Some(paths::standard_skills_dir());
+            kcfg.example_mods = Some(paths::example_mods_dir());
             let knowledge = Arc::new(Knowledge::new(kcfg));
 
             // Prüfer für den Modus «Auto»: eigenes Modell aus den Einstellungen, sonst das Modell des Chats
@@ -335,6 +352,7 @@ impl App {
                 images,
                 visual,
                 knowledge,
+                catalog: Arc::new(crate::catalog::Catalog::new(client.clone())),
                 updater,
                 reviewer,
                 dns,
@@ -345,6 +363,7 @@ impl App {
                 st: Mutex::new(St { runtimes: HashMap::new(), terminal, workspace, agent: None, pending_chat: None, quitting: false }),
                 snapshots: Mutex::new(HashMap::new()),
                 ui: Mutex::new(Ui::default()),
+                ui_mod_code: std::sync::atomic::AtomicBool::new(false),
                 orders: Mutex::new(HashSet::new()),
                 me: me.clone(),
             }
@@ -604,6 +623,7 @@ impl App {
     /// Oberfläche lädt neu oder Fenster zu: offene Dialoge gelten als abgebrochen
     pub fn ui_reloading(&self) {
         self.ui.lock().ready = false;
+        self.ui_mod_code.store(false, std::sync::atomic::Ordering::SeqCst);
         self.ui_answer(None, None);
     }
 
@@ -735,6 +755,9 @@ impl App {
             "helperModel": s.get("helperModel").and_then(Value::as_str).unwrap_or(""),
             "theme": if THEMES.iter().any(|(k, _)| *k == theme) { theme } else { "system".into() },
             "project": settings::find_project(&js_string(&s["folder"])).unwrap_or(Value::Null),
+            "modsCode": self.mods_code(),
+            "catalogs": crate::extensions::catalogs(),
+            "releasesUrl": releases_url(),
         })
     }
 
@@ -779,6 +802,15 @@ impl App {
         let cancel_id = options.get("cancelId").and_then(Value::as_i64).unwrap_or(n - 1);
         if !self.ui.lock().ready {
             return self.host.native_box(options).await;
+        }
+        // Läuft Code eines Mods in der Oberfläche, könnte er dort jeden Knopf drücken: Rückfragen kommen dann von
+        // Windows (E72). Nur die Hinweise zu Updates bleiben in der Oberfläche.
+        if self.mods_code() && options.get("kind").and_then(Value::as_str) != Some("update") {
+            let mut o = options.clone();
+            let detail = js_string(&o["detail"]);
+            o["detail"] = json!(format!("{detail}{}", if detail.is_empty() { "" } else { "\n\n" }).to_string() + MOD_NOTE);
+            o["title"] = json!("ASK – Bestätigung");
+            return self.host.native_box(o).await;
         }
         let cancel = json!({ "response": cancel_id, "checkboxChecked": false });
         self.ui_request("ui:ask", options, cancel.clone()).await.unwrap_or(cancel)
@@ -908,6 +940,8 @@ impl App {
         o.get_vision = Arc::new({ let me = me.clone(); move || me.upgrade().and_then(|a| { let m = a.current_model(); a.ask.models().into_iter().find(|x| x.id == m).and_then(|x| x.vision) }) });
         o.get_snapshots = Arc::new({ let (me, f) = (me.clone(), f.clone()); move || me.upgrade().and_then(|a| a.snapshots_for(&f)) });
         o.knowledge = Some(self.knowledge.for_agent());
+        o.auto_title = !self.test_mode;
+        o.get_ask_before = Arc::new({ let mods = self.knowledge.mods.clone(); move || mods.ask_before() });
         o.get_chat_memory = Arc::new(|| truthy(&settings::get("chatMemory")));
         // Hilfsagenten (ENTSCHEIDE E55): eigenes Modell aus den Einstellungen, sonst das Modell des Chats
         o.get_helper_model = Arc::new({ let me = me.clone(); move || {
@@ -1629,8 +1663,100 @@ impl App {
 
     // ---- Aufrufe der Oberfläche ----------------------------------------------------------------------------
 
+    pub(crate) fn send_ui(&self, channel: &str, payload: Value) {
+        self.send(channel, payload);
+    }
+
+    pub(crate) async fn host_pick_folder(&self, title: &str) -> Option<String> {
+        self.host.pick_folder(title, "").await.filter(|p| !p.is_empty())
+    }
+
+    pub(crate) async fn host_open(&self, path: &str) {
+        let _ = self.host.open_path(path).await;
+    }
+
+    /// Läuft Code eines eingeschalteten Mods in der Oberfläche? (E72)
+    pub fn mods_code(&self) -> bool {
+        self.ui_has_mod_code() || self.knowledge.mods.code_active()
+    }
+
+    /// Läuft in der geladenen Oberfläche Code eines Mods? Bleibt wahr, bis sie neu lädt, auch wenn der Mod
+    /// inzwischen aus ist (der Code läuft bis dahin weiter). Die Hülle lädt dann neu.
+    pub fn ui_has_mod_code(&self) -> bool {
+        self.ui_mod_code.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn mark_ui_mod_code(&self) {
+        self.ui_mod_code.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Heikler Schritt, ausgelöst in der Oberfläche: Läuft Code eines Mods, bestätigt die Person ihn in einem
+    /// Dialog von Windows, den der Code nicht bedienen kann. Ohne Mods: gleich ja (der Klick kam von ihr).
+    pub async fn secure(&self, message: &str, detail: &str) -> bool {
+        if !self.mods_code() {
+            return true;
+        }
+        if self.test_mode && std::env::var("ASK_TEST_AUTOCONFIRM").map(|v| v == "1").unwrap_or(false) {
+            return true;
+        }
+        let opts = json!({ "type": "warning", "title": "ASK – Sicherheitsabfrage", "buttons": ["Ja, das war ich", "Nein"], "defaultId": 1, "cancelId": 1,
+            "message": message, "detail": format!("{}{}{MOD_NOTE}", detail, if detail.is_empty() { "" } else { "\n\n" }), "noLink": true });
+        self.host.flash_frame(false);
+        self.host.native_box(opts).await.get("response").and_then(Value::as_i64) == Some(0)
+    }
+
+    /// Welche Aufrufe der Oberfläche bei laufendem Mod-Code eine Bestätigung von Windows brauchen, mit Text
+    fn guard_text(&self, channel: &str, a: &[Value]) -> Option<(String, String)> {
+        let on = |i: usize| truthy(&arg(a, i));
+        Some(match channel {
+            "chat:approve" => {
+                let (id, ans) = (sarg(a, 0), sarg(a, 1));
+                if ans != "yes" && ans != "always" {
+                    return None;
+                }
+                let (title, detail) = std::iter::once(self.agent()).chain(self.all_agents()).find_map(|x| x.approval_text(&id)).unwrap_or_default();
+                (format!("Erlauben: {}", if title.is_empty() { "Schritt von ASK".into() } else { title }), format!("{detail}{}", if ans == "always" { "\n\n(Für den Rest dieses Chats ohne weitere Rückfrage.)" } else { "" }))
+            }
+            "settings:set" => {
+                let v = arg(a, 0);
+                if v.get("mode").and_then(Value::as_str) == Some("auto") {
+                    ("Modus «Auto» einschalten?".into(), "ASK arbeitet dann ohne Rückfragen, ein Modell prüft die Befehle.".into())
+                } else if v.get("approvals").is_some() {
+                    ("Stufe der Rückfragen ändern?".into(), String::new())
+                } else if v.get("reviewModel").is_some() {
+                    ("Modell für die Prüfung ändern?".into(), js_string(&v["reviewModel"]))
+                } else {
+                    return None;
+                }
+            }
+            "ask:set-url" => ("ASK-Adresse ändern?".into(), sarg(a, 0)),
+            "ask:use-token" => ("Mit einem eingefügten Token bei ASK anmelden?".into(), String::new()),
+            "github:connect" => ("GitHub-Token speichern?".into(), String::new()),
+            "servers:start" => ("Server starten?".into(), sarg(a, 0)),
+            "skills:save" => ("Skill speichern?".into(), str_of(&arg(a, 0), "name")),
+            "skills:enable" if on(1) => ("Mitgelieferten Skill einschalten?".into(), sarg(a, 0)),
+            "memory:add" | "memory:update" => ("Eintrag im Gedächtnis speichern?".into(), crate::util::take_chars(&str_of(&arg(a, if channel == "memory:add" { 0 } else { 1 }), "text"), 300)),
+            "mods:enable" if on(1) => ("Mod einschalten?".into(), sarg(a, 0)),
+            "mods:example" => ("Beispiel-Mod hinzufügen?".into(), sarg(a, 0)),
+            "catalog:install" => (format!("Aus dem Katalog hinzufügen: {}?", sarg(a, 2)), sarg(a, 0)),
+            "catalog:link" => ("Von Link hinzufügen?".into(), sarg(a, 0)),
+            "catalog:sources" if a.first().is_some_and(|v| v.is_array()) => ("Kataloge ändern?".into(), String::new()),
+            _ => return None,
+        })
+    }
+
     pub async fn handle(self: &Arc<Self>, channel: &str, args: Vec<Value>) -> Result<Value, String> {
         let a = &args;
+        if self.mods_code() {
+            if let Some((message, detail)) = self.guard_text(channel, a) {
+                if !self.secure(&message, &detail).await {
+                    return Ok(json!({ "ok": false, "reason": "Nicht bestätigt." }));
+                }
+            }
+        }
+        if let Some(r) = self.handle_extensions(channel, a).await {
+            return r;
+        }
         let agent = self.agent();
         let v: Value = match channel {
             "update:action" => { self.updater.action().await; Value::Null }
@@ -1908,6 +2034,23 @@ impl App {
             "link:open" => { self.host.open_external(&sarg(a, 0)); Value::Null }
             "workspace:files" => self.workspace().files(),
             "file:preview" => self.file_preview(&sarg(a, 0)).await,
+            // Bild als data:-Adresse, wenn das Protokoll askfile es in der Oberfläche nicht liefert (Bilder im Chat)
+            "file:data" => {
+                let rel = sarg(a, 0);
+                match self.workspace().resolve(&rel) {
+                    Some(full) if IMAGE_EXT.contains(&ext_of(&full).as_str()) => {
+                        let mime = match ext_of(&full).as_str() { ".jpg" | ".jpeg" => "image/jpeg", ".gif" => "image/gif", ".webp" => "image/webp", ".svg" => "image/svg+xml", ".bmp" => "image/bmp", _ => "image/png" };
+                        match std::fs::metadata(&full) {
+                            Ok(m) if m.len() <= 25 * 1024 * 1024 => match std::fs::read(&full) {
+                                Ok(data) => json!(format!("data:{mime};base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, data))),
+                                Err(_) => Value::Null,
+                            },
+                            _ => Value::Null,
+                        }
+                    }
+                    _ => Value::Null,
+                }
+            }
             "file:open" => self.file_open(&sarg(a, 0)).await,
             "file:show" => { if let Some(full) = self.workspace().resolve(&sarg(a, 0)) { self.host.show_item_in_folder(&full.to_string_lossy()); } Value::Null }
             _ => {

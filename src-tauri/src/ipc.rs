@@ -16,6 +16,26 @@ pub async fn ipc(channel: String, args: Vec<Value>) -> Result<Value, String> {
         "ui:browser-bounds" => v.set_browser_bounds(views::Bounds::from_json(&arg(0))),
         "ui:browser-visible" => v.set_browser_visible(ask_core::util::truthy(&arg(0))),
         "ui:shortcut" => shortcut(arg(0).as_str().unwrap_or("")),
+        // Fenster ohne Rahmen von Windows (ENTSCHEIDE E73): Knöpfe und Ziehen in der Kopfzeile der Oberfläche
+        "win:minimize" => { if let Some(w) = v.window() { let _ = w.minimize(); } }
+        "win:maximize" => {
+            if let Some(w) = v.window() {
+                if w.is_maximized().unwrap_or(false) { let _ = w.unmaximize(); } else { let _ = w.maximize(); }
+            }
+        }
+        "win:close" => { if let Some(w) = v.window() { let _ = w.close(); } }
+        "win:drag" => { if let Some(w) = v.window() { let _ = w.start_dragging(); } }
+        "win:state" => return Ok(views::window_state(v)),
+        // Mods aus: Code eines Mods läuft bis zum Neuladen weiter, darum lädt die Hülle die Oberfläche neu,
+        // statt sich darauf zu verlassen, dass die Oberfläche (mit dem Code darin) es selbst tut (E72)
+        "mods:enable" | "mods:off-all" | "mods:remove" => {
+            let had_code = s.core().ui_has_mod_code();
+            let r = s.core().handle(&channel, args).await?;
+            if had_code && !s.core().knowledge.mods.code_active() {
+                if let Some(wv) = v.webview(views::UI) { let _ = wv.reload(); }
+            }
+            return Ok(r);
+        }
         "ask:reload" => {
             let url = ask_core::settings::get("askUrl").as_str().unwrap_or("").to_string();
             if let Some(wv) = v.webview(views::ASK) {
@@ -72,6 +92,11 @@ fn shortcut(key: &str) {
         "reload-ask" => { if let Some(wv) = v.webview(views::ASK) { let _ = wv.reload(); } }
         "devtools-ask" => { if let Some(wv) = v.webview(views::ASK) { wv.open_devtools(); } }
         "devtools-ui" => { if let Some(wv) = v.webview(views::UI) { wv.open_devtools(); } }
+        // Alle Mods aus und Oberfläche neu laden (Notausgang, wenn ein Mod die Oberfläche stört)
+        "mods-off" => {
+            let _ = shell().core().knowledge.mods.disable_all();
+            if let Some(wv) = v.webview(views::UI) { let _ = wv.reload(); }
+        }
         _ => {}
     }
 }

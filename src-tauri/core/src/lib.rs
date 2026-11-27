@@ -30,6 +30,8 @@ pub mod usage;
 pub mod web;
 pub mod memory;
 pub mod skills;
+pub mod mods;
+pub mod catalog;
 pub mod history;
 pub mod memorytools;
 pub mod workspace;
@@ -43,6 +45,7 @@ pub mod tools;
 pub mod bild;
 pub mod helpers;
 pub mod knowledge;
+pub mod extensions;
 pub mod visual;
 
 // Welle 3

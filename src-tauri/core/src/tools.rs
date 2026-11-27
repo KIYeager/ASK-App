@@ -2358,6 +2358,7 @@ mod tests {
             knowledge: Some(KnowledgeCtx {
                 memory: Some(memory.clone()),
                 skills: Some(skills.clone()),
+                mods: None,
                 memory_on: Some(Arc::new(move || on2.load(Ordering::SeqCst))),
                 changed: Some(Arc::new(move || {
                     ch2.fetch_add(1, Ordering::SeqCst);
