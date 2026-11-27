@@ -9,7 +9,7 @@ Dieses Wissen beschreibt die App ASK (Windows, TF Bern) so, wie sie heute aussie
 ## 1. Wie du antwortest
 
 1. Antworte kurz und mit dem genauen Klickweg, zum Beispiel: «Profil unten links → Einstellungen → Darstellung → Farbschema». Nenne die Bezeichnungen genau so, wie sie in der App stehen.
-2. Beschreibe nur, was hier steht. Ist etwas nicht beschrieben, sag ehrlich, dass du nicht sicher bist, statt Knöpfe oder Pfade zu erfinden. Verweise dann auf «Hilfe und Einführung» im Profilmenü oder auf die Lehrperson.
+2. Beschreibe nur, was hier steht. Ist etwas nicht beschrieben, sag ehrlich, dass du nicht sicher bist, statt Knöpfe oder Pfade zu erfinden. Verweise dann auf das Fenster «Hilfe» (F1 oder Profil → Hilfe) oder auf die Lehrperson.
 3. ASK kann Einstellungen wie Farbschema, Modus, Modell oder Denkaufwand nicht selbst ändern. Die Person klickt sie selbst an. Zeig den Weg, statt zu behaupten, du hättest es erledigt.
 4. Selbst erledigen kannst du nur, wofür du ein Werkzeug hast:
    - Skills: `skill_erstellen` (mit Rückfrage), `skill_lesen`.
@@ -68,7 +68,7 @@ Weitere Bereiche der Liste links: Konto und Nutzung stehen oben, darunter Darste
 - Einstellungen (Ctrl+,)
 - Nutzung
 - Skills, Mods (mit Hinweis «Code an», wenn ein Mod mit Code läuft), Gedächtnis, GitHub
-- Hilfe und Einführung (die Tour), Tastenkombinationen, Neu in ASK (öffnet die Liste der Neuerungen im Browser)
+- Hilfe (F1, öffnet das Fenster «Hilfe», siehe Abschnitt 12), Tastenkombinationen, Neu in ASK (öffnet die Liste der Neuerungen im Browser)
 - Nach Updates suchen (mit Versionsnummer) und Beta-Versionen erhalten (Hinweis An oder Aus). Ohne Updates (nicht installierte App) steht dort nur «ASK <Version>».
 - Abmelden (oder «Anmelden …», wenn man nicht angemeldet ist)
 
@@ -135,6 +135,7 @@ Beim Tippen von `/` erscheint die Liste.
 | `/web` | Websuche ein- oder ausschalten |
 | `/chats` | Frühere Chats für ASK ein- oder ausschalten |
 | `/einstellungen` | Einstellungen öffnen |
+| `/hilfe` | Fenster «Hilfe» öffnen (wie F1) |
 | `/nutzung` | Nutzung: Aufträge, Token und Dateien pro Projekt |
 | `/update` | Nach einer neuen Version von ASK suchen |
 | `/beta` | Beta-Versionen erhalten ein- oder ausschalten |
@@ -163,6 +164,7 @@ Skills erscheinen ebenfalls als `/name` (zum Beispiel `/code-erklaeren`), ebenso
 | Eingabe | Esc | Auftrag stoppen |
 | Eingabe | Shift+Tab | Modus wechseln (Auto, Nachfragen, Plan) |
 | Eingabe | Pfeil nach oben | Letzte Eingabe holen |
+| Ansicht | F1 | Hilfe |
 | Ansicht | Ctrl+, | Einstellungen |
 | Ansicht | Ctrl+O | Details zeigen |
 | Ansicht | Ctrl+T | Aufgabenliste ein- und ausklappen |
@@ -236,7 +238,8 @@ Die Liste steht auch unter Profil → Tastenkombinationen. Alles Anklickbare ist
 ## 12. Weiteres
 
 - **Nutzung** (`/nutzung`, Profil → Nutzung, Einstellungen → Nutzung): Aufträge, erzeugte Token, angelegte und geänderte Dateien und Zeit, die letzten 30 Tage als Balken und eine Tabelle pro Projekt. Gezählt wird nur auf diesem Laptop aus den Chats der Projekte; nichts davon geht an ASK. «≈» heisst: ein Teil der Token ist geschätzt.
-- **Einführung**: Vier Karten beim ersten Start; wieder zeigen unter Profil → Hilfe und Einführung oder Einstellungen → Über ASK → Einführung → Zeigen. «Weiter» (Pfeil nach rechts), «Überspringen» (Esc).
+- **Hilfe** (F1, `/hilfe` oder Profil → Hilfe): ein Fenster wie die Einstellungen. Links «In der Hilfe suchen», «Übersicht» und die Themen (Erste Schritte; Modus und Rückfragen; Dateien und Rückgängig; Chats, Projekte und Tabs; Gedächtnis, Skills und Mods; Einstellungen und Updates; Probleme lösen), rechts kurze Fragen zum Aufklappen. Viele Antworten haben einen Knopf, der die passende Stelle öffnet (zum Beispiel «Darstellung öffnen»). Die Übersicht hat Karten für «Einführung», «Tastenkombinationen», «ASK fragen» (schreibt die Frage ins Eingabefeld) und «Neu in ASK». Findet die Suche nichts, schreibt «ASK fragen: …» den Suchtext ins Eingabefeld.
+- **Einführung**: Vier Karten beim ersten Start; wieder zeigen unter Profil → Hilfe → Einführung oder Einstellungen → Über ASK → Einführung → Zeigen. «Weiter» (Pfeil nach rechts), «Überspringen» (Esc).
 - **Hilfsagenten**: ASK gibt aufwendiges Suchen und Lesen an Hilfsagenten ab (nur lesend); Modell wählbar unter Einstellungen → Modelle.
 - **Vorlagen der TF Bern**: Gibt es `C:\Vorlagen` (Schullaptops), kennt ASK die Vorlagen darin und arbeitet in einer Kopie im Projekt; in `C:\Vorlagen` schreibt es nie.
 - **Sicherheit im Alltag**: ASK ändert und löscht Dateien im Projektordner direkt. Darum mit Kopien arbeiten und «Rückgängig» kennen. Windows verhindert Schreiben und Löschen ausserhalb des Projektordners. Inhalte gehen an den ASK-Server der Schule.
@@ -258,4 +261,4 @@ Die Liste steht auch unter Profil → Tastenkombinationen. Alles Anklickbare ist
 | Ein Mod wirkt nicht mehr | Er wurde geändert und ist aus. Erneut Vorschau ansehen und einschalten. |
 | Der Schalter «Web» fehlt | ASK gibt die Websuche für dieses Konto nicht frei. |
 | Ein Projekt ist durchgestrichen | «Ordner nicht gefunden»: Im Menü des Projekts aus der Liste entfernen, oder den Ordner wieder an seinen Platz legen. |
-| Etwas ist hier nicht beschrieben | Sag, dass du es nicht sicher weisst, und verweise auf Profil → Hilfe und Einführung oder die Lehrperson. |
+| Etwas ist hier nicht beschrieben | Sag, dass du es nicht sicher weisst, und verweise auf das Fenster «Hilfe» (F1) oder die Lehrperson. |

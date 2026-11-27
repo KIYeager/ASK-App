@@ -5,6 +5,7 @@ import { api } from '../api.js';
 import { baseName, formatCount, formatDuration } from '../lib/format.js';
 import { PreviewBody } from './RightPanel.jsx';
 import Tour from './Tour.jsx';
+import HelpDialog from './Help.jsx';
 import { MemoryDialog, SkillsDialog } from './Knowledge.jsx';
 import SettingsDialog, { CatalogDialog, ModPreviewDialog, ShortcutsDialog, SkillViewDialog } from './Settings.jsx';
 
@@ -419,6 +420,12 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
   const close = () => setDialog(dialog?.back || null);
   const here = dialog?.name === 'settings' ? { name: 'settings', pane: dialog.pane } : dialog;
   const go = (next, extra = {}) => setDialog(next === 'settings' ? { name: 'settings', ...extra } : { name: next, ...extra, back: here });
+  // Knöpfe in der Hilfe: die Einführung und ein neues Projekt schliessen sie, alles andere kehrt danach zur Hilfe zurück
+  const openFromHelp = (target) => {
+    if (target === 'tour' || target === 'project') { setDialog({ name: target }); return; }
+    if (target.startsWith('settings:')) { setDialog({ name: 'settings', pane: target.slice(9) }); return; }
+    go(target);
+  };
   if (name === 'tour') return <Tour state={state} onDone={() => { api().setPrefs({ tourDone: true }); close(); }} />;
   if (name === 'whatsnew') {
     return (
@@ -440,6 +447,11 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
         onPane={(pane) => setDialog({ name: 'settings', pane })}
         onCompose={(t) => { setDialog(null); onCompose(t); }} /> : null}
       {name === 'shortcuts' ? <ShortcutsDialog onClose={close} /> : null}
+      {name === 'help' ? <HelpDialog pane={dialog.pane} releasesUrl={state.releasesUrl} onClose={close}
+        onPane={(pane) => setDialog({ ...dialog, pane })}
+        onOpen={(target) => openFromHelp(target)}
+        onAsk={(t) => { setDialog(null); onCompose(t); }}
+        onLink={(url) => api().openLink(url)} /> : null}
       {name === 'catalog' ? <CatalogDialog repo={dialog.repo} kind={dialog.kind} onClose={close} /> : null}
       {name === 'mod-preview' ? <ModPreviewDialog id={dialog.id} onClose={close} /> : null}
       {name === 'skill-view' ? <SkillViewDialog slug={dialog.slug} onClose={close}

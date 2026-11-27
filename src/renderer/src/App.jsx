@@ -593,6 +593,7 @@ export default function App() {
     { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api().setWebSearch(!state.webSearch); else notice('Websuche ist in ASK für dein Konto nicht freigegeben.'); } },
     { cmd: '/chats', text: 'Frühere Chats für das Modell ein- oder ausschalten', run: () => api().setChatMemory(!state.chatMemory) },
     { cmd: '/einstellungen', text: 'Einstellungen: Darstellung, Rückfragen, Version', run: () => setDialog({ name: 'settings' }) },
+    { cmd: '/hilfe', text: 'Hilfe: Fragen und Antworten zu ASK, Einführung', run: () => setDialog({ name: 'help' }) },
     { cmd: '/nutzung', text: 'Nutzung: Aufträge, Token und Dateien pro Projekt', run: () => setDialog({ name: 'usage' }) },
     { cmd: '/update', text: 'Nach einer neuen Version von ASK suchen', run: () => api().updateAction() },
     { cmd: '/beta', text: 'Beta-Versionen erhalten ein- oder ausschalten', run: () => api().setBetaUpdates(!state.update?.beta, true) },
@@ -630,6 +631,7 @@ export default function App() {
         if (chats) { if (finding) { const el = document.getElementById('find-input'); el?.focus(); el?.select(); } else setFinding(true); }
       }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') { e.preventDefault(); if (!dialogName || dialog) setDialog({ name: 'settings' }); }
+      if (e.key === 'F1' && !e.ctrlKey && !e.shiftKey && !e.altKey) { e.preventDefault(); if (!dialogName || dialog) setDialog({ name: 'help' }); }
       // Tabs: Ctrl+W schliesst, Ctrl+Tab wechselt, Ctrl+1 bis 9 springt, Ctrl+Shift+T holt den zuletzt geschlossenen zurück
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'w') { e.preventDefault(); const t = shownTabs.find((x) => x.id === chatId); if (chats && t) closeTab(t); }
       if (e.ctrlKey && !e.altKey && e.key === 'Tab') { e.preventDefault(); if (chats) switchTab(e.shiftKey ? -1 : 1); }

@@ -1093,6 +1093,39 @@ textarea.gh-input { resize: vertical; min-height: 56px; line-height: 1.45; }
   .settings-nav { display: none; }
 }
 
+/* Hilfe (E79): Fenster wie die Einstellungen, Fragen zum Aufklappen */
+.help-pane h3 { margin-top: 18px; }
+.help-intro { margin: 0 0 14px; max-width: 64ch; line-height: 1.5; }
+.help-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.help-card { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 13px; line-height: 1.4; }
+.help-card .icon { color: var(--acc-text); margin-bottom: 4px; }
+.help-card:hover { border-color: var(--line-2); background: var(--hover); }
+.help-topics { display: flex; flex-direction: column; }
+.help-topic { display: flex; align-items: center; gap: 12px; border: 0; border-bottom: 1px solid var(--line); background: none; padding: 11px 6px; text-align: left; color: var(--text); font-size: 13.5px; border-radius: 0; }
+.help-topic:last-child { border-bottom: 0; }
+.help-topic:hover { background: var(--hover); }
+.help-topic > .icon { color: var(--muted); flex: none; }
+.help-topic-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.help-topic-text .muted { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.help-item { border-bottom: 1px solid var(--line); }
+.help-item:last-child { border-bottom: 0; }
+.help-item summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; padding: 12px 4px; font-weight: 600; font-size: 13.5px; border-radius: 6px; }
+.help-item summary::-webkit-details-marker { display: none; }
+.help-item summary:hover { color: var(--acc-text); }
+.help-item summary .help-chev { color: var(--muted); flex: none; transition: transform .15s ease; }
+.help-item[open] summary .help-chev { transform: rotate(180deg); }
+.help-answer { padding: 0 4px 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.help-answer p { margin: 0; line-height: 1.55; max-width: 66ch; color: var(--text); }
+.help-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; padding: 12px 14px; border-radius: 10px; background: var(--side); font-size: 13px; color: var(--muted); }
+@media (max-width: 760px) {
+  .help-dialog .settings-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .help-dialog .settings-nav { display: flex; flex-direction: row; align-items: center; gap: 6px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px 12px; }
+  .help-dialog .settings-search { margin: 0; min-width: 170px; }
+  .help-dialog .settings-group { flex-direction: row; border-bottom: 0; padding: 0; }
+  .help-dialog .settings-group button { white-space: nowrap; }
+  .help-dialog .settings-nav .spacer, .help-dialog .settings-foot { display: none; }
+}
+
 /* Katalog: Mods und Skills unterscheidbar (eigene Farbe und eigenes Symbol) */
 :root { --kind-mod: #b4632f; --kind-mod-soft: #fbeee4; --kind-skill: var(--acc-text); --kind-skill-soft: var(--acc-soft); }
 @media (prefers-color-scheme: dark) { :root { --kind-mod: #f0a46c; --kind-mod-soft: rgba(240, 164, 108, .14); } }

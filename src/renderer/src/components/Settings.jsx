@@ -567,7 +567,7 @@ export const SHORTCUTS = [
   ['Chats', [['Ctrl+N', 'Neuer Chat'], ['Ctrl+W', 'Tab schliessen'], ['Ctrl+Tab', 'Nächster Tab'], ['Ctrl+Shift+Tab', 'Vorheriger Tab'], ['Ctrl+1 … 9', 'Zu Tab springen'], ['Ctrl+Shift+T', 'Geschlossenen Tab wieder öffnen']]],
   ['Suchen', [['Ctrl+F', 'Im Chat suchen'], ['Enter', 'Nächster Treffer'], ['Shift+Enter', 'Vorheriger Treffer']]],
   ['Eingabe', [['Enter', 'Senden (während eines Auftrags: einreihen)'], ['Shift+Enter', 'Neue Zeile'], ['/', 'Befehle und Skills'], ['@', 'Datei erwähnen'], ['Esc', 'Auftrag stoppen']]],
-  ['Ansicht', [['Ctrl+,', 'Einstellungen'], ['Ctrl+O', 'Details zeigen'], ['Ctrl+T', 'Aufgabenliste ein- und ausklappen'], ['Ctrl +', 'Grösser'], ['Ctrl −', 'Kleiner'], ['Ctrl+0', 'Normale Grösse']]],
+  ['Ansicht', [['F1', 'Hilfe'], ['Ctrl+,', 'Einstellungen'], ['Ctrl+O', 'Details zeigen'], ['Ctrl+T', 'Aufgabenliste ein- und ausklappen'], ['Ctrl +', 'Grösser'], ['Ctrl −', 'Kleiner'], ['Ctrl+0', 'Normale Grösse']]],
   ['Mods und Fehler', [['Ctrl+Shift+M', 'Alle Mods ausschalten und neu laden'], ['Ctrl+R', 'ASK-Seite neu laden'], ['Ctrl+Shift+J', 'Entwicklertools der Oberfläche']]],
 ];
 
