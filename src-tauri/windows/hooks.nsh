@@ -65,7 +65,7 @@
     CreateFont $2 "Segoe UI" 9 400
     ${If} $6 = 1
       StrCpy $4 "ASK wird aktualisiert"
-      StrCpy $5 "Chats und Einstellungen bleiben. ASK startet danach von selbst."
+      StrCpy $5 "Chats und Einstellungen bleiben. ASK startet danach neu."
     ${Else}
       StrCpy $4 "ASK wird installiert"
       StrCpy $5 "Einen Moment bitte. ASK startet danach von selbst."
