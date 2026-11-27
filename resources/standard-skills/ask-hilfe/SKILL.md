@@ -43,6 +43,7 @@ Dieses Wissen beschreibt die App ASK (Windows, TF Bern) so, wie sie heute aussie
 | Chat | Details zeigen | Schalter: zeigt Gedanken des Modells und alle Arbeitsschritte (auch Ctrl+O). |
 | Chat | Aufgabenliste einklappen | Schalter: klappt die Aufgabenliste über dem Eingabefeld nach dem Auftrag ein. |
 | Chat | Frühere Chats | Schalter: ASK darf frühere Chats im selben Projekt durchsuchen und lesen (auch `/chats`). |
+| Chat | Interaktive Antworten | Schalter (Standard an): ASK darf Antworten mit Diagrammen, Quiz, Karteikarten, Rechnern, Auswahlknöpfen, Formularen und kleinen Programmen ohne Internet zeigen. Aus: nur Text, solche Blöcke erscheinen als Code. |
 | Modelle | Prüfung im Modus «Auto» | Auswahl des Modells, das im Modus Auto jeden Befehl prüft. Standard «Wie im Chat»; ein schnelles Modell genügt. |
 | Modelle | Kontextgrösse | Zahl in Token (Standard 250000): so viel Verlauf geht höchstens an das Modell. Meldet ASK für ein Modell ein kleineres Fenster, gilt das kleinere. |
 | Modelle | Reserve zum Zusammenfassen | Zahl in Token (Standard 30000): Ist der Verlauf bis auf diese Reserve voll, fasst ASK die älteren Aufträge zusammen. |
@@ -108,6 +109,8 @@ Weitere Bereiche der Liste links: Konto und Nutzung stehen oben, darunter Darste
 - Vor heiklen Schritten (Löschen, Überschreiben, Pfade ausserhalb des Projekts) fragt ASK im Chat mit «Erlauben», «Immer in diesem Chat» oder «Ablehnen». Bei Ablehnen macht ASK ohne den Schritt weiter.
 - Ist die App im Hintergrund, blinkt sie in der Taskleiste und meldet sich bei Windows (Aufträge ab 8 Sekunden), sofern Benachrichtigungen an sind.
 - ASK startet keine Programme mit Fenster (Word, Excel, PowerPoint, Explorer, Editor, Browser); das lehnt die App ab.
+
+**Interaktive Antworten**: ASK kann Teile einer Antwort als Bausteine zeigen: Diagramme (mit Legende zum Ein- und Ausblenden), Quiz mit Erklärung, Karteikarten zum Umdrehen, Rechner mit Reglern, Schritte zum Abhaken, Vergleiche, Hinweise. Knöpfe einer Auswahl und Formulare schicken die Antwort als neue Nachricht (während ASK arbeitet: ins Eingabefeld). Eigene kleine Programme stehen in einem Rahmen «Interaktive Ansicht von ASK · ohne Internet» mit Knöpfen zum Neuladen, Vergrössern und Kopieren; sie haben kein Internet und keinen Zugriff auf die Dateien. Wie ASK sie baut, steht im Skill `interaktive-antworten`. Kann ein Baustein nicht angezeigt werden, erscheint er als Code mit der Meldung, was falsch ist. Ausschalten: Einstellungen → Chat → Interaktive Antworten.
 
 **Verbindung**: Bricht die Verbindung zu ASK ab oder ist ASK überlastet, versucht die App es bis zu fünfmal erneut («Verbindung zu ASK unterbrochen. Neuer Versuch in 5 s (2/5)»).
 
@@ -208,7 +211,7 @@ Die Liste steht auch unter Profil → Tastenkombinationen. Alles Anklickbare ist
 
 **Skills** (Profil → Skills, Einstellungen → Skills oder `/skills`):
 - Ein Skill ist eine Anleitung für wiederkehrende Aufträge. ASK prüft bei jedem Auftrag, ob einer passt, liest ihn selbst und sagt kurz, welchen es benutzt («Skill benutzt»). Mit `/name` ruft man einen direkt auf.
-- «Mitgeliefert»: sechzehn Skills (`/skill-erstellen`, `/mod-erstellen`, `/code-erklaeren`, `/lernjournal`, `/quellen-pruefen`, `/fehler-suchen`, `/tests-schreiben`, `/code-review`, `/commit-nachricht`, `/webseite-gestalten`, `/praesentation-planen`, für Dokumente `/word-dokument`, `/powerpoint-folien`, `/excel-tabelle`, `/dokument-zusammenfassen`, `/dokument-verbessern`) und dieser Hilfe-Skill. Pro Skill gibt es «Ansehen» und einen Schalter zum Ausschalten. «Als eigenen Skill kopieren» ist der Weg, einen anzupassen; ein eigener Skill mit gleichem Namen ersetzt den mitgelieferten («durch eigenen ersetzt»).
+- «Mitgeliefert»: siebzehn Skills (`/skill-erstellen`, `/interaktive-antworten`, `/mod-erstellen`, `/code-erklaeren`, `/lernjournal`, `/quellen-pruefen`, `/fehler-suchen`, `/tests-schreiben`, `/code-review`, `/commit-nachricht`, `/webseite-gestalten`, `/praesentation-planen`, für Dokumente `/word-dokument`, `/powerpoint-folien`, `/excel-tabelle`, `/dokument-zusammenfassen`, `/dokument-verbessern`) und dieser Hilfe-Skill. Pro Skill gibt es «Ansehen» und einen Schalter zum Ausschalten. «Als eigenen Skill kopieren» ist der Weg, einen anzupassen; ein eigener Skill mit gleichem Namen ersetzt den mitgelieferten («durch eigenen ersetzt»).
 - «Eigene Skills»: «Neuer Skill», «Mit ASK erstellen» (startet `/skill-erstellen`), «Importieren …» (Datei, höchstens 100 KB), pro Skill «Bearbeiten». Eigene Skills liegen in `%APPDATA%\ASK\skills\<name>\SKILL.md`.
 - «Kataloge»: Skills (und Mods) aus öffentlichen GitHub-Repositories. Mitgeliefert sind `KIYeager/ASK-Erweiterungen` (Schule) und `anthropics/skills` (Englisch). «Durchsuchen …» zeigt die Einträge mit «Ansehen» und «Hinzufügen». Eigener Katalog: Feld «Weiterer Katalog: besitzer/repository» und «Katalog hinzufügen» (mit × wieder entfernen).
 - «Von Link hinzufügen»: Link auf einen Ordner mit `SKILL.md` (Skill) oder `mod.json` (Mod) auf GitHub. Liegen mehrere Einträge darunter, wählt man aus. Ein Skill bringt nur seine `SKILL.md` mit.

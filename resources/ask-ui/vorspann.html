@@ -1,0 +1,48 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Vorspann für HTML-Bausteine von ASK (ENTSCHEIDE E80). Steht vor dem HTML des Modells: Farben der App als
+     Variablen, Grundschrift und window.ask für den Weg zurück in den Chat. Das Fenster ist abgeschottet
+     (sandbox ohne allow-same-origin, CSP ohne Netz); nur postMessage an die Oberfläche geht hinaus. -->
+<style>
+  :root {
+    --ask-bg: #ffffff; --ask-card: #f7f9fa; --ask-line: #e1e7ea; --ask-text: #141a1d; --ask-muted: #5b6871;
+    --ask-acc: #0082b4; --ask-acc-ink: #ffffff; --ask-acc-soft: #e6f3f8; --ask-ok: #2c8a45; --ask-bad: #b23a2c;
+    --ask-orange: #f28855;
+    --ask-font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+    --ask-mono: "Cascadia Mono", Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ask-bg: #16191b; --ask-card: #1c2023; --ask-line: #2c3338; --ask-text: #e6ebee; --ask-muted: #9aa7b0;
+      --ask-acc: #3fb0dc; --ask-acc-ink: #0b1215; --ask-acc-soft: rgba(63, 176, 220, .14); --ask-ok: #5cc27a; --ask-bad: #f07a6a;
+      color-scheme: dark;
+    }
+  }
+  html, body { margin: 0; background: transparent; color: var(--ask-text); font: 14px/1.5 var(--ask-font); }
+  body { padding: 2px; overflow-x: hidden; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+</style>
+<script>
+  (() => {
+    const post = (art, wert) => parent.postMessage({ askUi: 1, art, wert }, '*');
+    // Ins Eingabefeld schreiben oder (nach einem Klick der Person) als Nachricht senden
+    window.ask = {
+      senden: (text) => post('senden', String(text ?? '').slice(0, 4000)),
+      eingeben: (text) => post('eingeben', String(text ?? '').slice(0, 4000)),
+    };
+    // Höhe des Inhalts melden, damit der Chat das Fenster passend gross macht. Gemessen am body, nicht am
+    // Dokument: dessen Höhe ist mindestens die des Fensters, und das Fenster könnte so nie kleiner werden.
+    let last = 0;
+    const report = () => {
+      const b = document.body;
+      if (!b) return;
+      const h = Math.ceil(Math.max(b.getBoundingClientRect().bottom + scrollY, b.scrollHeight));
+      if (h !== last) { last = h; post('hoehe', h); }
+    };
+    addEventListener('load', report);
+    addEventListener('DOMContentLoaded', () => new ResizeObserver(report).observe(document.body));
+    setTimeout(report, 50);
+  })();
+</script>

@@ -122,6 +122,28 @@ fn mime_of(path: &std::path::Path) -> &'static str {
     }
 }
 
+// ---- Protokoll askui (ENTSCHEIDE E80): HTML-Bausteine aus Antworten, abgeschottet ---------------------------------
+// Adresse: askui://ansicht/<id> bzw. http://askui.localhost/ansicht/<id>. Die Seite bekommt eine eigene CSP ohne Netz;
+// das iframe in der Oberfläche hat sandbox ohne allow-same-origin, also einen undurchsichtigen Ursprung.
+
+pub fn handle_ui(_ctx: UriSchemeContext<'_, Wry>, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
+    let uri = request.uri().clone();
+    let page = ask_core::uiblocks::id_from(uri.host().unwrap_or(""), uri.path()).and_then(|id| ask_core::uiblocks::page(&id));
+    let response = match page {
+        Some(html) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::CONTENT_SECURITY_POLICY, ask_core::uiblocks::CSP)
+            .header(header::CACHE_CONTROL, "no-store")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Referrer-Policy", "no-referrer")
+            .body(html.into_bytes())
+            .expect("Antwort"),
+        None => not_found(),
+    };
+    responder.respond(response);
+}
+
 // ---- Protokoll askmod (ENTSCHEIDE E72): Dateien eingeschalteter Mods für die Oberfläche ----------------------
 // Adresse: askmod://mod/<id>/<fingerabdruck>/<pfad> bzw. http://askmod.localhost/mod/<id>/<fingerabdruck>/<pfad>.
 // Geliefert wird nur, was mods.rs für einen eingeschalteten, unveränderten Mod freigibt.

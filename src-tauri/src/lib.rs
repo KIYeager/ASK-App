@@ -92,6 +92,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol("askfile", protocol::handle)
         .register_asynchronous_uri_scheme_protocol("askmod", protocol::handle_mod)
+        .register_asynchronous_uri_scheme_protocol("askui", protocol::handle_ui)
         .invoke_handler(tauri::generate_handler![ipc::ipc])
         .setup(|app| {
             setup(app.handle().clone())?;

@@ -7,6 +7,8 @@ const on = (ch) => (cb) => {
 };
 const emit = (ch, payload) => (listeners[ch] || []).forEach((cb) => cb(payload));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+import uiPrelude from '../../../../resources/ask-ui/vorspann.html?raw';
+
 const params = new URLSearchParams(location.search);
 
 const FOLDER = 'C:\\Users\\lernende\\ASK-Projekte\\Haushaltsbudget';
@@ -17,7 +19,7 @@ let state = {
   terminal: { state: 'läuft', folder: FOLDER, lowIntegrity: true }, ask: { state: 'angemeldet', user: 'Lea Muster' },
   models: [{ id: 'qwen3-coder', name: 'Qwen3 Coder' }, { id: 'gpt-oss', name: 'GPT-OSS 120B' }], model: 'qwen3-coder',
   contextSize: 250000, contextReserve: 30000,
-  webSearch: false, chatMemory: false, memory: true, thinking: 'mittel', webSearchAvailable: true, approvals: 'heikel', mode: 'auto', theme: 'system',
+  webSearch: false, chatMemory: false, interactiveUi: params.get('interaktiv') !== 'aus', memory: true, thinking: 'mittel', webSearchAvailable: true, approvals: 'heikel', mode: 'auto', theme: 'system',
   version: '0.2.3', update: { state: params.get('update') || 'verfügbar', current: '0.2.3', version: '0.2.4', percent: 42, countdown: 7, beta: false, enabled: true, portable: false, postponed: false },
   prefs: { verbose: false, todoCollapsed: true, tourDone: !params.get('tour') }, // ?tour=1 zeigt die Einführung
   chat: { id: 'c1', title: 'Ausgaben auswerten', running: false, goal: null, pinned: false, context: { tokens: 18400, estimated: false, limit: 131072 } },
@@ -95,6 +97,39 @@ const savedFree = [
   { role: 'user', content: 'Was ist ein Subnetz?', time: now - 2 * 3600000 },
   { role: 'assistant', content: 'Ein **Subnetz** ist ein Teil eines grösseren Netzes. Die Subnetzmaske legt fest, welcher Teil der IP-Adresse das Netz bezeichnet und welcher den einzelnen Rechner.\n\nBeispiel: `192.168.1.0/24` hat 254 nutzbare Adressen.', stats: stats(160) },
 ];
+
+// ?frei=1&interaktiv=demo: alle Bausteine der interaktiven Antworten (E80) im Chat ohne Projekt
+const uiDemo = [
+  'Hier die Übersicht als Diagramm, dazu ein kurzes Quiz.',
+  '```ask-ui',
+  JSON.stringify([
+    { typ: 'diagramm', titel: 'Ausgaben pro Monat', art: 'balken', einheit: 'CHF', beschriftungen: ['Jan', 'Feb', 'Mär', 'Apr'], reihen: [{ name: '2025', werte: [420, 380, 510, 460] }, { name: '2026', werte: [450, 395, 470, 520] }] },
+    { typ: 'diagramm', titel: 'Aufteilung', art: 'kreis', einheit: 'CHF', beschriftungen: ['ÖV-Abo', 'Freizeit', 'Bücher', 'Handy'], reihen: [{ werte: [500, 460.75, 411.15, 150] }] },
+    { typ: 'quiz', titel: 'Kurz geprüft', fragen: [{ frage: 'Wie viele nutzbare Adressen hat ein /24-Netz?', antworten: ['256', '254', '255'], richtig: 1, erklaerung: 'Netz- und Broadcast-Adresse fallen weg: 256 − 2 = 254.' }] },
+  ]),
+  '```',
+  '',
+  '```ask-ui',
+  JSON.stringify([
+    { typ: 'hinweis', art: 'tipp', titel: 'Tipp', text: 'Mit dem Rechner kannst du die Werte selbst ausprobieren.' },
+    { typ: 'rechner', titel: 'Sparrechner', eingaben: [{ name: 'betrag', label: 'Pro Monat', wert: 50, min: 0, max: 500, schritt: 10, einheit: 'CHF' }, { name: 'monate', label: 'Monate', wert: 12, min: 1, max: 60 }],
+      ergebnisse: [{ label: 'Gespart', formel: 'betrag * monate', einheit: 'CHF', stellen: 0 }, { label: 'Pro Woche', formel: 'round(betrag * 12 / 52, 2)', einheit: 'CHF' }] },
+    { typ: 'karteikarten', titel: 'Begriffe', karten: [{ vorne: 'Subnetzmaske', hinten: 'Legt fest, welcher Teil der IP-Adresse das Netz ist.' }, { vorne: 'Gateway', hinten: 'Der Router, über den ein Netz andere Netze erreicht.' }] },
+    { typ: 'vergleich', titel: 'IPv4 oder IPv6', spalten: [{ titel: 'IPv4', untertitel: '32 Bit', punkte: ['etwa 4 Mrd. Adressen', 'mit NAT verbreitet'] }, { titel: 'IPv6', untertitel: '128 Bit', punkte: ['fast unbegrenzt viele Adressen', 'kein NAT nötig'], hervorheben: true }] },
+    { typ: 'schritte', titel: 'Netz einrichten', schritte: [{ titel: 'Adressbereich wählen', text: 'z. B. 192.168.1.0/24' }, 'Gateway festlegen', 'DHCP einschalten'] },
+    { typ: 'auswahl', frage: 'Womit machen wir weiter?', optionen: ['Mehr Übungen', 'Subnetze rechnen', 'Fertig'] },
+    { typ: 'formular', titel: 'Dein Netz', felder: [{ name: 'geraete', label: 'Wie viele Geräte?', art: 'zahl', pflicht: true }, { name: 'ort', label: 'Wo?', art: 'auswahl', optionen: ['Zuhause', 'Schule'] }], senden: 'Plan erstellen' },
+  ]),
+  '```',
+  '',
+  'Und ein kleines Programm:',
+  '```ask-html',
+  '<style>button{padding:8px 14px;border-radius:8px;border:1px solid var(--ask-line);background:var(--ask-acc);color:var(--ask-acc-ink)}</style>',
+  '<p>Würfel: <strong id="w">–</strong></p><button id="b">Würfeln</button> <button id="s">Ergebnis senden</button>',
+  '<script>let z=0;b.onclick=()=>{z=1+Math.floor(Math.random()*6);w.textContent=z};s.onclick=()=>ask.senden("Ich habe eine "+z+" gewürfelt.")</script>',
+  '```',
+].join('\n');
+if (params.get('interaktiv') === 'demo') savedFree.push({ role: 'user', content: 'Zeig mir alles interaktiv.', time: now - 3600000 }, { role: 'assistant', content: uiDemo, stats: stats(400) });
 
 // Chats der Attrappe: jeder mit eigenem Verlauf und eigenem Auftrag, damit parallele Chats und der Wechsel prüfbar sind
 const store = new Map(); // id → { id, folder, items, running, started, pending, waits, stopped }
@@ -500,7 +535,10 @@ export function install() {
     askLoginWindow: async () => true, askOpenBrowser: async () => {},
     askUseToken: async (t) => (String(t).trim() ? { ok: true } : { ok: false, reason: 'Das sieht nicht wie ein Token aus. Kopiere es ganz, ohne Leerzeichen.' }),
     setModel: async (id) => { state = { ...state, model: id }; push(); }, setWebSearch: async (v) => { state = { ...state, webSearch: v }; push(); },
-    setChatMemory: async (v) => { state = { ...state, chatMemory: v }; push(); }, setThinking: async (v) => { state = { ...state, thinking: v }; push(); },
+    setChatMemory: async (v) => { state = { ...state, chatMemory: v }; push(); },
+    setInteractiveUi: async (v) => { state = { ...state, interactiveUi: v }; push(); },
+    // Im Browser ohne App gibt es kein Protokoll askui: Vorspann und HTML als blob-Adresse (nur für die Entwicklung)
+    uiPut: async (html) => URL.createObjectURL(new Blob([`${uiPrelude}\n${html}`], { type: 'text/html' })), setThinking: async (v) => { state = { ...state, thinking: v }; push(); },
     chatSend: async (text) => { const c = chatOf(state.chat.id); if (c.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' }; demoRun(c, text); return { ok: true }; },
     chatUndo: async () => ({ ok: true }), chatStop: async () => stopChat(state.chat.id), chatStopChat: async (_f, id) => { stopChat(id); return true; },
     // wie im Hauptprozess: zuerst der sichtbare Chat, sonst der Chat, der diese Frage gestellt hat

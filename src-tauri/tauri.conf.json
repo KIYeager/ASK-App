@@ -17,7 +17,7 @@
       "csp": {
         "default-src": "'self'",
         "img-src": "'self' askfile: http://askfile.localhost askmod: http://askmod.localhost data: blob:",
-        "frame-src": "askfile: http://askfile.localhost",
+        "frame-src": "askfile: http://askfile.localhost askui: http://askui.localhost",
         "media-src": "askfile: http://askfile.localhost askmod: http://askmod.localhost",
         "style-src": "'self' 'unsafe-inline' askmod: http://askmod.localhost",
         "font-src": "'self' data: askmod: http://askmod.localhost",

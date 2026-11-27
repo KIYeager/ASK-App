@@ -74,6 +74,8 @@ export function install() {
   setModel: (id) => call('model:set', id),
   setWebSearch: (on) => call('web:set', on),
   setChatMemory: (on) => call('memory:set', on),
+  setInteractiveUi: (on) => call('ui:set', on),
+  uiPut: (html) => call('ui:put', html),
   setThinking: (level) => call('thinking:set', level),
   chatSend: (text, files = [], kept = []) => call('chat:send', text, files, kept),
   chatRewind: () => call('chat:rewind'),

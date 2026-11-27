@@ -47,6 +47,7 @@ pub mod helpers;
 pub mod knowledge;
 pub mod extensions;
 pub mod visual;
+pub mod uiblocks;
 
 // Welle 3
 pub mod agent;

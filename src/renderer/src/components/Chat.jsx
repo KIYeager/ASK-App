@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import Icon, { TOOL_ICONS } from './Icon.jsx';
 import Markdown from './Markdown.jsx';
+import AnswerText from './UiBlocks.jsx';
 import { groupTitle, statsText } from '../lib/chatModel.mjs';
 import { baseName, extOf, fileBadge, fileUrl } from '../lib/format.js';
 import { errorDetails, errorHelp } from '../lib/errorHelp.mjs';
@@ -173,7 +174,7 @@ function Thought({ entry, ctx }) {
   return (
     <div className="msg thought">
       {entry.reasoning ? <Reasoning text={entry.reasoning} verbose={ctx.verbose} /> : null}
-      {String(entry.text || '').trim() ? <Markdown text={entry.text} isFile={ctx.isFile} onFile={ctx.openFileByName} onLink={ctx.openLink} onCopy={ctx.copy} /> : null}
+      {String(entry.text || '').trim() ? <AnswerText text={entry.text} ctx={ctx} /> : null}
     </div>
   );
 }
@@ -235,7 +236,7 @@ function Answer({ entry, streaming, ctx }) {
   return (
     <div className={`msg assistant${streaming ? ' streaming' : ''}`}>
       {entry.reasoning ? <Reasoning text={entry.reasoning} verbose={ctx.verbose} /> : null}
-      <Markdown text={entry.text} isFile={ctx.isFile} onFile={ctx.openFileByName} onLink={ctx.openLink} onCopy={ctx.copy} />
+      <AnswerText text={entry.text} streaming={streaming} ctx={ctx} />
       {!streaming ? (
         <div className="msg-actions">
           <button type="button" className="copy ghost-btn" data-text={entry.text}

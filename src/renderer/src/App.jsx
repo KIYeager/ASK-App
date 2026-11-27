@@ -754,6 +754,9 @@ export default function App() {
     // Plan umsetzen: auf Auto wechseln und loslegen; ändern: Wunsch ins Eingabefeld schreiben lassen
     implementPlan: async () => { if (runningRef.current || acts.current.blocker) return; await api().setSettings({ mode: 'auto' }); acts.current.send('Setze den Plan um.', []); },
     revisePlan: () => composer.current?.setText('Ändere den Plan: '),
+    // Interaktive Antworten (E80): Auswahl und Formulare senden; während eines Auftrags ins Eingabefeld
+    uiSend: (t) => { if (runningRef.current || acts.current.blocker) composer.current?.setText(t); else acts.current.send(t, []); },
+    uiCompose: (t) => composer.current?.setText(t),
     onMediaLoad: () => { const t = transcript.current; if (t && followRef.current) t.scrollTop = t.scrollHeight; },
   }), [verbose, running, activity, blocker, state, findFile, openFile, undoSnapshot, lastPlanKey]);
 
