@@ -138,10 +138,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .tab .swatch { width: 8px; height: 8px; border-radius: 50%; }
 .tab .swatch.busy { animation: tab-busy 1.2s ease-in-out infinite; }
 @keyframes tab-busy { 50% { opacity: .3; } }
-.tab-x { border: 0; background: none; color: var(--dim); margin-right: 6px; width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; flex: none; }
+.tab-x { border: 0; background: none; color: var(--dim); margin-right: 8px; width: 18px; height: 18px; padding: 0; border-radius: 50%; display: grid; place-items: center; flex: none; transition: background .12s, color .12s; }
 .tab:not(.on) .tab-x { opacity: 0; }
 .tab:hover .tab-x, .tab-x:focus-visible { opacity: 1; }
-.tab-x:hover { color: var(--text); background: var(--line); }
+/* Beim Darüberfahren ein kleiner, runder, dezenter Kreis statt eines Kastens */
+.tab-x:hover { color: var(--text); background: color-mix(in srgb, var(--text) 12%, transparent); }
 /* «+» auf der Höhe der Tabs (unten bündig wie die inaktiven Tabs), nicht in der Mitte der ganzen Kopfzeile */
 .tab-new { align-self: flex-end; flex: none; width: 28px; height: 28px; margin: 0 0 3px 4px; display: grid; place-items: center; padding: 0; }
 @media (prefers-reduced-motion: reduce) { .tab .swatch.busy { animation: none; } }
