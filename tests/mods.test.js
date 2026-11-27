@@ -28,7 +28,7 @@ test('Beispiel-Mods und Katalog sind gültig', () => {
     }
   }
   for (const name of fs.readdirSync('resources/standard-skills')) {
-    const text = fs.readFileSync(path.join('resources/standard-skills', name, 'SKILL.md'), 'utf8');
+    const text = fs.readFileSync(path.join('resources/standard-skills', name, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n'); // Windows checkt mit CRLF aus
     assert.match(text, new RegExp(`^---\\nname: ${name}\\ndescription: .{10,300}\\n`), `${name}: Kopf`);
     assert.ok(!text.replaceAll('«ß»', '').includes('ß'), `${name}: Schweizer Rechtschreibung`);
   }
