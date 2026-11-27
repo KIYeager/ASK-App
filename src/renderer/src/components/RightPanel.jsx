@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
 import GithubPane from './GithubPane.jsx';
+import DocsPane from './DocsPane.jsx';
 import { api } from '../api.js';
 import ServerBar from './Servers.jsx';
 import { baseName, extOf, fileBadge, fileUrl, formatSize } from '../lib/format.js';
@@ -309,7 +310,7 @@ function ModPanel({ el }) {
 // ---------- Panel ----------
 
 export default function RightPanel({ tab, setTab, root, free, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice,
-  servers = [], running, dialogOpen, onGithub, modPanels = [] }) {
+  servers = [], running, dialogOpen, onGithub, modPanels = [], docs = {} }) {
   const serversUp = servers.some((s) => s.state === 'läuft' || s.state === 'startet');
   const entry = selected ? (files.recent.find((f) => f.path === selected.path) || selected) : null;
   return (
@@ -317,6 +318,7 @@ export default function RightPanel({ tab, setTab, root, free, files, marks, remo
       <div className="rt" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'dateien'} className={tab === 'dateien' ? 'on' : ''} onClick={() => setTab('dateien')}><Icon name="folder" size={15} /> Dateien</button>
         <button type="button" role="tab" aria-selected={tab === 'vorschau'} className={tab === 'vorschau' ? 'on' : ''} onClick={() => setTab('vorschau')}><Icon name="eye" size={15} /> Vorschau</button>
+        <button id="tab-docs" type="button" role="tab" aria-selected={tab === 'docs'} className={tab === 'docs' ? 'on' : ''} onClick={() => setTab('docs')}><Icon name="doc" size={15} /> Docs</button>
         <button type="button" role="tab" aria-selected={tab === 'browser'} className={tab === 'browser' ? 'on' : ''} onClick={() => setTab('browser')}>
           <Icon name="browser" size={15} /> Browser{browser.running ? <span className="live-dot" aria-hidden="true" />
             : serversUp ? <span className="srv-dot up" title="Ein Server läuft" aria-hidden="true" /> : null}
@@ -351,6 +353,7 @@ export default function RightPanel({ tab, setTab, root, free, files, marks, remo
         ) : null}
         {tab === 'browser' ? <BrowserTab browser={browser} active={browserActive} onClose={onBrowserClose} onBig={onBrowserBig} big={browserBig}
           servers={servers} root={free ? '' : root} notice={notice} /> : null}
+        {tab === 'docs' ? <DocsPane root={root} free={free} files={files} running={running} notice={notice} {...docs} /> : null}
         {tab === 'github' && !free ? <GithubPane root={root} files={files} running={running} dialogOpen={dialogOpen} onConnect={onGithub} /> : null}
         {modPanels.filter((p) => tab === `mod:${p.key}`).map((p) => <ModPanel key={p.key} el={p.el} />)}
       </div>

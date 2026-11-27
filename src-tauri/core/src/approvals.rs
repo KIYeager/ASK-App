@@ -448,6 +448,11 @@ pub fn assess_risk(name: &str, args: &Value, ctx: &RiskCtx) -> Option<Risk> {
         }
         return None;
     }
+    // Docs (ENTSCHEIDE E81) ändern wie edit_file: im Projekt, mit Sicherung; nur im Modus «Nachfragen» eine Rückfrage
+    if name == "doc_bearbeiten" {
+        let Ok(rel) = crate::docs::doc_rel(&text_arg(args, "pfad")) else { return None };
+        return assess_risk("edit_file", &serde_json::json!({ "path": rel }), ctx);
+    }
     if name == "write_file" || name == "edit_file" {
         let rel = text_arg(args, "path");
         if rel.is_empty() {

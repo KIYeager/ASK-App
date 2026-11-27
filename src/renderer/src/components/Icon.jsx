@@ -6,6 +6,7 @@ const PATHS = {
   search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   file: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></>,
+  doc: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M8.5 12.5h7M8.5 16h7M8.5 9h2.5" /></>,
   read: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M9 13h6M9 17h4" /></>,
   check: <path d="m5 12 5 5L20 7" />,
   alert: <><path d="M12 3 2 20h20z" /><path d="M12 10v4M12 17v.5" /></>,
@@ -82,4 +83,5 @@ export const TOOL_ICONS = {
   github_status: 'github', github_clone: 'github', github_pull: 'github', github_push: 'github', github_create: 'github', github_branch: 'branch', github_pr: 'pr',
   frage_stellen: 'help', plan_vorlegen: 'map', server_starten: 'server', server_stoppen: 'server', server_liste: 'server',
   hilfsagent: 'spark', merken: 'pin', vergessen: 'trash', skill_lesen: 'read', skill_erstellen: 'plus', mod_erstellen: 'puzzle', mod_liste: 'puzzle', mod_lesen: 'read', mod_testen: 'eye', mod_einschalten: 'puzzle', katalog_suchen: 'search', katalog_hinzufuegen: 'down', // Gedächtnis und Skills (memorytools.js)
+  doc_liste: 'doc', doc_lesen: 'doc', doc_erstellen: 'doc', doc_bearbeiten: 'pen', doc_kommentieren: 'chat', // ASK Docs (E81)
 };
