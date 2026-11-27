@@ -257,6 +257,9 @@ pub mod native_low {
                     return Ok(());
                 }
             }
+            // Alte temporäre Dateien der Befehle wegräumen (nur was seit zwei Wochen liegt), ohne den Start aufzuhalten
+            let tmp = runtime.join("tmp");
+            tokio::task::spawn_blocking(move || crate::cleanup::cleanup_temp_dir(&tmp));
             let low = self.low_integrity && cfg!(windows);
             #[cfg(windows)]
             if low {

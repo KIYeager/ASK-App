@@ -31,6 +31,18 @@ pub const MAX_LINES: usize = 200;
 const LINE_CHARS: usize = 2000;
 /// laufende Server pro Projekt
 pub const MAX_SERVERS: usize = 5;
+/// So viele beendete Server bleiben in der Liste (jeder mit seiner letzten Ausgabe); ältere fallen heraus
+const MAX_STOPPED: usize = 8;
+
+/// Nimmt den Eintrag in `starting` auch dann wieder heraus, wenn der Start abgebrochen wird (Auftrag gestoppt):
+/// Sonst zählte er weiter als startender Server, und nach fünf solchen liesse sich keiner mehr starten.
+struct StartingGuard<'a>(&'a Servers, &'a str);
+
+impl Drop for StartingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.inner.starting.lock().remove(self.1);
+    }
+}
 const POLL_MS: u64 = 1000;
 /// läuft er so lange ohne erkannte Adresse, gilt er trotzdem als gestartet
 const READY_WITHOUT_URL_MS: i64 = 15000;
@@ -402,8 +414,10 @@ impl Servers {
             starting.insert(cmd.clone(), job.clone());
             job
         };
-        let result = job.await;
-        self.inner.starting.lock().remove(&cmd);
+        let result = {
+            let _guard = StartingGuard(self, &cmd);
+            job.await
+        };
         Ok(StartedServer { server: result.map_err(|e| anyhow!(e))?, existing: false })
     }
 
@@ -437,7 +451,20 @@ impl Servers {
             misses: 0,
             stopping: false,
         }));
-        self.inner.servers.lock().push(s.clone());
+        {
+            let mut all = self.inner.servers.lock();
+            // Beendete Server sammeln sich sonst über die Sitzung an: nur die letzten behalten
+            let stopped = all.iter().filter(|x| !active(&x.lock().state)).count();
+            let mut drop = stopped.saturating_sub(MAX_STOPPED);
+            all.retain(|x| {
+                if drop > 0 && !active(&x.lock().state) {
+                    drop -= 1;
+                    return false;
+                }
+                true
+            });
+            all.push(s.clone());
+        }
         self.apply(&s, res.json.as_ref().unwrap_or(&Value::Null)).await;
         self.changed();
         self.schedule();

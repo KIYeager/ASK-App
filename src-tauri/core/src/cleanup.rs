@@ -28,6 +28,19 @@ pub fn cleanup_work_dirs_at(root: &Path, now_ms: i64) -> usize {
     removed
 }
 
+/// Temporäre Dateien der Befehle des Modells (TEMP und TMP zeigen auf laufzeit\tmp, terminal.rs): Windows räumt
+/// dort nie auf, darum löscht die App beim Start des Terminals, was älter als `KEEP_DAYS` Tage ist.
+pub fn cleanup_temp_dir(dir: &Path) -> usize {
+    cleanup_temp_dir_at(dir, crate::util::now_ms())
+}
+
+pub fn cleanup_temp_dir_at(dir: &Path, now_ms: i64) -> usize {
+    let limit = (now_ms - KEEP_DAYS * 24 * 60 * 60 * 1000) as f64;
+    let mut removed = 0;
+    walk(dir, true, limit, &mut removed);
+    removed
+}
+
 fn mtime_ms(meta: &std::fs::Metadata) -> Option<f64> {
     let d = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
     Some(d.as_secs() as f64 * 1000.0 + f64::from(d.subsec_nanos()) / 1e6)
@@ -99,6 +112,21 @@ mod tests {
         assert!(!root.join(".ask/skripte/chat-a").exists(), "leerer Chat-Ordner entfernt");
         assert!(root.join(".ask/skripte").exists(), "Hauptordner bleibt");
         assert!(new_script.exists() && chat.exists() && result.exists());
+    }
+
+    #[test]
+    fn temp_ordner_alte_dateien_weg_neue_und_der_ordner_selbst_bleiben() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir.path().join("tmp");
+        let keep = KEEP_DAYS as u64;
+        let old = file(&tmp, "pip-build-1/alt.whl", keep + 3);
+        let old_top = file(&tmp, "tmpabc.txt", keep + 1);
+        let new = file(&tmp, "lauf/neu.csv", 2);
+        assert_eq!(cleanup_temp_dir(&tmp), 2);
+        assert!(!old.exists() && !old_top.exists() && new.exists());
+        assert!(!tmp.join("pip-build-1").exists(), "leerer Unterordner entfernt");
+        assert!(tmp.exists(), "der Temp-Ordner selbst bleibt");
+        assert_eq!(cleanup_temp_dir(&dir.path().join("gibt-es-nicht")), 0);
     }
 
     #[test]

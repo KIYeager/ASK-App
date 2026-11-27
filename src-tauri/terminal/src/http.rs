@@ -80,6 +80,19 @@ pub async fn serve(config: Config) -> std::io::Result<ServerHandle> {
         low_integrity,
     });
     let (stop, stop_rx) = tokio::sync::watch::channel(false);
+    // Fertige Befehle (mit bis zu 50 MB Ausgabe) auch dann vergessen, wenn danach lange kein Aufruf mehr kommt
+    {
+        let (registry, mut tick_stop) = (registry.clone(), stop_rx.clone());
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => registry.cleanup_expired(),
+                    _ = tick_stop.changed() => break,
+                }
+            }
+        });
+    }
     tokio::spawn(async move {
         let mut accept_stop = stop_rx.clone();
         loop {

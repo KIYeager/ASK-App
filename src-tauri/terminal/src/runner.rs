@@ -43,16 +43,22 @@ struct Log {
     rotated: bool,
 }
 
+/// Was ein Eintrag neben seinem Text belegt (Eintrag selbst und die Verwaltung seines Textes). Zählte nur der Text,
+/// belegten Millionen sehr kurzer Zeilen (eine Schleife mit print) ein Vielfaches der Grenze.
+const ENTRY_OVERHEAD: usize = std::mem::size_of::<Entry>() + 32;
+
 impl Log {
     fn push(&mut self, kind: &'static str, data: String) {
-        if self.bytes + data.len() > MAX_LOG_BYTES && !self.entries.is_empty() {
+        let cost = data.len() + ENTRY_OVERHEAD;
+        if self.bytes + cost > MAX_LOG_BYTES && !self.entries.is_empty() {
             let drop = self.entries.len().div_ceil(2);
-            let removed: usize = self.entries.drain(..drop).map(|e| e.data.len()).sum();
+            let removed: usize = self.entries.drain(..drop).map(|e| e.data.len() + ENTRY_OVERHEAD).sum();
             self.base += drop;
             self.bytes -= removed;
             self.rotated = true;
+            self.entries.shrink_to_fit();
         }
-        self.bytes += data.len();
+        self.bytes += cost;
         self.entries.push(Entry { kind, data });
     }
 }
@@ -374,5 +380,25 @@ fn shell_command(command: &str) -> Command {
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg(command).process_group(0).kill_on_drop(false);
         cmd
+    }
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+
+    #[test]
+    fn protokoll_zaehlt_auch_die_verwaltung_kurzer_zeilen() {
+        // Sehr viele sehr kurze Zeilen (Schleife mit print): Die Grenze gilt für den belegten Speicher, nicht nur für den Text
+        let mut log = Log::default();
+        let lines = MAX_LOG_BYTES / ENTRY_OVERHEAD + 10;
+        for _ in 0..lines {
+            log.push("output", "1".to_string());
+        }
+        assert!(log.rotated, "ältere Zeilen wurden verworfen");
+        assert!(log.bytes <= MAX_LOG_BYTES);
+        assert!(log.entries.len() < lines);
+        assert_eq!(log.base + log.entries.len(), lines, "die Nummern der Zeilen stimmen weiter");
+        assert_eq!(log.bytes, log.entries.iter().map(|e| e.data.len() + ENTRY_OVERHEAD).sum::<usize>());
     }
 }
