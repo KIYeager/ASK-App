@@ -545,6 +545,7 @@ async fn run_command(terminal: &dyn TerminalEndpoint, args: &Value, ctx: &ToolCt
     let id = data.get("id").cloned().unwrap_or(Value::Null);
     let id_text = js_string(&id);
     let mut output = output_text(&data);
+    trim_live(&mut output);
     let mut offset = data.get("next_offset").and_then(Value::as_i64).unwrap_or(output_len(&data) as i64);
     let end = Instant::now() + Duration::from_secs_f64(limit);
     let snapshot = EndpointSnapshot::of(terminal);
@@ -618,7 +619,8 @@ async fn run_command(terminal: &dyn TerminalEndpoint, args: &Value, ctx: &ToolCt
 async fn command_status(terminal: &dyn TerminalEndpoint, args: &Value) -> Result<ToolResult> {
     let res = request(terminal, "GET", &format!("/execute/{}/status?{}", encode_uri_component(&js_string(&arg(args, "id"))), q(&[("wait", json!(30))])), None, REQUEST_TIMEOUT_MS).await?;
     let Some(json) = res.json.clone().filter(|_| res.status == 200) else { return Err(fail(&res)) };
-    let out = output_text(&json);
+    let mut out = output_text(&json);
+    trim_live(&mut out);
     let head = if json.get("status") == Some(&json!("running")) {
         "Läuft noch.".to_string()
     } else {

@@ -34,13 +34,20 @@ pub const MAX_SERVERS: usize = 5;
 /// So viele beendete Server bleiben in der Liste (jeder mit seiner letzten Ausgabe); ältere fallen heraus
 const MAX_STOPPED: usize = 8;
 
-/// Nimmt den Eintrag in `starting` auch dann wieder heraus, wenn der Start abgebrochen wird (Auftrag gestoppt):
-/// Sonst zählte er weiter als startender Server, und nach fünf solchen liesse sich keiner mehr starten.
+/// Ein Aufruf, der auf einen Start wartet (der startende selbst oder ein zweiter mit demselben Befehl). Fällt er
+/// weg, zählt die Tabelle `starting` einen Wartenden weniger; ist der Start fertig oder wartet niemand mehr, fällt
+/// der Eintrag heraus. So bleibt nach einem abgebrochenen Start (Auftrag gestoppt) kein Eintrag stehen, der weiter als
+/// startender Server zählt, und solange noch jemand wartet, startet kein dritter Aufruf denselben Befehl nochmals.
 struct StartingGuard<'a>(&'a Servers, &'a str);
 
 impl Drop for StartingGuard<'_> {
     fn drop(&mut self) {
-        self.0.inner.starting.lock().remove(self.1);
+        let mut starting = self.0.inner.starting.lock();
+        let Some((job, waiting)) = starting.get_mut(self.1) else { return };
+        *waiting = waiting.saturating_sub(1);
+        if *waiting == 0 || job.peek().is_some() {
+            starting.remove(self.1);
+        }
     }
 }
 const POLL_MS: u64 = 1000;
@@ -298,7 +305,8 @@ struct Inner {
     timer: Mutex<Option<JoinHandle<()>>>,
     polling: AtomicBool,
     /// Befehl → die noch laufenden Starts (reserviert den Platz vor dem ersten await)
-    starting: Mutex<HashMap<String, SharedStart>>,
+    /// Befehl → (laufender Start, Anzahl der Aufrufe, die darauf warten)
+    starting: Mutex<HashMap<String, (SharedStart, usize)>>,
     events: Emitter,
 }
 
@@ -398,8 +406,12 @@ impl Servers {
             return Ok(StartedServer { server: same, existing: true });
         }
         // Zweiter Start desselben Befehls, während der erste noch läuft: auf dessen Ergebnis warten statt nochmals starten
-        let pending = self.inner.starting.lock().get(&cmd).cloned();
+        let pending = self.inner.starting.lock().get_mut(&cmd).map(|(job, waiting)| {
+            *waiting += 1;
+            job.clone()
+        });
         if let Some(pending) = pending {
+            let _guard = StartingGuard(self, &cmd);
             let server = pending.await.map_err(|e| anyhow!(e))?;
             return Ok(StartedServer { server, existing: true });
         }
@@ -411,13 +423,11 @@ impl Servers {
             let me = self.clone();
             let (c, n, b) = (cmd.clone(), name.to_string(), by.to_string());
             let job: SharedStart = async move { me.launch(c, n, b).await.map_err(|e| e.to_string()) }.boxed().shared();
-            starting.insert(cmd.clone(), job.clone());
+            starting.insert(cmd.clone(), (job.clone(), 1));
             job
         };
-        let result = {
-            let _guard = StartingGuard(self, &cmd);
-            job.await
-        };
+        let _guard = StartingGuard(self, &cmd);
+        let result = job.await;
         Ok(StartedServer { server: result.map_err(|e| anyhow!(e))?, existing: false })
     }
 

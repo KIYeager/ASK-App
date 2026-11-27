@@ -200,3 +200,25 @@ test('Aufträge: unveränderte behalten ihr Objekt, nur der geänderte ist neu',
   assert.equal(third[0], first[0]);
   assert.notEqual(third[1], second[1]);
 });
+
+test('Gespeicherte Hinweise und Fehler stehen nach dem Öffnen wieder im Chat; dieselbe Rückfrage nur einmal', async () => {
+  const { applyEvent, buildTurns, fromTranscript, loadChat } = await load();
+  const m = fromTranscript([
+    { role: 'user', content: 'eins' },
+    { role: 'error', text: 'ASK: kaputt' },
+    { role: 'notice', text: 'Der Chat ist lang geworden: Ältere Aufträge gehen ab hier als Zusammenfassung an das Modell.' },
+    { role: 'user', content: 'zwei' },
+    { role: 'assistant', content: 'Antwort' },
+  ]);
+  const turns = buildTurns(m);
+  assert.equal(turns.length, 2);
+  assert.deepEqual(turns[0].after.map((e) => e.k), ['error', 'notice']);
+  assert.equal(turns[0].after[0].text, 'ASK: kaputt');
+  // Rückfrage kommt mit dem Verlauf und gleich nochmals als Ereignis: eine Karte, die sich beantworten lässt
+  const approval = { type: 'approval', id: 'p1', title: 'Darf ASK löschen?' };
+  let live = loadChat([{ role: 'user', content: 'x' }], true, [approval]);
+  live = applyEvent(live, approval);
+  assert.equal(live.entries.filter((e) => e.k === 'approval').length, 1);
+  live = applyEvent(live, { type: 'approval-end', id: 'p1', answer: 'yes' });
+  assert.equal(live.entries.find((e) => e.k === 'approval' && !e.answer), undefined);
+});

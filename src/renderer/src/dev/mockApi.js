@@ -16,6 +16,7 @@ let state = {
   askUrl: 'https://ask.ict-tfbern.ch', folder: FOLDER, recent: [FOLDER], warningAccepted: true, sidebarOpen: true, chatbarOpen: true,
   terminal: { state: 'läuft', folder: FOLDER, lowIntegrity: true }, ask: { state: 'angemeldet', user: 'Lea Muster' },
   models: [{ id: 'qwen3-coder', name: 'Qwen3 Coder' }, { id: 'gpt-oss', name: 'GPT-OSS 120B' }], model: 'qwen3-coder',
+  contextSize: 250000, contextReserve: 30000,
   webSearch: false, chatMemory: false, memory: true, thinking: 'mittel', webSearchAvailable: true, approvals: 'heikel', mode: 'auto', theme: 'system',
   version: '0.2.3', update: { state: params.get('update') || 'verfügbar', current: '0.2.3', version: '0.2.4', percent: 42, countdown: 7, beta: false, enabled: true, portable: false, postponed: false },
   prefs: { verbose: false, todoCollapsed: true, tourDone: !params.get('tour') }, // ?tour=1 zeigt die Einführung
@@ -479,6 +480,13 @@ export function install() {
     chatSend: async (text) => { const c = chatOf(state.chat.id); if (c.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' }; demoRun(c, text); return { ok: true }; },
     chatUndo: async () => ({ ok: true }), chatStop: async () => stopChat(state.chat.id), chatStopChat: async (_f, id) => { stopChat(id); return true; },
     // wie im Hauptprozess: zuerst der sichtbare Chat, sonst der Chat, der diese Frage gestellt hat
+    chatCompact: async () => {
+      const c = chatOf(state.chat.id);
+      if (c.items.filter((x) => x.role === 'user').length < 2) return { ok: false, reason: 'Der Chat ist noch kurz: Es gibt nichts zusammenzufassen.' };
+      await wait(600);
+      emit('chat:event', { type: 'notice', text: 'Der Chat ist lang geworden: Ältere Aufträge gehen ab hier als Zusammenfassung an das Modell. Du siehst weiterhin den ganzen Verlauf.', chatId: c.id, folder: c.folder });
+      return { ok: true };
+    },
     chatGoal: async () => {}, chatApprove: async (id, a) => answerWait(id, a), chatAnswer: async (id, t) => answerWait(id, t),
     ...ghMock,
     chatNew: async (folder) => { show(`neu${Date.now()}`, folder || state.folder); return { ok: true }; },

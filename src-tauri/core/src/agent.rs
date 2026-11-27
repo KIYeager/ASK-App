@@ -207,6 +207,70 @@ pub static TOO_LONG: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)context length|context window|maximum context|context_length|too many tokens|input tokens|prompt is too long|exceeds? the (model'?s? )?(maximum|max)|reduce the length").expect("regex")
 });
 
+/// Zusammenfassen des Verlaufs (ENTSCHEIDE E78): Wird der Chat für das Modell zu lang, fasst ASK die älteren
+/// Aufträge zusammen und arbeitet weiter. Die Zusammenfassung hängt an der Eingabe, mit der der erhaltene Teil
+/// beginnt (`summaryBefore`); nichts wird gelöscht, die Person sieht weiter den ganzen Verlauf.
+const COMPACT_INPUT_MAX: usize = 60_000; // Zeichen des alten Verlaufs, die höchstens in die Anfrage gehen
+const COMPACT_TIMEOUT: Duration = Duration::from_secs(150);
+const COMPACT_SYSTEM: &str = "Du fasst einen langen Chat zwischen einer Person und dem Assistenten ASK zusammen, damit ASK danach nahtlos weiterarbeiten kann, ohne den alten Verlauf zu sehen. Schreib auf Deutsch (Schweizer Rechtschreibung, ss statt ß), sachlich, in Stichpunkten, höchstens 450 Wörter, mit diesen Teilen:\n1. Ziel: was die Person erreichen will.\n2. Vorgaben und Entscheide der Person (Stil, Werkzeuge, was sie abgelehnt hat).\n3. Erledigt: was schon gemacht ist, mit Dateien und Pfaden.\n4. Offen: was als Nächstes ansteht, bekannte Fehler.\n5. Wichtige Angaben: Namen, Zahlen, Befehle, Adressen, die später gebraucht werden.\nNichts erfinden. Keine Anrede, kein Schlusswort.";
+const SUMMARY_HEAD: &str = "[Zusammenfassung des bisherigen Chats. Der frühere Verlauf ist für dich nicht mehr sichtbar, weil er zu lang wurde; die Person sieht ihn noch.]\n";
+const COMPACT_NOTICE: &str = "Der Chat ist lang geworden: Ältere Aufträge gehen ab hier als Zusammenfassung an das Modell. Du siehst weiterhin den ganzen Verlauf.";
+
+/// Beginnt hier ein Auftrag der Person? (nicht: Anstoss im Ziel-Modus, Bilder einer Ansicht)
+fn turn_start(m: &Value) -> bool {
+    m["role"] == "user" && !truthy(&m["auto"]) && m["note"] != "view"
+}
+
+/// Stelle, ab der der Verlauf wörtlich an das Modell geht: die letzte Eingabe mit Zusammenfassung davor
+pub fn summary_index(messages: &[Value]) -> Option<usize> {
+    messages.iter().rposition(|m| truthy(&m["summaryBefore"]["content"]))
+}
+
+/// Was zusammengefasst wird: (Anfang, Schnitt). Ab dem Schnitt bleiben die letzten `keep` Aufträge wörtlich.
+/// `None`: Es gibt davor nichts zusammenzufassen.
+pub fn compact_range(messages: &[Value], keep: usize) -> Option<(usize, usize)> {
+    let start = summary_index(messages).unwrap_or(0);
+    let turns: Vec<usize> = (start..messages.len()).filter(|i| turn_start(&messages[*i])).collect();
+    let cut = *turns.get(turns.len().checked_sub(keep.max(1))?)?;
+    // Mindestens ein ganzer Auftrag muss vor dem Schnitt liegen
+    (cut > start && messages[start..cut].iter().any(|m| m["role"] == "assistant" || m["role"] == "tool")).then_some((start, cut))
+}
+
+/// Alter Verlauf als Text für die Anfrage zum Zusammenfassen: Eingaben, Antworten und Werkzeuge kurz
+pub fn compact_text(messages: &[Value], max: usize) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for m in messages {
+        if truthy(&m["summaryBefore"]["content"]) {
+            lines.push(format!("Frühere Zusammenfassung:\n{}", js_string(&m["summaryBefore"]["content"])));
+        }
+        match m["role"].as_str().unwrap_or("") {
+            "user" if m["note"] == "view" => {}
+            "user" if truthy(&m["auto"]) => {}
+            "user" => {
+                let files: Vec<String> = arr(&m["attachments"]).iter().map(|a| js_string(&a["name"])).collect();
+                let tail = if files.is_empty() { String::new() } else { format!(" [Anhänge: {}]", files.join(", ")) };
+                lines.push(format!("Person: {}{tail}", clip(&js_string(&m["content"]), 2000)));
+            }
+            "assistant" => {
+                let text = js_string(&m["content"]);
+                if !text.trim().is_empty() {
+                    lines.push(format!("ASK: {}", clip(&text, 2000)));
+                }
+                for c in arr(&m["tool_calls"]) {
+                    lines.push(format!("ASK ruft {} auf: {}", js_string(&c["function"]["name"]), clip(&js_string(&c["function"]["arguments"]), 240)));
+                }
+            }
+            "tool" => {
+                let ok = if m["ok"] == json!(false) { " (fehlgeschlagen)" } else { "" };
+                let text = if truthy(&m["summary"]) { js_string(&m["summary"]) } else { clip(&js_string(&m["content"]), 240) };
+                lines.push(format!("Ergebnis {}{ok}: {text}", js_string(&m["name"])));
+            }
+            _ => {}
+        }
+    }
+    clip(&lines.join("\n"), max)
+}
+
 const IMAGE_TURNS: usize = 2; // Bilder aus so vielen der letzten Eingaben gehen an das Modell
 const VIEW_TURNS: usize = 2; // ebenso aus so vielen der letzten Ansichten (view_file, browser)
 const CHAT_DIR: [&str; 2] = [".ask", "chats"];
@@ -354,6 +418,11 @@ pub type ImageUrlFn = Arc<dyn Fn(&Value) -> Option<String> + Send + Sync>;
 /// (auch für frühere Schritte, die noch mit Werkzeugliste liefen). `image_url(anhang)` liefert Bilder
 /// als data-URL; sie gehen nur bei den letzten IMAGE_TURNS Eingaben mit, ältere nur als Pfad.
 pub fn api_messages(system: &str, messages: &[Value], text_mode: bool, image_url: Option<&ImageFn>, budget: &Budget) -> Vec<Value> {
+    // Zusammengefasster Verlauf (E78): Das Modell bekommt die Zusammenfassung und alles ab der Eingabe, an der sie hängt
+    let (summary, messages) = match summary_index(messages) {
+        Some(i) => (Some(js_string(&messages[i]["summaryBefore"]["content"])), &messages[i..]),
+        None => (None, messages),
+    };
     let tool_indexes: Vec<usize> = messages.iter().enumerate().filter(|(_, m)| m["role"] == "tool").map(|(i, _)| i).collect();
     let recent_list = &tool_indexes[tool_indexes.len().saturating_sub(budget.keep)..];
     let recent: HashSet<usize> = recent_list.iter().copied().collect();
@@ -391,6 +460,9 @@ pub fn api_messages(system: &str, messages: &[Value], text_mode: bool, image_url
         HashSet::new()
     };
     let mut out = vec![json!({ "role": "system", "content": system })];
+    if let Some(summary) = summary {
+        out.push(json!({ "role": "user", "content": format!("{SUMMARY_HEAD}{summary}") }));
+    }
     for (i, m) in messages.iter().enumerate() {
         match m["role"].as_str().unwrap_or("") {
             "user" => {
@@ -450,6 +522,25 @@ pub fn api_messages(system: &str, messages: &[Value], text_mode: bool, image_url
                 }
             }
             _ => {}
+        }
+    }
+    // Aufrufe ohne Ergebnis (die App wurde während des Schritts beendet): ASK lehnt einen Verlauf ab, in dem auf
+    // tool_calls nicht für jeden Aufruf eine Antwort folgt, und der Chat wäre für immer unbrauchbar
+    let mut i = 0;
+    while i < out.len() {
+        let ids: Vec<Value> = if out[i]["role"] == "assistant" { arr(&out[i]["tool_calls"]).iter().map(|c| c["id"].clone()).collect() } else { Vec::new() };
+        i += 1;
+        if ids.is_empty() {
+            continue;
+        }
+        let mut answered: Vec<Value> = Vec::new();
+        while i < out.len() && out[i]["role"] == "tool" {
+            answered.push(out[i]["tool_call_id"].clone());
+            i += 1;
+        }
+        for id in ids.into_iter().filter(|id| !answered.contains(id)) {
+            out.insert(i, json!({ "role": "tool", "tool_call_id": id, "content": "Nicht ausgeführt: Der Schritt wurde abgebrochen, bevor ein Ergebnis da war." }));
+            i += 1;
         }
     }
     out
@@ -545,6 +636,9 @@ pub struct AgentOptions {
     pub auto_title: bool,
     /// Chat ohne Projekt (ENTSCHEIDE E78): nur die Werkzeuge aus `FREE_ALLOWED`, kein Planmodus
     pub free: bool,
+    /// Reserve des Kontextfensters in Token: Ist der Verlauf bis auf diese Reserve voll, fasst ASK vor dem nächsten
+    /// Auftrag die älteren Aufträge zusammen (E78). 0: nie vorbeugend, nur wenn ASK den Verlauf ablehnt.
+    pub get_compact_reserve: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
 impl AgentOptions {
@@ -584,6 +678,7 @@ impl AgentOptions {
             get_ask_before: Arc::new(Vec::new),
             auto_title: false,
             free: false,
+            get_compact_reserve: Arc::new(|| 0),
         }
     }
 }
@@ -646,7 +741,8 @@ struct Inner {
     last_skipped: String,
     turn_sources: Option<TurnSources>,
     /// Grösse des Verlaufs: (Chat, Anzahl Nachrichten, Token), nur für die Schätzung in `context`
-    sized: Option<(String, usize, i64)>,
+    /// Schätzung der Token: (Chat, Anzahl Nachrichten, Stelle der Zusammenfassung, Token)
+    sized: Option<(String, usize, usize, i64)>,
     summaries: HashMap<PathBuf, (SystemTime, Value)>,
 }
 
@@ -689,6 +785,10 @@ pub struct Agent {
     /// auf eine Antwort wartet, bekommt sie mit dem Verlauf nochmals (`pending_events`), sonst sähe man die Frage nicht
     /// mehr und könnte nur noch stoppen.
     open_events: Mutex<Vec<(String, Value)>>,
+    /// Es läuft gerade eine Anfrage zum Zusammenfassen
+    compacting: AtomicBool,
+    /// Das letzte Speichern ist gescheitert (einmal gemeldet, bis es wieder klappt)
+    save_failed: AtomicBool,
 }
 
 fn blank() -> Value {
@@ -723,6 +823,8 @@ impl Agent {
             approval_text: Mutex::new(HashMap::new()),
             questions: Mutex::new(HashMap::new()),
             open_events: Mutex::new(Vec::new()),
+            compacting: AtomicBool::new(false),
+            save_failed: AtomicBool::new(false),
         })
     }
 
@@ -866,9 +968,12 @@ impl Agent {
     pub fn context(&self) -> Value {
         let limit = (self.o.get_context_limit)(&(self.o.get_model)());
         let mut g = self.inner.lock();
+        let cut = summary_index(arr(&g.chat["messages"]));
+        // Seit der letzten Antwort zusammengefasst? Dann stimmen deren Tokenzahlen nicht mehr: schätzen
+        let summarized_at = cut.and_then(|i| g.chat["messages"][i]["summaryBefore"]["time"].as_i64()).unwrap_or(0);
         let last = arr(&g.chat["messages"]).iter().rev().find(|m| m["role"] == "assistant" && truthy(&m["stats"])).cloned();
         if let Some(last) = &last {
-            if truthy(&last["stats"]["promptTokens"]) {
+            if truthy(&last["stats"]["promptTokens"]) && last["time"].as_i64().unwrap_or(0) >= summarized_at {
                 let tokens = last["stats"]["promptTokens"].as_i64().unwrap_or(0) + last["stats"]["tokens"].as_i64().unwrap_or(0);
                 return json!({ "tokens": tokens, "estimated": false, "limit": limit });
             }
@@ -878,8 +983,10 @@ impl Agent {
         }
         let id = js_string(&g.chat["id"]);
         let n = arr(&g.chat["messages"]).len();
-        if !matches!(&g.sized, Some((c, k, _)) if *c == id && *k == n) {
-            let chars: usize = arr(&g.chat["messages"])
+        let from = cut.unwrap_or(0);
+        if !matches!(&g.sized, Some((c, k, f, _)) if *c == id && *k == n && *f == from) {
+            let summary = cut.map(|i| js_string(&g.chat["messages"][i]["summaryBefore"]["content"]).encode_utf16().count()).unwrap_or(0);
+            let chars: usize = arr(&g.chat["messages"])[from..]
                 .iter()
                 .filter(|m| m["role"] != "note")
                 .map(|m| {
@@ -887,10 +994,86 @@ impl Agent {
                     content + arr(&m["tool_calls"]).iter().map(|t| if truthy(&t["function"]["arguments"]) { js_string(&t["function"]["arguments"]).encode_utf16().count() } else { 0 }).sum::<usize>()
                 })
                 .sum();
-            g.sized = Some((id, n, (chars as f64 / 3.6).round() as i64));
+            g.sized = Some((id, n, from, ((chars + summary) as f64 / 3.6).round() as i64));
         }
-        let tokens = g.sized.as_ref().map(|s| s.2).unwrap_or(0);
+        let tokens = g.sized.as_ref().map(|s| s.3).unwrap_or(0);
         json!({ "tokens": tokens, "estimated": true, "limit": limit })
+    }
+
+    /// Ältere Aufträge zusammenfassen (E78). `keep`: so viele der letzten Aufträge bleiben wörtlich. true, wenn
+    /// zusammengefasst wurde; false, wenn es nichts zusammenzufassen gab oder die Anfrage scheiterte (dann bleibt
+    /// der Chat, wie er war).
+    pub async fn compact(&self, keep: usize, signal: Option<&Signal>) -> bool {
+        if self.compacting.swap(true, Ordering::SeqCst) {
+            return false; // läuft schon
+        }
+        let done = self.compact_inner(keep, signal).await;
+        self.compacting.store(false, Ordering::SeqCst);
+        done
+    }
+
+    async fn compact_inner(&self, keep: usize, signal: Option<&Signal>) -> bool {
+        let model = (self.o.get_model)();
+        let limit = (self.o.get_context_limit)(&model);
+        let (chat_id, text, marker) = {
+            let g = self.inner.lock();
+            let msgs = arr(&g.chat["messages"]);
+            let Some((start, cut)) = compact_range(msgs, keep) else { return false };
+            // Höchstens ein Drittel des Fensters für den alten Verlauf (3.6 Zeichen pro Token), sonst passt die Anfrage selbst nicht
+            let max = if limit > 0 { ((limit as f64) * 3.6 / 3.0) as usize } else { COMPACT_INPUT_MAX }.clamp(6_000, COMPACT_INPUT_MAX);
+            // Woran die Stelle wiederzuerkennen ist, falls sich der Chat während der Anfrage ändert
+            (js_string(&g.chat["id"]), compact_text(&msgs[start..cut], max), (cut, msgs[cut]["time"].clone(), js_string(&msgs[cut]["content"])))
+        };
+        if model.is_empty() || text.trim().is_empty() {
+            return false;
+        }
+        let req = ChatRequest {
+            model,
+            messages: vec![json!({ "role": "system", "content": COMPACT_SYSTEM }), json!({ "role": "user", "content": format!("Der bisherige Chat:\n\n{text}") })],
+            tools: None,
+            web_search: false,
+            thinking: "tief".into(),
+            signal: signal.cloned(),
+            on_delta: None,
+        };
+        let Ok(Ok(done)) = tokio::time::timeout(COMPACT_TIMEOUT, self.o.ask.chat(req)).await else { return false };
+        let summary = re!(r"(?s)<think>.*?</think>").replace_all(&done.content, "").trim().to_string();
+        if summary.chars().count() < 20 || signal.is_some_and(Signal::is_cancelled) {
+            return false;
+        }
+        {
+            let mut g = self.inner.lock();
+            // Anderer Chat geöffnet oder die Eingabe zurückgenommen, während die Anfrage lief: nichts ändern
+            let (cut, time, content) = &marker;
+            let same = js_string(&g.chat["id"]) == chat_id && g.chat["messages"].get(*cut).is_some_and(|m| turn_start(m) && m["time"] == *time && js_string(&m["content"]) == *content);
+            if !same {
+                return false;
+            }
+            g.chat["messages"][*cut]["summaryBefore"] = json!({ "content": take_chars(&summary, 6000), "time": now_ms() });
+            g.tight_for.remove(&chat_id); // der Verlauf ist wieder kurz: nichts mehr stark kürzen
+            g.sized = None;
+        }
+        self.save();
+        // Nicht als Notiz speichern: Der Hinweis entsteht beim Laden aus `summaryBefore` (transcript)
+        self.events.emit("event", &json!({ "type": "notice", "text": COMPACT_NOTICE }));
+        self.emit_changed();
+        true
+    }
+
+    /// Befehl /zusammenfassen: jetzt zusammenfassen, auch wenn noch Platz ist. Nicht während eines Auftrags.
+    pub async fn compact_now(&self) -> Value {
+        if self.running() || self.undoing() {
+            return json!({ "ok": false, "reason": "Das geht erst, wenn der Auftrag fertig ist." });
+        }
+        let has = compact_range(arr(&self.inner.lock().chat["messages"]), 1).is_some();
+        if !has {
+            return json!({ "ok": false, "reason": "Der Chat ist noch kurz: Es gibt nichts zusammenzufassen." });
+        }
+        if self.compact(1, None).await {
+            json!({ "ok": true })
+        } else {
+            json!({ "ok": false, "reason": "Das Zusammenfassen hat nicht geklappt. Der Chat bleibt, wie er war." })
+        }
     }
 
     /// /goal: Ziel des Chats. Das Modell arbeitet weiter, bis es goal_done aufruft (siehe `run_turn`).
@@ -925,16 +1108,20 @@ impl Agent {
             g.chat["updated"] = json!(now_ms());
             (js_string(&g.chat["id"]), g.chat.to_string())
         };
-        // Ordner nicht beschreibbar: Chat bleibt nur im Speicher
-        if std::fs::create_dir_all(&dir).is_err() {
-            return;
-        }
         let file = dir.join(format!("{id}.json"));
         // Erst daneben schreiben, dann umbenennen: Ein Absturz mitten im Schreiben zerstört den Chat nicht
         let tmp = dir.join(format!("{id}.json.tmp"));
-        if std::fs::write(&tmp, &text).and_then(|_| std::fs::rename(&tmp, &file)).is_err() {
-            let _ = std::fs::remove_file(&tmp);
-            let _ = std::fs::write(&file, &text);
+        let written = std::fs::create_dir_all(&dir).is_ok()
+            && (std::fs::write(&tmp, &text).and_then(|_| std::fs::rename(&tmp, &file)).is_ok() || {
+                let _ = std::fs::remove_file(&tmp);
+                std::fs::write(&file, &text).is_ok()
+            });
+        // Ordner nicht beschreibbar (gesperrt, Datenträger voll): Der Chat bleibt nur im Speicher. Das einmal sagen,
+        // sonst ist er nach dem Schliessen der App ohne Vorwarnung weg.
+        if written {
+            self.save_failed.store(false, Ordering::SeqCst);
+        } else if !self.save_failed.swap(true, Ordering::SeqCst) {
+            self.events.emit("event", &json!({ "type": "notice", "text": "Der Chat lässt sich gerade nicht speichern (Ordner gesperrt oder Datenträger voll?). Er bleibt offen, ist aber nach dem Schliessen von ASK weg, wenn das so bleibt." }));
         }
     }
 
@@ -989,21 +1176,27 @@ impl Agent {
         if current {
             change(&mut self.inner.lock().chat);
             self.save();
-        } else {
-            let file = Self::chat_dir_of(folder).join(format!("{id}.json"));
-            let done = (|| -> Option<()> {
-                let mut chat: Value = serde_json::from_str(&std::fs::read_to_string(&file).ok()?).ok()?;
-                change(&mut chat);
-                let tmp = PathBuf::from(format!("{}.tmp", file.display()));
-                std::fs::write(&tmp, chat.to_string()).ok()?;
-                std::fs::rename(&tmp, &file).ok()
-            })();
-            if done.is_none() {
-                return false;
-            }
+        } else if !Self::patch_file(folder, id, change) {
+            return false;
         }
         self.emit_changed();
         true
+    }
+
+    /// Einen gespeicherten Chat in der Datei ändern (gibt es sie nicht mehr: false)
+    fn patch_file(folder: &str, id: &str, change: impl FnOnce(&mut Value)) -> bool {
+        if !valid_id(id) || folder.is_empty() {
+            return false;
+        }
+        let file = Self::chat_dir_of(folder).join(format!("{id}.json"));
+        (|| -> Option<()> {
+            let mut chat: Value = serde_json::from_str(&std::fs::read_to_string(&file).ok()?).ok()?;
+            change(&mut chat);
+            let tmp = PathBuf::from(format!("{}.tmp", file.display()));
+            std::fs::write(&tmp, chat.to_string()).ok()?;
+            std::fs::rename(&tmp, &file).ok()
+        })()
+        .is_some()
     }
 
     pub fn rename(&self, folder: &str, id: &str, title: &str) -> bool {
@@ -1135,7 +1328,11 @@ impl Agent {
                 return;
             }
         }
-        let latest = if wanted == Some(NEW) { None } else { self.list_current().as_array().and_then(|l| l.first().cloned()) };
+        // Der zuletzt benutzte Chat. Die Liste führt angeheftete zuerst; sonst öffnete jeder Start und jeder Wechsel
+        // ins Projekt den angehefteten statt den, an dem man zuletzt war.
+        let latest = if wanted == Some(NEW) { None } else {
+            self.list_current().as_array().and_then(|l| l.iter().max_by(|a, b| a["updated"].as_f64().unwrap_or(0.0).total_cmp(&b["updated"].as_f64().unwrap_or(0.0))).cloned())
+        };
         let opened = latest.as_ref().is_some_and(|l| self.open(&js_string(&l["id"])));
         if !opened {
             self.inner.lock().chat = blank();
@@ -1264,6 +1461,18 @@ impl Agent {
         if let Some(s) = &snapshots {
             self.backup(s, index).await;
         }
+        // Kontext fast voll (bis auf die Reserve): ältere Aufträge zusammenfassen, bevor das Modell den Anfang verliert
+        let reserve = (self.o.get_compact_reserve)();
+        if reserve > 0 {
+            let c = self.context();
+            let (tokens, limit) = (c["tokens"].as_i64().unwrap_or(0), c["limit"].as_i64().unwrap_or(0));
+            if limit > 0 && tokens >= (limit - reserve.min(limit / 2)).max(1) {
+                // Die letzten zwei Aufträge bleiben wörtlich; gibt es erst zwei, nur die neue Eingabe
+                let keep = if compact_range(arr(&self.inner.lock().chat["messages"]), 2).is_some() { 2 } else { 1 };
+                self.event(json!({ "type": "compacting" }));
+                self.compact(keep, Some(&signal)).await;
+            }
+        }
         let mut idle = 0; // Anstösse ohne Arbeitsschritt hintereinander (Ziel-Modus)
         for step in 0..MAX_STEPS {
             if signal.is_cancelled() {
@@ -1316,8 +1525,10 @@ impl Agent {
         if let (Some(s), true) = (&snapshots, has_snapshot) {
             self.record_changes(s, index).await;
         }
-        self.running.store(false, Ordering::SeqCst);
+        // Zuerst das Signal dieses Auftrags weg, dann «arbeitet» aus: Sonst könnte ein Auftrag, der genau dazwischen
+        // beginnt, sein eigenes Signal verlieren, und «Stoppen» täte nichts
         *self.controller.lock() = None;
+        self.running.store(false, Ordering::SeqCst);
         self.save();
         self.event(json!({ "type": "done", "stopped": signal.is_cancelled(), "failed": failed })); // main.js: danach im Hintergrund merken (memory.rs)
         self.emit_changed();
@@ -1371,12 +1582,22 @@ impl Agent {
         if title.is_empty() {
             return;
         }
-        self.patch(&folder, &id, |chat| {
+        let change = |chat: &mut Value| {
             if chat["titleAuto"] == true {
                 chat["title"] = json!(title);
                 if let Some(o) = chat.as_object_mut() { o.remove("titleAuto"); }
             }
-        });
+        };
+        // Immer die Datei ändern, nie den ganzen Chat aus dem Speicher schreiben: Bis der Titel da ist (bis 45 s),
+        // kann die Person den Chat in einem anderen Agenten weitergeführt oder gelöscht haben, und ein Speichern von
+        // hier überschriebe das mit dem alten Stand.
+        if !Self::patch_file(&folder, &id, change) {
+            return;
+        }
+        if self.chat_id() == id && same_path(&folder, &(self.o.get_folder)()) {
+            change(&mut self.inner.lock().chat);
+        }
+        self.emit_changed();
     }
 
     /// Eine Antwort des Modells und die verlangten Werkzeuge. true, wenn das Modell fertig ist.
@@ -1415,42 +1636,58 @@ impl Agent {
             let (specs, goal, model, sent_images) = (&specs, &goal, &model, &sent_images);
             async move { this.request(model, specs, goal.as_ref(), plan, web_search, signal, sent_images).await }
         };
-        let mut completion = match request(self.clone()).await {
-            Ok(c) => c,
-            Err(err) => {
-                self.keep_partial(&err);
+        // Jede Abhilfe höchstens einmal pro Schritt, dann nochmals anfragen: stark kürzen, zusammenfassen (E78),
+        // ohne Bilder, Werkzeuge im Text. Früher galt nur die erste; scheiterte die Anfrage danach nochmals (zu lang
+        // auch gekürzt), stand die rohe Fehlermeldung von ASK im Chat.
+        const GIVE_UP: &str = "Der Chat ist zu lang für das Modell, auch gekürzt und zusammengefasst. Beginne einen neuen Chat (/neu); mit dem Schalter «Chats» kann das Modell diesen hier nachlesen.";
+        let (mut compacted, mut no_images, mut as_text) = (false, false, false);
+        let mut completion = loop {
+            let err = match request(self.clone()).await {
+                Ok(c) => break c,
+                Err(err) => err,
+            };
+            self.keep_partial(&err);
+            let status = status_of(&err).unwrap_or(0);
+            let message = err.to_string();
+            let too_long = status >= 400 && TOO_LONG.is_match(&message);
+            let limit: i64 = if too_long {
+                re!(r"(?i)(?:context length|context window|maximum)[^\d]{0,40}(\d{4,8})").captures(&message).and_then(|c| c[1].parse().ok()).unwrap_or(0)
+            } else {
+                0
+            };
+            if limit != 0 {
+                (self.o.on_context_limit)(&model, limit); // für die Anzeige, wie voll der Verlauf ist
+            }
+            let tight = self.inner.lock().tight_for.contains(&chat_id);
+            if too_long && !tight {
                 // Der Verlauf ist zu lang für das Modell: ältere Schritte stärker kürzen und nochmals
-                let status = status_of(&err).unwrap_or(0);
-                let message = err.to_string();
-                let too_long = status >= 400 && TOO_LONG.is_match(&message);
-                let limit: i64 = if too_long {
-                    re!(r"(?i)(?:context length|context window|maximum)[^\d]{0,40}(\d{4,8})").captures(&message).and_then(|c| c[1].parse().ok()).unwrap_or(0)
-                } else {
-                    0
-                };
-                if limit != 0 {
-                    (self.o.on_context_limit)(&model, limit); // für die Anzeige, wie voll der Verlauf ist
+                self.inner.lock().tight_for.insert(chat_id.clone());
+                self.notice("Der Chat ist für das Modell zu lang geworden. Ältere Arbeitsschritte gehen ab jetzt stark gekürzt an das Modell.");
+            } else if too_long && !compacted {
+                // Auch gekürzt zu lang: ältere Aufträge zusammenfassen und nochmals. Hilft auch das nicht (der
+                // laufende Auftrag allein ist zu lang), bleibt nur ein neuer Chat.
+                compacted = true;
+                self.event(json!({ "type": "compacting" }));
+                if !self.compact(1, Some(signal)).await {
+                    if signal.is_cancelled() {
+                        return Err(err);
+                    }
+                    bail!(GIVE_UP);
                 }
-                let tight = self.inner.lock().tight_for.contains(&chat_id);
-                if too_long && !tight {
-                    self.inner.lock().tight_for.insert(chat_id.clone());
-                    self.notice("Der Chat ist für das Modell zu lang geworden. Ältere Arbeitsschritte gehen ab jetzt stark gekürzt an das Modell; für ein neues Thema besser einen neuen Chat beginnen (/neu).");
-                    request(self.clone()).await?
-                } else if too_long {
-                    bail!("Der Chat ist zu lang für das Modell, auch gekürzt. Beginne einen neuen Chat (/neu); mit dem Schalter «Chats» kann das Modell diesen hier nachlesen.");
-                } else if sent_images.load(Ordering::SeqCst) && status >= 400 && re!(r"(?i)image|vision|multimodal|modalit").is_match(&message) {
-                    // Nimmt das Modell keine Bilder an, gehen sie künftig nur als Pfad mit.
-                    self.set_no_images(true);
-                    self.notice("Das Modell in ASK nimmt keine Bilder an. Die Bilder liegen als Datei bei den Anhängen, das Modell kann sie nur so bearbeiten, nicht ansehen.");
-                    request(self.clone()).await?
-                } else if !self.text_mode() && status == 400 && re!(r"(?i)tool").is_match(&message) {
-                    // Manche Server lehnen «tools» ab: dann Werkzeuge im Text beschreiben.
-                    self.set_text_mode(true);
-                    self.notice("ASK nimmt keine Werkzeugliste an, die App beschreibt die Werkzeuge im Text.");
-                    request(self.clone()).await?
-                } else {
-                    return Err(err);
-                }
+            } else if too_long {
+                bail!(GIVE_UP);
+            } else if !no_images && sent_images.load(Ordering::SeqCst) && status >= 400 && re!(r"(?i)image|vision|multimodal|modalit").is_match(&message) {
+                // Nimmt das Modell keine Bilder an, gehen sie künftig nur als Pfad mit.
+                no_images = true;
+                self.set_no_images(true);
+                self.notice("Das Modell in ASK nimmt keine Bilder an. Die Bilder liegen als Datei bei den Anhängen, das Modell kann sie nur so bearbeiten, nicht ansehen.");
+            } else if !as_text && !self.text_mode() && status == 400 && re!(r"(?i)tool").is_match(&message) {
+                // Manche Server lehnen «tools» ab: dann Werkzeuge im Text beschreiben.
+                as_text = true;
+                self.set_text_mode(true);
+                self.notice("ASK nimmt keine Werkzeugliste an, die App beschreibt die Werkzeuge im Text.");
+            } else {
+                return Err(err);
             }
         };
 
@@ -2144,30 +2381,35 @@ impl Agent {
                 .collect()
         };
         let or = |v: &Value, d: Value| if truthy(v) { v.clone() } else { d };
+        let item = |m: &Value| -> Value {
+            if m["role"] == "note" {
+                return json!({ "role": if m["kind"] == "error" { "error" } else { "notice" }, "text": m["content"] });
+            }
+            if m["role"] == "assistant" {
+                return json!({ "role": "assistant", "content": m["content"], "reasoning": or(&m["reasoning"], json!("")), "stats": or(&m["stats"], Value::Null),
+                    "sources": or(&m["sources"], json!([])), "time": m["time"], "stopped": truthy(&m["stopped"]), "calls": call_list(m) });
+            }
+            if m["role"] == "tool" {
+                let mut t = json!({ "role": "tool", "id": m["tool_call_id"], "ok": m["ok"] != json!(false), "summary": or(&m["summary"], json!("")),
+                    "output": if m["display"].is_null() { m["content"].clone() } else { m["display"].clone() }, "images": or(&m["images"], json!([])), "plan": or(&m["plan"], Value::Null) });
+                if let Some(tasks) = m.get("tasks").filter(|t| !t.is_null()) {
+                    t["tasks"] = tasks.clone();
+                }
+                return t;
+            }
+            if m["note"] == "undo" {
+                return json!({ "role": "undo", "text": m["summary"] });
+            }
+            json!({ "role": if truthy(&m["auto"]) { json!("auto") } else { m["role"].clone() }, "content": m["content"], "time": m["time"],
+                "attachments": or(&m["attachments"], json!([])), "snapshot": or(&m["snapshot"], Value::Null), "changes": or(&m["changes"], Value::Null), "undone": truthy(&m["undone"]) })
+        };
         Value::Array(
             list.iter()
                 .filter(|m| m["note"] != "view")
-                .map(|m| {
-                    if m["role"] == "note" {
-                        return json!({ "role": if m["kind"] == "error" { "error" } else { "notice" }, "text": m["content"] });
-                    }
-                    if m["role"] == "assistant" {
-                        return json!({ "role": "assistant", "content": m["content"], "reasoning": or(&m["reasoning"], json!("")), "stats": or(&m["stats"], Value::Null),
-                            "sources": or(&m["sources"], json!([])), "time": m["time"], "stopped": truthy(&m["stopped"]), "calls": call_list(m) });
-                    }
-                    if m["role"] == "tool" {
-                        let mut t = json!({ "role": "tool", "id": m["tool_call_id"], "ok": m["ok"] != json!(false), "summary": or(&m["summary"], json!("")),
-                            "output": if m["display"].is_null() { m["content"].clone() } else { m["display"].clone() }, "images": or(&m["images"], json!([])), "plan": or(&m["plan"], Value::Null) });
-                        if let Some(tasks) = m.get("tasks").filter(|t| !t.is_null()) {
-                            t["tasks"] = tasks.clone();
-                        }
-                        return t;
-                    }
-                    if m["note"] == "undo" {
-                        return json!({ "role": "undo", "text": m["summary"] });
-                    }
-                    json!({ "role": if truthy(&m["auto"]) { json!("auto") } else { m["role"].clone() }, "content": m["content"], "time": m["time"],
-                        "attachments": or(&m["attachments"], json!([])), "snapshot": or(&m["snapshot"], Value::Null), "changes": or(&m["changes"], Value::Null), "undone": truthy(&m["undone"]) })
+                .flat_map(|m| {
+                    // Ab hier geht der ältere Verlauf als Zusammenfassung an das Modell (E78): Hinweis vor der Eingabe
+                    let mark = truthy(&m["summaryBefore"]["content"]).then(|| json!({ "role": "notice", "text": COMPACT_NOTICE }));
+                    mark.into_iter().chain(std::iter::once(item(m)))
                 })
                 .collect(),
         )
@@ -2374,7 +2616,8 @@ mod tests {
         assert_eq!(t.agent.transcript().as_array().unwrap().last().unwrap()["content"], "jetzt geht es");
         assert_eq!(*limits.lock(), [("m".to_string(), 8192)]);
         t.send("zwei").await;
-        assert_eq!(t.ask.requests().len(), 3);
+        // Dritte Anfrage scheitert, die vierte ist der Versuch zusammenzufassen (die Attrappe antwortet zu kurz dafür)
+        assert_eq!(t.ask.requests().len(), 4);
         assert!(t.events_of("error").iter().any(|e| js_string(&e["text"]).contains("zu lang für das Modell, auch gekürzt")));
         assert!(!t.agent.text_mode(), "eine Meldung zur Länge schaltet nicht in den Textmodus");
     }
@@ -2722,6 +2965,170 @@ mod tests {
         }
         assert!(!t.agent.running());
         assert!(t.agent.pending_events().as_array().unwrap().is_empty(), "nach der Antwort ist nichts mehr offen");
+    }
+
+    #[tokio::test]
+    async fn beim_oeffnen_des_projekts_der_zuletzt_benutzte_chat_nicht_der_angeheftete() {
+        let t = make(Fake::new(vec![text("eins"), text("zwei")]), |_| {});
+        t.send("alter Chat").await;
+        let old = t.agent.chat_id();
+        let folder = t.folder.path().to_string_lossy().to_string();
+        assert!(t.agent.pin(&folder, &old, true));
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        assert!(t.agent.new_chat());
+        t.send("neuer Chat").await;
+        let new = t.agent.chat_id();
+        assert_ne!(old, new);
+        // Die Liste führt den angehefteten zuerst, geöffnet wird aber der, an dem man zuletzt war
+        assert_eq!(t.agent.list_current()[0]["id"], old);
+        t.agent.open(&old);
+        t.agent.open_latest(None);
+        assert_eq!(t.agent.chat_id(), new);
+    }
+
+    #[test]
+    fn aufrufe_ohne_ergebnis_bekommen_eines_sonst_lehnt_ask_den_chat_ab() {
+        let tc = |id: &str| json!({ "id": id, "type": "function", "function": { "name": "read_file", "arguments": "{}" } });
+        // App während des zweiten Schritts beendet: «b» hat ein Ergebnis, «c» und «d» nicht
+        let messages = vec![
+            json!({ "role": "user", "content": "los" }),
+            json!({ "role": "assistant", "content": "", "tool_calls": [tc("a")] }),
+            json!({ "role": "tool", "tool_call_id": "a", "content": "A" }),
+            json!({ "role": "assistant", "content": "", "tool_calls": [tc("b"), tc("c")] }),
+            json!({ "role": "tool", "tool_call_id": "b", "content": "B" }),
+            json!({ "role": "user", "content": "weiter" }),
+            json!({ "role": "assistant", "content": "", "tool_calls": [tc("d")] }),
+        ];
+        let out = api_messages("sys", &messages, false, None, &NORMAL);
+        let shape: Vec<String> = out.iter().map(|m| format!("{}:{}", js_string(&m["role"]), m["tool_call_id"].as_str().unwrap_or(""))).collect();
+        assert_eq!(shape, ["system:", "user:", "assistant:", "tool:a", "assistant:", "tool:b", "tool:c", "user:", "assistant:", "tool:d"]);
+        assert!(js_string(&out[6]["content"]).contains("abgebrochen"));
+        // Ein vollständiger Verlauf bleibt unverändert
+        let whole = api_messages("sys", &messages[..3], false, None, &NORMAL);
+        assert_eq!(whole.len(), 4);
+    }
+
+    // ---------- Zusammenfassen des Verlaufs (E78) ----------
+
+    const SUMMARY: &str = "Ziel: eine Webseite für den Verein. Erledigt: index.html angelegt. Offen: Farben.";
+
+    #[tokio::test]
+    async fn zu_langer_chat_wird_zusammengefasst_und_der_auftrag_geht_weiter() {
+        let too_long = || fail(status("This model's maximum context length is 8192 tokens", 400));
+        // Auftrag eins; Auftrag zwei: zu lang, auch stark gekürzt zu lang, dann Zusammenfassung, dann die Antwort
+        let t = make(Fake::new(vec![text("Antwort eins"), too_long(), too_long(), text(SUMMARY), text("Weiter geht es.")]), |_| {});
+        t.send("eins").await;
+        t.send("zwei").await;
+        assert!(t.events_of("error").is_empty(), "kein Abbruch: {:?}", t.events_of("error"));
+        assert_eq!(t.agent.messages().last().unwrap()["content"], "Weiter geht es.");
+        let requests = t.ask.requests();
+        assert_eq!(requests.len(), 5);
+        // Die Anfrage zum Zusammenfassen: eigener Systemprompt, der alte Verlauf als Text, keine Werkzeuge
+        assert!(js_string(&requests[3].messages[0]["content"]).starts_with("Du fasst einen langen Chat"));
+        let old = js_string(&requests[3].messages[1]["content"]);
+        assert!(old.contains("Person: eins") && old.contains("ASK: Antwort eins") && !old.contains("zwei"), "{old}");
+        assert!(requests[3].tools.is_none());
+        // Danach: Systemprompt, Zusammenfassung, die neue Eingabe; der alte Verlauf geht nicht mehr mit
+        let sent: Vec<String> = requests[4].messages.iter().map(|m| js_string(&m["content"])).collect();
+        assert_eq!(sent.len(), 3, "{sent:?}");
+        assert!(sent[1].contains("Zusammenfassung des bisherigen Chats") && sent[1].contains(SUMMARY));
+        assert_eq!(sent[2], "zwei");
+        // Gespeichert an der Eingabe, mit der der erhaltene Teil beginnt; nichts ist gelöscht
+        let saved = t.saved();
+        assert_eq!(saved["messages"][0]["content"], "eins");
+        assert_eq!(saved["messages"][2]["summaryBefore"]["content"], SUMMARY);
+        // Wer den Chat öffnet, sieht den ganzen Verlauf und an der Stelle einen Hinweis
+        let items = t.agent.transcript();
+        let roles: Vec<String> = items.as_array().unwrap().iter().map(|i| js_string(&i["role"])).collect();
+        let at = roles.iter().rposition(|r| r == "user").unwrap();
+        assert_eq!(items[at]["content"], "zwei");
+        assert_eq!(roles[at - 1], "notice");
+        assert!(js_string(&items[at - 1]["text"]).contains("Zusammenfassung"));
+        assert!(roles.iter().filter(|r| *r == "user").count() == 2);
+    }
+
+    #[tokio::test]
+    async fn kontext_bis_auf_die_reserve_voll_fasst_vor_dem_auftrag_zusammen() {
+        let long = "Wort ".repeat(900); // rund 1250 Token geschätzt
+        let t = make(Fake::new(vec![text(&long), text(SUMMARY), text("Antwort zwei")]), |o| {
+            o.get_context_limit = Arc::new(|_| 1500);
+            o.get_compact_reserve = Arc::new(|| 400);
+        });
+        t.send("eins").await;
+        assert_eq!(t.ask.requests().len(), 1, "noch Platz: nichts zusammengefasst");
+        t.send("zwei").await;
+        let requests = t.ask.requests();
+        assert_eq!(requests.len(), 3, "Zusammenfassung vor der Antwort");
+        assert!(js_string(&requests[1].messages[0]["content"]).starts_with("Du fasst einen langen Chat"));
+        let sent: Vec<String> = requests[2].messages.iter().map(|m| js_string(&m["content"])).collect();
+        assert!(sent.len() == 3 && sent[1].contains(SUMMARY) && sent[2] == "zwei", "{sent:?}");
+        assert_eq!(t.events_of("compacting").len(), 1);
+        // Die Anzeige rechnet nach dem Zusammenfassen mit dem kurzen Verlauf
+        let c = t.agent.context();
+        assert!(c["tokens"].as_i64().unwrap() < 300, "{c}");
+        // Der nächste Auftrag fasst nicht nochmals zusammen
+        t.send("drei").await;
+        assert_eq!(t.ask.requests().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn zusammenfassen_scheitert_der_chat_bleibt_wie_er_war() {
+        let too_long = || fail(status("maximum context length is 8192 tokens", 400));
+        let t = make(Fake::new(vec![text("Antwort eins"), too_long(), too_long(), fail(status("ASK: kaputt", 500))]), |_| {});
+        t.send("eins").await;
+        t.send("zwei").await;
+        let errors = t.events_of("error");
+        assert_eq!(errors.len(), 1);
+        assert!(js_string(&errors[0]["text"]).contains("zu lang für das Modell"), "{errors:?}");
+        assert!(summary_index(&t.agent.messages()).is_none());
+        // Auf Befehl: kurzer Chat hat nichts zusammenzufassen
+        let short = make(Fake::new(vec![text("Hallo")]), |_| {});
+        short.send("eins").await;
+        let r = short.agent.compact_now().await;
+        assert_eq!(r["ok"], false);
+        assert!(js_string(&r["reason"]).contains("noch kurz"));
+        assert_eq!(short.ask.requests().len(), 1, "keine Anfrage an ASK");
+    }
+
+    #[tokio::test]
+    async fn auf_befehl_zusammenfassen_und_weitere_zusammenfassung_baut_auf_der_alten_auf() {
+        let t = make(Fake::new(vec![text("A1"), text("A2"), text(SUMMARY), text("A3"), text("Zweite Zusammenfassung mit allem Wichtigen.")]), |_| {});
+        t.send("eins").await;
+        t.send("zwei").await;
+        assert_eq!(t.agent.compact_now().await["ok"], true);
+        let m = t.agent.messages();
+        assert_eq!(summary_index(&m), Some(2), "die letzte Eingabe bleibt wörtlich");
+        assert!(t.events_of("notice").iter().any(|e| js_string(&e["text"]).contains("Zusammenfassung")));
+        t.send("drei").await;
+        assert_eq!(t.agent.compact_now().await["ok"], true);
+        let requests = t.ask.requests();
+        let again = js_string(&requests[4].messages[1]["content"]);
+        assert!(again.contains("Frühere Zusammenfassung") && again.contains(SUMMARY) && again.contains("Person: zwei") && !again.contains("Person: eins"), "{again}");
+        assert_eq!(summary_index(&t.agent.messages()), Some(4));
+    }
+
+    #[test]
+    fn schnitt_nur_an_einer_eingabe_der_person_und_nur_mit_etwas_davor() {
+        let user = |t: &str| json!({ "role": "user", "content": t, "time": 1 });
+        let ai = |t: &str| json!({ "role": "assistant", "content": t });
+        assert_eq!(compact_range(&[user("a")], 1), None, "ein einziger Auftrag: nichts davor");
+        assert_eq!(compact_range(&[user("a"), ai("b"), user("c")], 1), Some((0, 2)));
+        assert_eq!(compact_range(&[user("a"), ai("b"), user("c")], 2), None, "beide bleiben: nichts zusammenzufassen");
+        // Anstösse im Ziel-Modus und Bilder einer Ansicht sind kein Anfang eines Auftrags
+        let auto = json!({ "role": "user", "content": "weiter", "auto": true });
+        let view = json!({ "role": "user", "content": "Ansicht", "note": "view" });
+        let list = [user("a"), ai("b"), auto, ai("c"), view, user("d"), ai("e"), user("f")];
+        assert_eq!(compact_range(&list, 1), Some((0, 7)));
+        assert_eq!(compact_range(&list, 2), Some((0, 5)));
+        // Nach einer Zusammenfassung zählt nur, was danach kommt
+        let mut marked = list.to_vec();
+        marked[5]["summaryBefore"] = json!({ "content": "kurz", "time": 2 });
+        assert_eq!(compact_range(&marked, 1), Some((5, 7)));
+        assert_eq!(compact_range(&marked, 2), None);
+        let sent = api_messages("sys", &marked, false, None, &NORMAL);
+        let texts: Vec<String> = sent.iter().map(|m| js_string(&m["content"])).collect();
+        assert_eq!(texts.len(), 5, "{texts:?}");
+        assert!(texts[1].contains("kurz") && texts[2] == "d" && texts[4] == "f");
     }
 
     #[tokio::test]

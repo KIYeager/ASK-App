@@ -72,7 +72,8 @@ struct St {
     terminal: Terminal,
     workspace: Arc<Workspace>,
     agent: Option<Arc<Agent>>,
-    pending_chat: Option<String>,
+    /// Chat, der sichtbar werden soll, sobald das Terminal seines Ordners läuft: (Schlüssel des Ordners, Chat)
+    pending_chat: Option<(String, String)>,
     quitting: bool,
 }
 
@@ -127,6 +128,28 @@ fn releases_url() -> String {
 /// Zusatz in Rückfragen von Windows, solange Code eines Mods läuft (E72)
 const MOD_NOTE: &str = "Diese Abfrage kommt von Windows, weil ein Mod mit Code eingeschaltet ist; ein Mod kann sie nicht beantworten. Hast du das nicht selbst ausgelöst, wähle «Nein» und schalte die Mods aus (Ctrl+Shift+M).";
 const NOTES_MAX: usize = 6000;
+/// Kontextgrösse in Token (Einstellungen → Modelle, ENTSCHEIDE E78): so viel Verlauf geht höchstens an das Modell.
+/// Meldet ASK für ein Modell ein kleineres Fenster, gilt das kleinere.
+pub const CONTEXT_DEFAULT: i64 = 250_000;
+const CONTEXT_RANGE: (i64, i64) = (8_000, 2_000_000);
+/// Reserve: Ist der Verlauf bis auf so viele Token voll, fasst ASK die älteren Aufträge zusammen
+pub const RESERVE_DEFAULT: i64 = 30_000;
+const RESERVE_RANGE: (i64, i64) = (2_000, 500_000);
+
+fn context_size() -> i64 {
+    settings::get("contextSize").as_i64().map(|v| v.clamp(CONTEXT_RANGE.0, CONTEXT_RANGE.1)).unwrap_or(CONTEXT_DEFAULT)
+}
+
+fn context_reserve() -> i64 {
+    settings::get("contextReserve").as_i64().map(|v| v.clamp(RESERVE_RANGE.0, RESERVE_RANGE.1)).unwrap_or(RESERVE_DEFAULT)
+}
+
+/// Fenster, mit dem die App für ein Modell rechnet: das eingestellte, höchstens aber, was ASK zum Modell meldet
+/// (oder einmal in einer Fehlermeldung genannt hat; 0: nichts bekannt)
+pub fn effective_context(reported: i64, learned: i64, setting: i64) -> i64 {
+    let known = if reported > 0 { reported } else { learned };
+    if known > 0 { known.min(setting) } else { setting }
+}
 const BUSY: &str = "Das Modell arbeitet noch in diesem Projekt. Zuerst stoppen (Esc).";
 const NOTIFY_MIN_MS: i64 = 8000; // kurze Aufträge ohne Meldung
 
@@ -724,8 +747,10 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         v
     }
 
+    /// Arbeitet noch etwas? Auch ein laufendes «Rückgängig» zählt: Beenden oder ein Update mitten im Zurückkopieren
+    /// liesse den Ordner halb zurückgesetzt.
     fn any_running(&self) -> bool {
-        self.all_agents().iter().any(|a| a.running())
+        self.all_agents().iter().any(|a| a.running() || a.undoing())
     }
 
     /// Laufende Chats für die Seitenleiste (auch die im Hintergrund)
@@ -774,6 +799,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             "python": match PYTHON_PERCENT.load(std::sync::atomic::Ordering::SeqCst) { p if p >= 0 => json!({ "percent": p }), _ => Value::Null },
             "approvals": self.approval_mode(),
             "mode": self.chat_mode(),
+            "contextSize": context_size(),
+            "contextReserve": context_reserve(),
             "reviewModel": s.get("reviewModel").and_then(Value::as_str).unwrap_or(""),
             "helperModel": s.get("helperModel").and_then(Value::as_str).unwrap_or(""),
             "theme": if THEMES.iter().any(|(k, _)| *k == theme) { theme } else { "system".into() },
@@ -995,11 +1022,14 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 Some(optionen.first().cloned().unwrap_or_else(|| "ja".into()))
             })));
         }
-        // Kontextfenster: was ASK zum Modell angibt, sonst was ASK einmal in einer Fehlermeldung genannt hat
+        // Kontextfenster: die eingestellte Grösse, höchstens aber, was ASK zum Modell angibt oder einmal in einer
+        // Fehlermeldung genannt hat (E78)
         o.get_context_limit = Arc::new({ let me = me.clone(); move |model: &str| {
-            let known = me.upgrade().and_then(|a| a.ask.models().into_iter().find(|m| m.id == model)).map(|m| m.context).unwrap_or(0);
-            if known > 0 { known } else { settings::get("contextLimits").get(model).and_then(Value::as_i64).unwrap_or(0) }
+            let reported = me.upgrade().and_then(|a| a.ask.models().into_iter().find(|m| m.id == model)).map(|m| m.context).unwrap_or(0);
+            let learned = settings::get("contextLimits").get(model).and_then(Value::as_i64).unwrap_or(0);
+            effective_context(reported, learned, context_size())
         } });
+        o.get_compact_reserve = Arc::new(context_reserve);
         o.on_context_limit = Arc::new(|model: &str, limit: i64| {
             let mut all = settings::get("contextLimits");
             if !all.is_object() {
@@ -1055,11 +1085,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 *started.lock() = true;
                 // Chats ohne Projekt sind schon offen (open_folder wartet dort nicht auf das Terminal)
                 if active && !paths::is_free_dir(&rt.folder) {
-                    let want = a.st.lock().pending_chat.take();
-                    match want {
-                        Some(id) => { a.open_in_runtime(&rt, &id); }
-                        None => a.open_latest_in(&rt, None),
-                    }
+                    a.open_pending_or_latest(&rt);
                 }
             }
             if state != "läuft" && state != "startet" {
@@ -1237,6 +1263,24 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         ok
     }
 
+    /// Den vorgemerkten Chat dieses Ordners zeigen, sonst einen, der dort gerade arbeitet, sonst den zuletzt benutzten.
+    /// Eine Vormerkung für einen anderen Ordner verfällt (die Person hat inzwischen etwas anderes gewählt), und lässt
+    /// sich der vorgemerkte Chat nicht öffnen (gelöscht), gilt die übrige Reihenfolge: Sonst bliebe der Agent des
+    /// vorherigen Projekts sichtbar, während Dateien und Terminal schon zum neuen gehören.
+    fn open_pending_or_latest(&self, rt: &Arc<Runtime>) {
+        let want = match self.st.lock().pending_chat.take() {
+            Some((key, id)) if key == path_key(&rt.folder) => Some(id),
+            _ => None,
+        };
+        if want.is_some_and(|id| self.open_in_runtime(rt, &id)) {
+            return;
+        }
+        match rt.agents().into_iter().find(|a| a.running()) {
+            Some(r) => self.show_agent(r),
+            None => self.open_latest_in(rt, None),
+        }
+    }
+
     /// Letzten Chat eines Projekts zeigen (beim Öffnen des Projekts)
     fn open_latest_in(&self, rt: &Arc<Runtime>, wanted: Option<&str>) {
         let a = rt.agents().into_iter().find(|x| !x.running() && !x.undoing()).unwrap_or_else(|| self.make_agent(&rt.folder, Some(rt)));
@@ -1254,9 +1298,9 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         // Chats ohne Projekt (E78) hängen nicht am Terminal: Es liest dort nur Anhänge und darf auch fehlen
         if same_path(folder, &js_string(&settings::get("folder"))) && (self.terminal().state() == "läuft" || paths::is_free_dir(folder)) {
             let rt = self.runtime(folder);
-            return json!({ "ok": self.open_in_runtime(&rt, id) });
+            return if self.open_in_runtime(&rt, id) { json!({ "ok": true }) } else { fail("Diesen Chat gibt es nicht mehr.") };
         }
-        self.st.lock().pending_chat = Some(id.to_string());
+        self.st.lock().pending_chat = Some((path_key(folder), id.to_string()));
         let res = self.open_folder(folder, "").await;
         if !bool_of(&res, "ok") {
             self.st.lock().pending_chat = None;
@@ -1303,15 +1347,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             if free && !["läuft", "startet"].contains(&rt.terminal.state().as_str()) {
                 self.start_terminal();
             }
-            let want = self.st.lock().pending_chat.take();
-            let running = rt.agents().into_iter().find(|a| a.running());
-            if let Some(id) = want {
-                self.open_in_runtime(&rt, &id);
-            } else if let Some(r) = running {
-                self.show_agent(r);
-            } else {
-                self.open_latest_in(&rt, None);
-            }
+            self.open_pending_or_latest(&rt);
         } else {
             if rt.agents.lock().is_empty() {
                 let a = self.make_agent(&rt.folder, Some(&rt));
@@ -1327,7 +1363,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         spawn(async move {
             tokio::time::sleep(Duration::from_secs(5)).await;
             if let Some(a) = me.upgrade() {
-                if same_path(&js_string(&settings::get("folder")), &p) {
+                // Nicht während ein Auftrag dort gerade sichert: Aufräumen könnte ihm eine Fassung wegnehmen
+                if same_path(&js_string(&settings::get("folder")), &p) && !crate::snapshot::busy(Path::new(&p)) {
                     if let Some(s) = a.snapshots_for(&p) {
                         let _ = s.prune_now();
                     }
@@ -1907,6 +1944,10 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 if let Some(m) = v.get("mode").and_then(Value::as_str).filter(|m| CHAT_MODES.contains(m)) { patch.insert("mode".into(), json!(m)); }
                 if let Some(m) = v.get("reviewModel").and_then(Value::as_str) { patch.insert("reviewModel".into(), json!(crate::util::take_chars(m, 200))); }
                 if let Some(m) = v.get("helperModel").and_then(Value::as_str) { patch.insert("helperModel".into(), json!(crate::util::take_chars(m, 200))); }
+                // Zahlen kommen aus einem Eingabefeld: auch als Text annehmen, immer in den erlaubten Bereich holen
+                let number = |key: &str| v.get(key).and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|t| t.trim().parse::<f64>().ok()))).filter(|n| n.is_finite()).map(|n| n.round() as i64);
+                if let Some(n) = number("contextSize") { patch.insert("contextSize".into(), json!(n.clamp(CONTEXT_RANGE.0, CONTEXT_RANGE.1))); }
+                if let Some(n) = number("contextReserve") { patch.insert("contextReserve".into(), json!(n.clamp(RESERVE_RANGE.0, RESERVE_RANGE.1))); }
                 let theme = v.get("theme").and_then(Value::as_str).filter(|t| THEMES.iter().any(|(k, _)| k == t)).map(str::to_string);
                 if let Some(t) = &theme { patch.insert("theme".into(), json!(t)); }
                 settings::set(Value::Object(patch));
@@ -2049,6 +2090,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 Value::Null
             }
             "chat:stop" => { agent.stop(); Value::Null }
+            // /zusammenfassen: ältere Aufträge jetzt zusammenfassen (E78)
+            "chat:compact" => { let r = agent.compact_now().await; self.push_state(); r }
             "chat:goal" => { agent.set_goal(&sarg(a, 0)); Value::Null }
             "github:status" => {
                 let folder = js_string(&settings::get("folder"));
@@ -2092,6 +2135,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 let res = self.show_box(json!({ "type": "question", "buttons": ["Löschen", "Abbrechen"], "defaultId": 1, "cancelId": 1, "dangerId": 0,
                     "message": "Chat löschen?", "detail": if paths::is_free_dir(&folder) { format!("«{title}» wird gelöscht.") }
                         else { format!("«{title}» wird aus {folder} entfernt. Die Dateien im Ordner bleiben.") } })).await;
+                // Während der Rückfrage kann ein anderer Chat sichtbar geworden sein (Klick auf eine Benachrichtigung)
+                let agent = self.agent();
                 let rt = self.st.lock().runtimes.get(&path_key(&folder)).cloned();
                 let busy = rt.as_ref().and_then(|rt| Self::agent_for(rt, &id));
                 if busy.as_ref().is_some_and(|b| b.running()) || res.get("response").and_then(Value::as_i64) != Some(0) {
@@ -2338,6 +2383,15 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn kontextfenster_das_eingestellte_hoechstens_was_ask_meldet() {
+        assert_eq!(effective_context(0, 0, 250_000), 250_000, "nichts bekannt: die Einstellung");
+        assert_eq!(effective_context(131_072, 0, 250_000), 131_072, "ASK meldet weniger");
+        assert_eq!(effective_context(1_000_000, 0, 250_000), 250_000, "ASK meldet mehr: die Einstellung begrenzt");
+        assert_eq!(effective_context(0, 32_768, 250_000), 32_768, "aus einer Fehlermeldung gelernt");
+        assert_eq!(effective_context(131_072, 8_192, 250_000), 131_072, "die Angabe von ASK geht vor");
+    }
 
     #[test]
     fn folder_names() {

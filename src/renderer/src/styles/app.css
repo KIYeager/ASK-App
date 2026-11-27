@@ -1145,3 +1145,9 @@ textarea.gh-input { resize: vertical; min-height: 56px; line-height: 1.45; }
 /* Konto unten links: der Zustand bleibt auf einer Zeile, auch in der schmalen Leiste */
 .account .who { min-width: 0; }
 .account .status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Zahl mit Einheit in den Einstellungen (Kontextgrösse) */
+.s-number { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; flex: none; }
+.s-number input { width: 108px; border: 1px solid var(--line); border-radius: 8px; background: var(--pane); padding: 6px 8px; font-size: 13px; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+.s-number input:hover { border-color: var(--line-2); }
+.s-number input:focus { outline: none; border-color: var(--acc); }

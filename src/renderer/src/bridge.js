@@ -89,6 +89,7 @@ export function install() {
   chatApprove: (id, answer) => call('chat:approve', id, answer),
   chatAnswer: (id, text) => call('chat:answer', id, text),
   chatGoal: (text) => call('chat:goal', text),
+  chatCompact: () => call('chat:compact'),
   githubStatus: () => call('github:status'),
   githubConnect: (token) => call('github:connect', token),
   githubDisconnect: () => call('github:disconnect'),

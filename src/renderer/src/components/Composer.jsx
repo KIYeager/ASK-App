@@ -288,7 +288,7 @@ function mentionAt(text, caret) {
 }
 
 const Composer = forwardRef(function Composer(props, ref) {
-  const { state, chatId, free, running, block, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
+  const { state, chatId, free, running, block, fileBlock, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
     onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode, autoEffort } = props;
   const [text, setText] = useState('');
   const [pending, setPending] = useState([]); // neue Anhänge { name, type, size, data, url }
@@ -313,7 +313,9 @@ const Composer = forwardRef(function Composer(props, ref) {
     if (!chat) return;
     const old = drafts.current.get(chat);
     drafts.current.delete(chat);
-    const merged = old ? { text: [d.text, old.text].filter(Boolean).join('\n'), pending: [...d.pending, ...old.pending].slice(0, MAX_ATTACH), kept: [...d.kept, ...old.kept] } : d;
+    const files = old ? [...d.pending, ...old.pending] : d.pending;
+    revoke(files.slice(MAX_ATTACH)); // was nicht mehr Platz hat, auch freigeben
+    const merged = { text: old ? [d.text, old.text].filter(Boolean).join('\n') : d.text, pending: files.slice(0, MAX_ATTACH), kept: old ? [...d.kept, ...old.kept] : d.kept };
     if (!merged.text && !merged.pending.length && !merged.kept.length) return;
     drafts.current.set(chat, merged);
     while (drafts.current.size > MAX_DRAFTS) { // ältesten Entwurf verwerfen, Vorschaubilder freigeben
@@ -328,7 +330,7 @@ const Composer = forwardRef(function Composer(props, ref) {
     shownChat.current = chatId;
     const cur = live.current;
     const q = cur.queued && cur.queued.chat === prev ? cur.queued : null;
-    stash(prev, { text: [q?.text, cur.text].filter(Boolean).join('\n'), pending: [...(q?.files || []), ...cur.pending].slice(0, MAX_ATTACH), kept: [...(q?.kept || []), ...cur.kept] });
+    stash(prev, { text: [q?.text, cur.text].filter(Boolean).join('\n'), pending: [...(q?.files || []), ...cur.pending], kept: [...(q?.kept || []), ...cur.kept] });
     const next = drafts.current.get(chatId) || { text: '', pending: [], kept: [] };
     drafts.current.delete(chatId);
     setText(next.text); setPending(next.pending); setKept(next.kept); setQueued(null); setMention(null); setSlashIndex(0);
@@ -339,7 +341,7 @@ const Composer = forwardRef(function Composer(props, ref) {
   const giveBack = (chat, { text: t = '', files = [], kept: k = [] }) => {
     if (chat !== shownChat.current) { stash(chat, { text: t, pending: files, kept: k }); return; }
     if (t) setText((cur) => (cur ? `${t}\n${cur}` : t));
-    if (files.length) setPending((p) => [...files, ...p].slice(0, MAX_ATTACH));
+    if (files.length) setPending((p) => { const all = [...files, ...p]; revoke(all.slice(MAX_ATTACH)); return all.slice(0, MAX_ATTACH); });
     if (k.length) setKept((p) => [...k, ...p]);
   };
 
@@ -483,6 +485,8 @@ const Composer = forwardRef(function Composer(props, ref) {
       return;
     }
     if (slashMatches.length) { runSlash(slashMatches[slashIndex] || slashMatches[0]); return; }
+    // Chat ohne Projekt: Dateien (ausser Bildern) liest ASK über das Terminal; läuft es noch nicht, scheiterte das Lesen ohne Erklärung
+    if (fileBlock && [...pending, ...kept].some((f) => !(f.url || f.image))) { notice(fileBlock); return; }
     if (running) {
       // Enter während eines Auftrags reiht ein, statt zu stoppen (stoppen: Esc oder ■)
       if (queued) { notice('Es wartet schon eine Nachricht. Mit × entfernen oder den Auftrag abwarten.'); return; }
@@ -672,8 +676,8 @@ const Composer = forwardRef(function Composer(props, ref) {
             <span className="spacer" />
             {context?.tokens > 0 ? (
               <span id="ctx" className={`ctx${ctxKnown && ctxPct >= 80 ? ' warn' : ''}`}
-                title={ctxKnown && ctxPct >= 80 ? 'Der Kontext ist fast voll. Beginne mit /neu einen neuen Chat, sonst vergisst das Modell Früheres.'
-                  : `Belegung des Kontextfensters${context.estimated ? ' (geschätzt)' : ''}`}>
+                title={ctxKnown && ctxPct >= 80 ? `Der Kontext ist fast voll (${short(context.tokens)} von ${short(context.limit)} Token). ASK fasst ältere Aufträge bald von selbst zusammen; /zusammenfassen tut es sofort, /neu beginnt einen neuen Chat.`
+                  : `Belegung des Kontextfensters${context.estimated ? ' (geschätzt)' : ''}${ctxKnown ? `: ${short(context.tokens)} von ${short(context.limit)} Token` : ''}`}>
                 {ctxKnown ? <span className="ctx-ring" style={{ '--p': `${ctxPct}%` }} aria-hidden="true" /> : null}
                 <span id="ctx-text">{ctxKnown ? `${ctxPct} %` : `${context.estimated ? '≈ ' : ''}${short(context.tokens)}`}</span>
               </span>

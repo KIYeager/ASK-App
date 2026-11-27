@@ -69,12 +69,15 @@ fn load_chats(folder: &Path) -> Vec<Value> {
             let chat: Value = serde_json::from_str(&String::from_utf8_lossy(&bytes)).ok()?;
             let mut c = cache().lock();
             c.remove(&file);
-            let held: u64 = c.values().map(|v| v.1).sum();
-            if c.len() >= CACHE_MAX_FILES || held + size > CACHE_MAX_BYTES {
-                c.clear();
+            let full = |c: &HashMap<PathBuf, (std::time::SystemTime, u64, Value)>| c.len() >= CACHE_MAX_FILES || c.values().map(|v| v.1).sum::<u64>() + size > CACHE_MAX_BYTES;
+            // Voll: zuerst die Chats anderer Ordner hinaus. Reicht das nicht, bleibt der Speicher, wie er ist, und
+            // dieser Chat wird jedes Mal neu gelesen. Alles zu leeren hiesse, dass danach jeder Arbeitsschritt wieder
+            // sämtliche Chats liest, weil die Liste immer in derselben Reihenfolge durchlaufen wird.
+            if full(&c) {
+                c.retain(|f, _| f.parent() == Some(dir.as_path()));
             }
-            // Sehr grosse Chats gar nicht behalten: lieber beim nächsten Mal neu lesen
-            if size <= CACHE_MAX_BYTES / 4 {
+            // Sehr grosse Chats gar nicht behalten
+            if !full(&c) && size <= CACHE_MAX_BYTES / 4 {
                 c.insert(file, (mtime, size, chat.clone()));
             }
             Some(chat)

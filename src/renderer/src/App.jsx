@@ -202,7 +202,13 @@ export default function App() {
   const doneSeen = useRef(true); // «done» des laufenden Auftrags gesehen (sonst nach dem Ende den Verlauf neu laden)
   const loadTranscript = useCallback(async () => {
     const seq = ++loadSeq.current;
-    const t = await api().chatTranscript();
+    let t;
+    try { t = await api().chatTranscript(); } catch (err) {
+      // Nicht geladen: beim nächsten Zustand nochmals versuchen, statt beim alten Chat stehen zu bleiben
+      if (seq === loadSeq.current) latestChat.current = chatIdRef.current;
+      console.error(err);
+      return;
+    }
     if (seq !== loadSeq.current) return; // inzwischen nochmals gewechselt: die neuere Antwort gilt
     // Anderer Chat: noch gesammelte Ereignisse gehören zum vorherigen, verwerfen, sonst landen sie im neuen
     if (t.id !== chatIdRef.current) {
@@ -272,6 +278,7 @@ export default function App() {
       case 'tool-end': setAct('Denkt nach …'); break;
       case 'approval': setAct('Wartet auf deine Entscheidung'); emitMod('frage', { text: ev.title || '' }); break;
       case 'review': setAct('Prüft, ob der Schritt sicher ist …'); break;
+      case 'compacting': setAct('Fasst ältere Aufträge zusammen …'); break;
       case 'approval-end': setAct('Denkt nach …'); break;
       case 'user':
         doneSeen.current = false;
@@ -487,6 +494,7 @@ export default function App() {
       return { ok: true };
     }
     if (hit?.cmd.prompt) text = fillTemplate(hit.cmd.prompt, hit.rest);
+    const chat = chatIdRef.current;
     runningRef.current = true;
     doneSeen.current = false;
     setRunning(true);
@@ -498,7 +506,9 @@ export default function App() {
     } catch (err) {
       res = { ok: false, reason: err?.message || String(err) };
     }
-    if (res && res.ok === false) {
+    // Nicht gesendet: nur melden, wenn noch derselbe Chat sichtbar ist (grosse Anhänge brauchen einen Moment, und
+    // inzwischen kann ein anderer Chat offen sein; dessen Zustand hat loadTranscript gesetzt)
+    if (res && res.ok === false && chatIdRef.current === chat) {
       runningRef.current = false;
       setRunning(false);
       dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason || 'Senden fehlgeschlagen.' }] });
@@ -560,6 +570,13 @@ export default function App() {
     { cmd: '/neu', text: free ? 'Neuen Chat ohne Projekt beginnen' : 'Neuen Chat im Projekt beginnen', run: () => newChat() },
     { cmd: '/projekt', text: 'Neues Projekt anlegen', run: () => setDialog({ name: 'project' }) },
     { cmd: '/goal', text: 'Ziel setzen: /goal <Ziel>; das Modell arbeitet, bis es erreicht ist', run: () => composer.current?.setText('/goal ') },
+    { cmd: '/zusammenfassen', text: 'Ältere Aufträge für das Modell zusammenfassen (macht Platz im Kontext)', run: async () => {
+      if (runningRef.current) { notice('Das geht erst, wenn der Auftrag fertig ist.'); return; }
+      notice('Fasst ältere Aufträge zusammen …');
+      let res;
+      try { res = await api().chatCompact(); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
+      if (!res?.ok) notice(res?.reason || 'Das Zusammenfassen hat nicht geklappt.');
+    } },
     { cmd: '/suchen', text: 'Chats durchsuchen', run: () => { if (!leftOpen) api().setChatbar(true); setTimeout(() => document.getElementById('chat-search')?.focus(), 50); } },
     { cmd: '/ordner', text: 'Vorhandenen Ordner als Projekt öffnen', run: () => openFolder(() => api().chooseFolder()) },
     { cmd: '/explorer', text: 'Projektordner im Explorer öffnen', run: () => api().showFolder() },
@@ -893,7 +910,9 @@ export default function App() {
           ) : null}
           {/* auch während der Anmeldung da (unter der Anmeldeseite), mit Hinweis im Platzhalter */}
           {(
-            <Composer ref={composer} state={state} chatId={chatId} free={free} running={running} block={blocker} goal={state.chat?.goal} tasks={tasks} tasksLive={tasksLive}
+            <Composer ref={composer} state={state} chatId={chatId} free={free} running={running} block={blocker}
+              fileBlock={free && state.terminal?.state !== 'läuft' ? (state.terminal?.state === 'startet' ? 'Einen Moment: Zum Lesen von Anhängen startet noch das Terminal.'
+                : 'Angehängte Dateien kann ASK gerade nicht lesen, weil das Terminal nicht läuft (unten links auf «Terminal» klicken). Bilder und Text gehen trotzdem.') : ''} goal={state.chat?.goal} tasks={tasks} tasksLive={tasksLive}
               context={state.chat?.context} todoCollapsed={state.prefs?.todoCollapsed ?? true}
               activity={(tasksLive && tasks?.find((t) => t.status === 'in_arbeit')?.titel) ? `${tasks.find((t) => t.status === 'in_arbeit').titel} · ${activity}` : activity}
               runStarted={runStarted} commands={commands} pendingQuestion={pendingQuestion} pendingApproval={pendingApproval}
