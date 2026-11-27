@@ -1,7 +1,7 @@
 {
   "name": "ask-desktop",
   "productName": "ASK",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "description": "ASK Desktop: Open WebUI der TF Bern mit lokalem Arbeitsordner (Tauri)",
   "private": true,
   "author": "TF Bern",
