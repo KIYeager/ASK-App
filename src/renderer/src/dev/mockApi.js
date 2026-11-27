@@ -480,6 +480,19 @@ export function install() {
     chatSend: async (text) => { const c = chatOf(state.chat.id); if (c.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' }; demoRun(c, text); return { ok: true }; },
     chatUndo: async () => ({ ok: true }), chatStop: async () => stopChat(state.chat.id), chatStopChat: async (_f, id) => { stopChat(id); return true; },
     // wie im Hauptprozess: zuerst der sichtbare Chat, sonst der Chat, der diese Frage gestellt hat
+    chatMove: async (from, id, to) => {
+      const c = chatOf(id, from);
+      if (c.running) return { ok: false, reason: 'Der Chat arbeitet noch. Zuerst stoppen, dann verschieben.' };
+      const list = listed(from);
+      const at = list.findIndex((x) => x.id === id);
+      if (at < 0) return { ok: false, reason: 'Diesen Chat gibt es nicht mehr.' };
+      listed(to).unshift(...list.splice(at, 1));
+      c.folder = to;
+      emit('groups');
+      if (state.chat.id === id) show(id, to);
+      return { ok: true };
+    },
+    chatExport: async (_f, id) => ({ ok: true, path: `C:\\Users\\lernende\\Documents\\${titleOf(id) || 'Chat'}.md` }),
     chatCompact: async () => {
       const c = chatOf(state.chat.id);
       if (c.items.filter((x) => x.role === 'user').length < 2) return { ok: false, reason: 'Der Chat ist noch kurz: Es gibt nichts zusammenzufassen.' };

@@ -1151,3 +1151,14 @@ textarea.gh-input { resize: vertical; min-height: 56px; line-height: 1.45; }
 .s-number input { width: 108px; border: 1px solid var(--line); border-radius: 8px; background: var(--pane); padding: 6px 8px; font-size: 13px; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
 .s-number input:hover { border-color: var(--line-2); }
 .s-number input:focus { outline: none; border-color: var(--acc); }
+
+/* Suche im Chat (Ctrl+F): schwebt oben rechts über dem Verlauf; Treffer färbt ::highlight, ohne das DOM zu ändern */
+.find-bar { position: absolute; top: 10px; right: 18px; z-index: 5; display: flex; align-items: center; gap: 4px; padding: 5px 6px 5px 10px;
+  background: var(--pane); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, .14); color: var(--muted); max-width: calc(100% - 36px); }
+.find-bar input { border: 0; background: none; outline: none; width: 190px; min-width: 60px; flex: 1; padding: 3px 4px; color: var(--text); text-overflow: ellipsis; }
+.find-bar:focus-within { border-color: var(--acc); }
+.find-count { font-size: 12px; white-space: nowrap; min-width: 62px; text-align: right; padding-right: 4px; font-variant-numeric: tabular-nums; }
+.find-count.none { color: var(--bad); }
+.find-bar .icon-btn { width: 26px; height: 26px; }
+::highlight(ask-find) { background-color: rgba(255, 213, 79, .55); color: inherit; }
+::highlight(ask-find-current) { background-color: #f28855; color: #1b1b1b; }

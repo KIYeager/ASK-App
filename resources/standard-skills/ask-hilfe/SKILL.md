@@ -44,6 +44,8 @@ Dieses Wissen beschreibt die App ASK (Windows, TF Bern) so, wie sie heute aussie
 | Chat | Aufgabenliste einklappen | Schalter: klappt die Aufgabenliste über dem Eingabefeld nach dem Auftrag ein. |
 | Chat | Frühere Chats | Schalter: ASK darf frühere Chats im selben Projekt durchsuchen und lesen (auch `/chats`). |
 | Modelle | Prüfung im Modus «Auto» | Auswahl des Modells, das im Modus Auto jeden Befehl prüft. Standard «Wie im Chat»; ein schnelles Modell genügt. |
+| Modelle | Kontextgrösse | Zahl in Token (Standard 250000): so viel Verlauf geht höchstens an das Modell. Meldet ASK für ein Modell ein kleineres Fenster, gilt das kleinere. |
+| Modelle | Reserve zum Zusammenfassen | Zahl in Token (Standard 30000): Ist der Verlauf bis auf diese Reserve voll, fasst ASK die älteren Aufträge zusammen. |
 | Modelle | Hilfsagenten | Auswahl des Modells für Hilfsagenten (lesen und recherchieren, bis zu 3 gleichzeitig). Standard «Wie im Chat». |
 | Gedächtnis | Gedächtnis | Schalter (Hinweis «Nur lokal»): ASK merkt sich Vorlieben, Kenntnisse und Projektwissen für alle Chats. |
 | Gedächtnis | Gespeicherte Einträge | Knopf «Ansehen …»: ansehen, ändern, löschen oder selbst etwas eintragen. |
@@ -119,6 +121,8 @@ Beim Tippen von `/` erscheint die Liste.
 | `/projekt` | Neues Projekt anlegen |
 | `/goal` | Ziel setzen: `/goal <Ziel>`; ASK arbeitet, bis es erreicht ist |
 | `/suchen` | Chats durchsuchen |
+| `/finden` | Im offenen Chat suchen (wie Ctrl+F) |
+| `/zusammenfassen` | Ältere Aufträge für das Modell zusammenfassen, das macht Platz im Kontext |
 | `/ordner` | Vorhandenen Ordner als Projekt öffnen |
 | `/explorer` | Projektordner im Explorer öffnen |
 | `/dateien` | Dateien des Projekts zeigen |
@@ -151,6 +155,7 @@ Skills erscheinen ebenfalls als `/name` (zum Beispiel `/code-erklaeren`), ebenso
 | Chats | Ctrl+Tab / Ctrl+Shift+Tab | Nächster / vorheriger Tab |
 | Chats | Ctrl+1 … 9 | Zu Tab springen (Ctrl+9 zum letzten) |
 | Chats | Ctrl+Shift+T | Geschlossenen Tab wieder öffnen |
+| Suchen | Ctrl+F | Im offenen Chat suchen; Enter nächster, Shift+Enter vorheriger Treffer, Esc schliesst |
 | Eingabe | Enter | Senden (während eines Auftrags: einreihen) |
 | Eingabe | Shift+Enter | Neue Zeile |
 | Eingabe | / | Befehle und Skills |
@@ -174,7 +179,9 @@ Die Liste steht auch unter Profil → Tastenkombinationen. Alles Anklickbare ist
 - **Chat ohne Projekt**: die Gruppe «Chats» oben links, neu mit dem «+» daneben. Dort antwortet ASK, sucht im Web, liest angehängte Dateien und Bilder und erstellt Bilder, ändert aber keine Dateien und führt keine Befehle aus; im Eingabefeld gibt es darum keinen Modus, rechts keinen Reiter «GitHub». Beim ersten Start landet man in einem solchen Chat. Soll ASK mit Dateien arbeiten: «+» bei «Projekte» oder `/projekt`.
 - **Chat starten**: «Neuer Chat» oben links, `/neu`, Ctrl+N oder das «+» bei den Tabs legen einen Chat dort an, wo man gerade ist (im offenen Projekt oder ohne Projekt); «+» neben einem Projekt beginnt dort einen. Das geht auch, während ein anderer Chat arbeitet: Der arbeitet im Hintergrund weiter (Kreisel in der Liste, pulsierender Punkt am Tab). Ein Klick auf einen Chat öffnet ihn; liegt er in einem anderen Projekt, wechselt die App dorthin (das Terminal startet neu). Jeder Chat behält seinen Entwurf im Eingabefeld.
 - **Menü des Projekts** («…» oder Rechtsklick): Umbenennen, Farbe, im Explorer öffnen, Projektnotizen bearbeiten, GitHub, aus der Liste entfernen (der Ordner bleibt).
-- **Menü eines Chats** («…» oder Rechtsklick): Umbenennen, Anheften (angeheftete Chats stehen oben), Löschen, bei laufendem Chat «Stoppen».
+- **Menü eines Chats** («…» oder Rechtsklick): Umbenennen, Anheften (angeheftete Chats stehen oben), «Verschieben nach» (in ein anderes Projekt oder zu den Chats ohne Projekt, samt Anhängen), «Exportieren …» (als Markdown-Datei), Löschen, bei laufendem Chat «Stoppen».
+- **Langer Chat**: Der Ring im Eingabefeld zeigt, wie voll der Kontext ist. Ist er bis auf die Reserve voll, fasst ASK die älteren Aufträge von selbst zusammen und arbeitet weiter; im Chat steht dann ein Hinweis, der ganze Verlauf bleibt sichtbar. Sofort geht es mit `/zusammenfassen`. Grösse und Reserve: Einstellungen → Modelle.
+- **Im Chat suchen**: Ctrl+F oder `/finden`. Gesucht wird im sichtbaren Text; Ctrl+O klappt vorher alle Arbeitsschritte auf.
 - **Titel**: Nach der ersten Antwort schreibt ASK automatisch einen kurzen Titel. Wer den Chat selbst umbenennt, behält seinen Titel.
 - **Suche**: Das Suchfeld links (oder `/suchen`) findet Titel und ab zwei Zeichen auch Inhalte aller Projekte («Im Inhalt gefunden»).
 - **Projekte ohne Ordner** sind durchgestrichen mit «Ordner nicht gefunden»; im Menü lassen sie sich aus der Liste entfernen.

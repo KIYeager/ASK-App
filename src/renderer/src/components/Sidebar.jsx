@@ -8,7 +8,7 @@ const FREE_SHOWN = 8; // Chats ohne Projekt: so viele, bis man «Alle zeigen» w
 
 // Linke Leiste: oben die Chats ohne Projekt (ENTSCHEIDE E78), darunter die Projekte (ein Projekt = ein Arbeitsordner) mit ihren Chats
 export default function Sidebar({ groups, chatId, running, runningChats = [], query, setQuery, renaming, onRenameDone, onNewChat, onOpenChat, onDeleteChat,
-  onNewProject, onProjectMenu, onNewInProject, state, onSettings, onStatus, onOpen, update, onUpdate, onRefresh }) {
+  onNewProject, onProjectMenu, onNewInProject, state, onSettings, onStatus, onOpen, update, onUpdate, onRefresh, onChatMoved }) {
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [allFree, setAllFree] = useState(false);
   const [profile, setProfile] = useState(null); // Menü am Profil: { x, y }
@@ -68,6 +68,20 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
       { separator: true },
       askOk ? { icon: 'logout', label: 'Abmelden', run: () => api().logout() } : { icon: 'logout', label: 'Anmelden …', run: () => onStatus('ask') },
     ];
+  };
+  const isBusy = (id) => runningChats.some((r) => r.id === id);
+  const moveTargets = (from) => groups.filter((g) => !g.missing && g.folder.toLowerCase() !== String(from).toLowerCase());
+  const moveChat = async (from, id, to) => {
+    let res;
+    try { res = await api().chatMove(from, id, to); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
+    if (res?.ok) onChatMoved?.(id, to);
+    else if (res?.reason) onOpen({ name: 'terminal', text: res.reason });
+    onRefresh?.();
+  };
+  const exportChat = async (folder, id) => {
+    let res;
+    try { res = await api().chatExport(folder, id); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
+    if (res && !res.ok && !res.canceled && res.reason) onOpen({ name: 'terminal', text: res.reason });
   };
   const freeGroup = groups.find((g) => g.free);
   const projectGroups = groups.filter((g) => !g.free);
@@ -209,6 +223,11 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
         runningChats.some((r) => r.id === menu.chat.id) ? { label: 'Stoppen', run: () => api().chatStopChat(menu.folder, menu.chat.id) } : null,
         { label: 'Umbenennen', run: () => setRenamingChat({ folder: menu.folder, id: menu.chat.id }) },
         { label: menu.chat.pinned ? 'Nicht mehr anheften' : 'Anheften', run: async () => { await api().chatPin(menu.folder, menu.chat.id, !menu.chat.pinned); onRefresh?.(); } },
+        // In ein anderes Projekt oder zu den Chats ohne Projekt (E78); nicht, solange der Chat arbeitet
+        moveTargets(menu.folder).length ? { label: 'Verschieben nach', enabled: !isBusy(menu.chat.id), submenu: moveTargets(menu.folder).map((g) => ({
+          label: g.free ? 'Chats (ohne Projekt)' : g.name, swatch: g.free ? undefined : g.color, run: () => moveChat(menu.folder, menu.chat.id, g.folder) })) } : null,
+        { label: 'Exportieren …', run: () => exportChat(menu.folder, menu.chat.id) },
+        { separator: true },
         { label: 'Löschen', danger: true, run: () => onDeleteChat(menu.folder, menu.chat.id, menu.chat.title) },
       ]} /> : null}
       <div className="side-foot">

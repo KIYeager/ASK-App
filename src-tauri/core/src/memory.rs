@@ -383,6 +383,22 @@ impl Memory {
         Ok(true)
     }
 
+    /// Ein Chat liegt jetzt in einem anderen Ordner (verschoben): Die Verweise der Einträge auf ihn zeigen dorthin
+    pub fn chat_moved(&self, chat: &str, from: &str, to: &str) -> Result<usize> {
+        let mut st = self.state.lock();
+        self.ensure(&mut st);
+        let Some(items) = st.items.as_mut() else { return Ok(0) };
+        let mut n = 0;
+        for i in items.iter_mut().filter(|i| i.chat.as_deref() == Some(chat) && same_path(&i.chat_folder, from)) {
+            i.chat_folder = to.to_string();
+            n += 1;
+        }
+        if n > 0 {
+            self.save(&st)?;
+        }
+        Ok(n)
+    }
+
     /// Nach Text statt id vergessen (Werkzeug vergessen): genau gleich, sonst eindeutig enthalten
     pub fn find_by_text(&self, text: &str, folder: &str) -> Vec<Item> {
         let n = norm(text);
@@ -718,6 +734,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("gedaechtnis.json");
         (dir, file)
+    }
+
+    #[test]
+    fn verschobener_chat_verweise_zeigen_auf_den_neuen_ordner() {
+        let (_dir, file) = temp();
+        let m = Memory::new(file);
+        let add = |chat: &str, folder: &str| {
+            m.add(NewItem { text: format!("Eintrag aus {chat} in {folder}"), tags: json!([]), scope: "konto".into(), project: None, chat: Some(chat.into()),
+                chat_title: "T".into(), chat_folder: folder.into(), source: "auto".into() }).unwrap();
+        };
+        let dir = |n: &str| std::env::temp_dir().join("ASK-Verschieben").join(n).to_string_lossy().to_string();
+        add("c1", &dir("a"));
+        add("c2", &dir("a"));
+        add("c1", &dir("b"));
+        assert_eq!(m.chat_moved("c1", &dir("a"), &dir("neu")).unwrap(), 1);
+        let where_: Vec<(String, String)> = m.list().into_iter().map(|i| (i.chat.unwrap_or_default(), i.chat_folder)).collect();
+        assert!(where_.contains(&("c1".into(), dir("neu"))) && where_.contains(&("c2".into(), dir("a"))) && where_.contains(&("c1".into(), dir("b"))), "{where_:?}");
+        assert_eq!(m.chat_moved("gibt-es-nicht", &dir("a"), &dir("neu")).unwrap(), 0);
     }
 
     fn proj() -> String {

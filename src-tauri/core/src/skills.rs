@@ -25,7 +25,7 @@ pub const PROMPT_DESCRIPTION: usize = 160;
 pub const MAX_SKILLS: usize = 100;
 /// Befehle der App: ein Skill mit diesem Namen liesse sich mit /name nicht aufrufen
 pub const RESERVED: &[&str] = &["neu", "projekt", "goal", "suchen", "ordner", "explorer", "dateien", "github", "modell", "denken", "web", "chats",
-    "einstellungen", "update", "beta", "neustart", "abmelden", "gedaechtnis", "skills", "hilfe", "mods", "plan", "auto", "nachfragen", "nutzung"];
+    "einstellungen", "update", "beta", "neustart", "abmelden", "gedaechtnis", "skills", "hilfe", "mods", "plan", "auto", "nachfragen", "nutzung", "zusammenfassen", "finden"];
 
 fn is_reserved(slug: &str) -> bool {
     RESERVED.contains(&slug)

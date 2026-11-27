@@ -216,6 +216,27 @@ const COMPACT_SYSTEM: &str = "Du fasst einen langen Chat zwischen einer Person u
 const SUMMARY_HEAD: &str = "[Zusammenfassung des bisherigen Chats. Der frühere Verlauf ist für dich nicht mehr sichtbar, weil er zu lang wurde; die Person sieht ihn noch.]\n";
 const COMPACT_NOTICE: &str = "Der Chat ist lang geworden: Ältere Aufträge gehen ab hier als Zusammenfassung an das Modell. Du siehst weiterhin den ganzen Verlauf.";
 
+/// Ordner verschieben: umbenennen, über Laufwerke hinweg kopieren und danach löschen
+fn move_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    fn copy(a: &Path, b: &Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(b)?;
+        for entry in std::fs::read_dir(a)? {
+            let entry = entry?;
+            let target = b.join(entry.file_name());
+            if entry.file_type()?.is_dir() { copy(&entry.path(), &target)?; } else { std::fs::copy(entry.path(), &target)?; }
+        }
+        Ok(())
+    }
+    if let Err(e) = copy(from, to) {
+        let _ = std::fs::remove_dir_all(to);
+        return Err(e);
+    }
+    std::fs::remove_dir_all(from)
+}
+
 /// Beginnt hier ein Auftrag der Person? (nicht: Anstoss im Ziel-Modus, Bilder einer Ansicht)
 fn turn_start(m: &Value) -> bool {
     m["role"] == "user" && !truthy(&m["auto"]) && m["note"] != "view"
@@ -1360,6 +1381,121 @@ impl Agent {
             self.new_chat();
         }
         true
+    }
+
+    /// Einen gespeicherten Chat in einen anderen Ordner verschieben (anderes Projekt oder Chats ohne Projekt), mit
+    /// seinen Anhängen, Skripten und Zwischendateien. Was zum alten Ordner gehört, bleibt dort: Die Sicherungen für
+    /// «Rückgängig» gelten für dessen Dateien, darum verliert der verschobene Chat seine Verweise darauf (sonst setzte
+    /// «Rückgängig» den neuen Ordner auf einen Stand des alten zurück).
+    pub fn move_chat(from: &str, to: &str, id: &str) -> Result<()> {
+        if !valid_id(id) || from.is_empty() || to.is_empty() {
+            bail!("Der Chat lässt sich nicht verschieben.");
+        }
+        if same_path(from, to) {
+            bail!("Der Chat liegt schon dort.");
+        }
+        let source = Self::chat_dir_of(from).join(format!("{id}.json"));
+        let target_dir = Self::chat_dir_of(to);
+        let target = target_dir.join(format!("{id}.json"));
+        if target.exists() {
+            bail!("Dort gibt es schon einen Chat mit derselben Kennung.");
+        }
+        let mut chat: Value = serde_json::from_str(&std::fs::read_to_string(&source).map_err(|_| anyhow::anyhow!("Diesen Chat gibt es nicht mehr."))?)
+            .map_err(|_| anyhow::anyhow!("Der Chat lässt sich nicht lesen."))?;
+        std::fs::create_dir_all(&target_dir).map_err(|e| anyhow::anyhow!("Der Zielordner ist nicht beschreibbar: {e}"))?;
+        // Zuerst die Dateien des Chats, dann der Chat selbst: Scheitert etwas, liegt er noch am alten Ort
+        let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+        for sub in WORK_DIRS {
+            let (a, b) = (Path::new(from).join(".ask").join(sub).join(id), Path::new(to).join(".ask").join(sub).join(id));
+            if !a.exists() {
+                continue;
+            }
+            let done = b.parent().map(std::fs::create_dir_all).transpose().is_ok() && !b.exists() && move_dir(&a, &b).is_ok();
+            if !done {
+                for (x, y) in moved.iter().rev() {
+                    let _ = move_dir(y, x); // zurück an den alten Ort
+                }
+                bail!("Die Dateien des Chats liessen sich nicht verschieben (eine davon ist vielleicht geöffnet).");
+            }
+            moved.push((a, b));
+        }
+        if let Some(list) = chat["messages"].as_array_mut() {
+            for m in list.iter_mut() {
+                if let Some(o) = m.as_object_mut() {
+                    o.remove("snapshot");
+                    o.remove("changes");
+                    o.remove("undone");
+                }
+                // Bilder, die im alten Ordner bleiben, nicht mehr als Vorschau zeigen (sie fehlten im neuen)
+                if let Some(images) = m.get("images").and_then(Value::as_array).cloned() {
+                    m["images"] = json!(images.into_iter().filter(|p| p.as_str().is_some_and(|p| Path::new(to).join(p).is_file())).collect::<Vec<_>>());
+                }
+            }
+        }
+        chat["updated"] = json!(now_ms());
+        let tmp = target_dir.join(format!("{id}.json.tmp"));
+        let written = std::fs::write(&tmp, chat.to_string()).and_then(|_| std::fs::rename(&tmp, &target));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp);
+            for (x, y) in moved.iter().rev() {
+                let _ = move_dir(y, x);
+            }
+            bail!("Der Chat liess sich nicht speichern: {e}");
+        }
+        let _ = std::fs::remove_file(&source);
+        Ok(())
+    }
+
+    /// Ein gespeicherter Chat als Markdown: Eingaben, Antworten und die Arbeitsschritte kurz (zum Abgeben oder Aufbewahren)
+    pub fn export_markdown(folder: &str, id: &str, place: &str) -> Option<String> {
+        if !valid_id(id) || folder.is_empty() {
+            return None;
+        }
+        let chat: Value = serde_json::from_str(&std::fs::read_to_string(Self::chat_dir_of(folder).join(format!("{id}.json"))).ok()?).ok()?;
+        let messages = chat["messages"].as_array()?;
+        let when = |m: &Value| m["time"].as_f64().filter(|t| *t > 0.0).map(crate::history::date).filter(|d| !d.is_empty());
+        let title = { let t = js_string(&chat["title"]); if t.trim().is_empty() { "Chat".to_string() } else { t } };
+        let mut out = format!("# {title}\n\nAus ASK, {place}. Exportiert am {}.\n", crate::history::date(now_ms() as f64));
+        // Ergebnis zu jedem Aufruf: Kurztext und ob er geklappt hat
+        let results: HashMap<String, (&Value, bool)> = messages.iter().filter(|m| m["role"] == "tool")
+            .map(|m| (js_string(&m["tool_call_id"]), (m, m["ok"] != json!(false)))).collect();
+        for m in messages {
+            match m["role"].as_str().unwrap_or("") {
+                "user" if m["note"] == "view" || truthy(&m["auto"]) => {}
+                "user" => {
+                    out.push_str(&format!("\n## Du{}\n\n{}\n", when(m).map(|d| format!(" · {d}")).unwrap_or_default(), js_string(&m["content"]).trim()));
+                    let files: Vec<String> = arr(&m["attachments"]).iter().map(|a| js_string(&a["name"])).filter(|n| !n.is_empty()).collect();
+                    if !files.is_empty() {
+                        out.push_str(&format!("\nAnhänge: {}\n", files.join(", ")));
+                    }
+                }
+                "assistant" => {
+                    let steps: Vec<String> = arr(&m["tool_calls"]).iter().map(|c| {
+                        let d = describe_call(c);
+                        let (label, detail) = (d.get("label").map(js_string).unwrap_or_default(), d.get("detail").map(js_string).unwrap_or_default());
+                        let result = results.get(&js_string(&c["id"])).map(|(r, ok)| {
+                            let s = js_string(&r["summary"]);
+                            if !ok { format!(" → fehlgeschlagen{}", if s.is_empty() { String::new() } else { format!(" ({s})") }) } else if s.is_empty() { String::new() } else { format!(" → {s}") }
+                        }).unwrap_or_default();
+                        format!("- {label}{}{result}", if detail.is_empty() { String::new() } else { format!(": `{}`", clip(&detail.replace('`', "'"), 160)) })
+                    }).collect();
+                    let text = js_string(&m["content"]);
+                    if text.trim().is_empty() && steps.is_empty() {
+                        continue;
+                    }
+                    out.push_str("\n## ASK\n");
+                    if !text.trim().is_empty() {
+                        out.push_str(&format!("\n{}\n", text.trim()));
+                    }
+                    if !steps.is_empty() {
+                        out.push_str(&format!("\n{}\n", steps.join("\n")));
+                    }
+                }
+                "note" if truthy(&m["content"]) => out.push_str(&format!("\n> {}: {}\n", if m["kind"] == "error" { "Fehler" } else { "Hinweis" }, js_string(&m["content"]).replace('\n', " "))),
+                _ => {}
+            }
+        }
+        Some(out)
     }
 
     pub fn open(&self, id: &str) -> bool {
@@ -3006,6 +3142,43 @@ mod tests {
         // Ein vollständiger Verlauf bleibt unverändert
         let whole = api_messages("sys", &messages[..3], false, None, &NORMAL);
         assert_eq!(whole.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn chat_verschieben_mit_anhaengen_ohne_verweise_auf_die_sicherung_des_alten_ordners() {
+        let ask = Fake::new(vec![calls(vec![call("a", "list_files", json!({ "path": "." }))]), text("Fertig in A.")]);
+        let t = make(ask, |_| {});
+        t.send("Auftrag in A").await;
+        let id = t.agent.chat_id();
+        let from = t.folder.path().to_string_lossy().to_string();
+        let to_dir = tempfile::tempdir().unwrap();
+        let to = to_dir.path().to_string_lossy().to_string();
+        // Anhang des Chats und ein Verweis auf eine Sicherung, wie ihn ein Auftrag mit «Rückgängig» hinterlässt
+        let att = t.folder.path().join(".ask/anhaenge").join(&id);
+        std::fs::create_dir_all(&att).unwrap();
+        std::fs::write(att.join("notiz.txt"), "hallo").unwrap();
+        let file = t.folder.path().join(".ask/chats").join(format!("{id}.json"));
+        let mut chat: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        chat["messages"][0]["snapshot"] = json!("s1");
+        chat["messages"][0]["changes"] = json!({ "added": ["x.txt"], "changed": [], "removed": [] });
+        std::fs::write(&file, chat.to_string()).unwrap();
+
+        assert!(Agent::move_chat(&from, &from, &id).is_err(), "derselbe Ordner");
+        assert!(Agent::move_chat(&from, &to, "../boese").is_err(), "nur gültige Kennungen");
+        Agent::move_chat(&from, &to, &id).unwrap();
+        assert!(!file.exists() && !att.exists(), "am alten Ort ist nichts mehr");
+        let moved: Value = serde_json::from_str(&std::fs::read_to_string(to_dir.path().join(".ask/chats").join(format!("{id}.json"))).unwrap()).unwrap();
+        assert_eq!(moved["messages"][0]["content"], "Auftrag in A");
+        assert!(moved["messages"][0].get("snapshot").is_none() && moved["messages"][0].get("changes").is_none(), "kein «Rückgängig» für den alten Ordner");
+        assert_eq!(std::fs::read_to_string(to_dir.path().join(".ask/anhaenge").join(&id).join("notiz.txt")).unwrap(), "hallo");
+        assert!(Agent::move_chat(&from, &to, &id).is_err(), "nochmals: den Chat gibt es am alten Ort nicht mehr");
+
+        // Export: Titel, Eingabe, Antwort und der Arbeitsschritt kurz
+        let md = Agent::export_markdown(&to, &id, "Projekt «B»").unwrap();
+        assert!(md.starts_with("# Auftrag in A\n"), "{md}");
+        assert!(md.contains("Aus ASK, Projekt «B».") && md.contains("## Du") && md.contains("Auftrag in A") && md.contains("## ASK") && md.contains("Fertig in A."), "{md}");
+        assert!(md.contains("- Ordner"), "Arbeitsschritt als Zeile: {md}");
+        assert!(Agent::export_markdown(&to, "gibt-es-nicht", "x").is_none());
     }
 
     // ---------- Zusammenfassen des Verlaufs (E78) ----------

@@ -1864,6 +1864,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             "ask:use-token" => ("Mit einem eingefügten Token bei ASK anmelden?".into(), String::new()),
             "github:connect" => ("GitHub-Token speichern?".into(), String::new()),
             "servers:start" => ("Server starten?".into(), sarg(a, 0)),
+            "chat:move" => ("Chat verschieben?".into(), if paths::is_free_dir(&sarg(a, 2)) { "Zu den Chats ohne Projekt".into() } else { sarg(a, 2) }),
             "skills:save" => ("Skill speichern?".into(), str_of(&arg(a, 0), "name")),
             "skills:enable" if on(1) => ("Mitgelieferten Skill einschalten?".into(), sarg(a, 0)),
             "memory:add" | "memory:update" => ("Eintrag im Gedächtnis speichern?".into(), crate::util::take_chars(&str_of(&arg(a, if channel == "memory:add" { 0 } else { 1 }), "text"), 300)),
@@ -2151,6 +2152,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 }
             }
             // pending: offene Frage oder Rückfrage eines Chats, der schon arbeitet (z. B. nach dem Wechsel aus einem anderen Chat)
+            "chat:move" => self.move_chat(&sarg(a, 0), &sarg(a, 1), &sarg(a, 2)).await,
+            "chat:export" => self.export_chat(&sarg(a, 0), &sarg(a, 1)).await,
             "chat:transcript" => { let mut s = agent.state(); s["items"] = agent.transcript(); s["pending"] = agent.pending_events(); s }
             "ui:chatbar" => { settings::set(json!({ "chatbarOpen": truthy(&arg(a, 0)) })); self.push_state(); Value::Null }
             "ui:sidebar" => { settings::set(json!({ "sidebarOpen": truthy(&arg(a, 0)) })); self.push_state(); Value::Null }
@@ -2209,6 +2212,67 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             }
         };
         Ok(v)
+    }
+
+    /// Ist das ein Ort für Chats: die Chats ohne Projekt oder ein Projekt aus der Liste, dessen Ordner es gibt?
+    fn chat_place(folder: &str) -> bool {
+        paths::is_free_dir(folder) || (settings::find_project(folder).is_some() && Path::new(folder).is_dir())
+    }
+
+    /// Chat in ein anderes Projekt oder zu den Chats ohne Projekt verschieben (ENTSCHEIDE E78). War er sichtbar, geht
+    /// es am neuen Ort mit ihm weiter.
+    async fn move_chat(&self, from: &str, id: &str, to: &str) -> Value {
+        if !Self::chat_place(from) || !Self::chat_place(to) {
+            return fail("Das Ziel gibt es nicht (mehr).");
+        }
+        let to = if paths::is_free_dir(to) { Self::free_folder() } else { to.to_string() };
+        let rt = self.st.lock().runtimes.get(&path_key(from)).cloned();
+        let holder = rt.as_ref().and_then(|rt| Self::agent_for(rt, id));
+        if holder.as_ref().is_some_and(|h| h.running() || h.undoing()) {
+            return fail("Der Chat arbeitet noch. Zuerst stoppen, dann verschieben.");
+        }
+        let visible = self.agent();
+        let was_visible = visible.chat_id() == id && same_path(&visible.get_folder(), from);
+        if let Err(err) = Agent::move_chat(from, &to, id) {
+            return fail(err.to_string());
+        }
+        // Verweise des Gedächtnisses («aus Chat …») zeigen auf den neuen Ort
+        let _ = self.knowledge.memory.chat_moved(id, from, &to);
+        // Kein Agent hält den Chat mehr am alten Ort (ein späteres Speichern legte ihn dort wieder an)
+        if let (Some(h), Some(rt)) = (&holder, &rt) {
+            if Arc::ptr_eq(h, &visible) { h.new_chat(); } else { rt.agents.lock().retain(|x| !Arc::ptr_eq(x, h)); }
+        }
+        self.send("chat:groups-changed", Value::Null);
+        if was_visible {
+            let res = self.open_chat(&to, id).await;
+            if !bool_of(&res, "ok") {
+                return json!({ "ok": true, "note": str_of(&res, "reason") }); // verschoben, aber dort nicht zu öffnen
+            }
+        }
+        json!({ "ok": true })
+    }
+
+    /// Chat als Markdown-Datei speichern
+    async fn export_chat(&self, folder: &str, id: &str) -> Value {
+        if !Self::chat_place(folder) {
+            return fail("Diesen Chat gibt es nicht mehr.");
+        }
+        let place = if paths::is_free_dir(folder) {
+            "Chat ohne Projekt".to_string()
+        } else {
+            format!("Projekt «{}»", settings::find_project(folder).map(|p| str_of(&p, "name")).filter(|n| !n.is_empty()).unwrap_or_else(|| win_basename(folder)))
+        };
+        let Some(text) = Agent::export_markdown(folder, id, &place) else { return fail("Diesen Chat gibt es nicht mehr.") };
+        let title = text.lines().next().unwrap_or("").trim_start_matches("# ").to_string();
+        let name = { let n = safe_folder_name(&crate::util::take_chars(&title, 60)); if n.is_empty() { "Chat".to_string() } else { n } };
+        let filters: crate::host::Filters = vec![("Markdown".into(), vec!["md".into()])];
+        let Some(path) = self.host.pick_save_file("Chat exportieren", &format!("{name}.md"), filters).await.filter(|p| !p.is_empty()) else {
+            return json!({ "ok": false, "canceled": true });
+        };
+        match std::fs::write(&path, text) {
+            Ok(()) => json!({ "ok": true, "path": path }),
+            Err(err) => fail(format!("Die Datei liess sich nicht speichern: {err}")),
+        }
     }
 
     fn chat_owner(&self, folder: &str, id: &str) -> Arc<Agent> {

@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar.jsx';
 import Tabs from './components/Tabs.jsx';
 import AppAsk from './components/AppAsk.jsx';
 import PopMenu from './components/PopMenu.jsx';
+import FindBar from './components/FindBar.jsx';
 import Composer from './components/Composer.jsx';
 import RightPanel, { norm } from './components/RightPanel.jsx';
 import Dialogs, { activeDialog } from './components/Dialogs.jsx';
@@ -174,6 +175,7 @@ export default function App() {
   }, []);
   const closedTabs = useRef([]); // zuletzt geschlossene Tabs, für Ctrl+Shift+T
   const [widths, setWidths] = useState(loadWidths);
+  const [finding, setFinding] = useState(false); // Suche im Chat (Ctrl+F)
   const [follow, setFollow] = useState(true);
   const [showJump, setShowJump] = useState(false);
 
@@ -577,6 +579,7 @@ export default function App() {
       try { res = await api().chatCompact(); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
       if (!res?.ok) notice(res?.reason || 'Das Zusammenfassen hat nicht geklappt.');
     } },
+    { cmd: '/finden', text: 'In diesem Chat suchen (Ctrl+F)', run: () => setFinding(true) },
     { cmd: '/suchen', text: 'Chats durchsuchen', run: () => { if (!leftOpen) api().setChatbar(true); setTimeout(() => document.getElementById('chat-search')?.focus(), 50); } },
     { cmd: '/ordner', text: 'Vorhandenen Ordner als Projekt öffnen', run: () => openFolder(() => api().chooseFolder()) },
     { cmd: '/explorer', text: 'Projektordner im Explorer öffnen', run: () => api().showFolder() },
@@ -621,6 +624,11 @@ export default function App() {
       // Chats und Tabs wechseln nur, wenn kein Dialog davor liegt und man angemeldet ist (sonst geschähe es unsichtbar dahinter)
       const chats = !dialogName && !needsLogin && !uiMenu;
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'n') { e.preventDefault(); if (chats && state?.folder) newChat(); }
+      // Suche im Chat; nicht hinter einem Dialog und nicht auf der Anmeldeseite
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'f') {
+        e.preventDefault();
+        if (chats) { if (finding) { const el = document.getElementById('find-input'); el?.focus(); el?.select(); } else setFinding(true); }
+      }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') { e.preventDefault(); if (!dialogName || dialog) setDialog({ name: 'settings' }); }
       // Tabs: Ctrl+W schliesst, Ctrl+Tab wechselt, Ctrl+1 bis 9 springt, Ctrl+Shift+T holt den zuletzt geschlossenen zurück
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'w') { e.preventDefault(); const t = shownTabs.find((x) => x.id === chatId); if (chats && t) closeTab(t); }
@@ -636,6 +644,7 @@ export default function App() {
         // Pflichtdialoge und «Neu in ASK» liegen davor: Esc stoppt dann nicht den Auftrag dahinter
         if (dialogName) { if (dialogName === 'whatsnew') api().whatsNewSeen(); return; }
         if (browserBig) { setBrowserBig(false); return; }
+        if (finding) { setFinding(false); composer.current?.focus(); return; }
         if (runningRef.current && !document.querySelector('.popover')) composer.current?.stop();
       }
     };
@@ -830,7 +839,8 @@ export default function App() {
           <Sidebar groups={groups} chatId={chatId} running={running} runningChats={state.running || []} query={query} setQuery={setQuery}
             renaming={renaming} onRenameDone={async (folder, name) => { setRenaming(null); if (name.trim()) await api().projectUpdate(folder, { name }); loadChats(); }}
             onNewChat={() => newChat()} onOpenChat={openChat}
-            onDeleteChat={async (folder, id, title) => { if (await api().chatDelete(folder, id, title)) loadChats(); }}
+            onDeleteChat={async (folder, id, title) => { if (await api().chatDelete(folder, id, title)) { loadChats(); setTabs((all) => all.filter((x) => x.id !== id)); } }}
+            onChatMoved={(id, to) => setTabs((all) => all.map((x) => (x.id === id ? { ...x, folder: to } : x)))}
             onNewProject={() => setDialog({ name: 'project' })} onProjectMenu={(folder) => api().projectMenu(folder)}
             onNewInProject={(folder) => newChat(folder)} state={state}
             onSettings={() => setDialog({ name: 'settings' })} onStatus={(name) => setDialog({ name })} onOpen={setDialog}
@@ -877,6 +887,10 @@ export default function App() {
                 </div>
               </div>
             </div>
+          ) : null}
+          {finding && !needsLogin ? (
+            <FindBar root={transcript} version={turns} view={`${chatId}:${verbose}`} onClose={() => { setFinding(false); composer.current?.focus(); }}
+              onJump={() => { followRef.current = false; setFollow(false); }} />
           ) : null}
           <div id="transcript" ref={transcript} className="transcript" onScroll={onScroll} onWheel={onWheel} hidden={needsLogin}>
             <div className="column">

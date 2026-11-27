@@ -90,6 +90,8 @@ export function install() {
   chatAnswer: (id, text) => call('chat:answer', id, text),
   chatGoal: (text) => call('chat:goal', text),
   chatCompact: () => call('chat:compact'),
+  chatMove: (from, id, to) => call('chat:move', from, id, to),
+  chatExport: (folder, id) => call('chat:export', folder, id),
   githubStatus: () => call('github:status'),
   githubConnect: (token) => call('github:connect', token),
   githubDisconnect: () => call('github:disconnect'),

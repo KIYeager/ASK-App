@@ -58,7 +58,7 @@ Erlaubte Dateien: `json css js md txt svg png jpg jpeg gif webp mp3 wav ogg woff
 | `anweisungen` | nein | höchstens 2000 Zeichen, ergänzen die Anweisungen an das Modell. Sie gelten nie gegen Sicherheit und Rückfragen |
 | `nachfragen` | nein | ASK fragt immer zuerst vor: `loeschen` (Dateien löschen), `schreiben` (Dateien schreiben), `befehle` (jeder Befehl), `web` (Internet). Macht ASK nur strenger |
 
-Befehlsnamen der App sind gesperrt: `neu projekt goal suchen ordner explorer dateien github modell denken web chats einstellungen update beta neustart abmelden gedaechtnis skills hilfe mods plan auto nachfragen nutzung`.
+Befehlsnamen der App sind gesperrt: `neu projekt goal suchen ordner explorer dateien github modell denken web chats einstellungen update beta neustart abmelden gedaechtnis skills hilfe mods plan auto nachfragen nutzung zusammenfassen finden`.
 
 ## Aussehen (CSS)
 
