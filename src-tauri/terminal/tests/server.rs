@@ -42,6 +42,7 @@ impl Srv {
             origin: ORIGIN.into(),
             execute_timeout,
             low_integrity: true,
+            read_only: Vec::new(),
         };
         let handle = serve(config).await.unwrap();
         let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(90)).build().unwrap();

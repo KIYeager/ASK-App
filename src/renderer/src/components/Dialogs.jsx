@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { errorDetails, errorHelp } from '../lib/errorHelp.mjs';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
 import { baseName, formatCount, formatDuration } from '../lib/format.js';
@@ -16,6 +17,17 @@ function Dialog({ id, title, wide, full, children, actions, onClose }) {
       <div className="dialog-body">{children}</div>
       {actions ? <div className="actions">{actions}</div> : null}
     </div>
+  );
+}
+
+// «Neu in ASK» nach einem Update (ENTSCHEIDE E65): Text aus dem Release, Zeilen als Absätze
+function WhatsNewDialog({ info, onClose }) {
+  const lines = String(info?.text || '').split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  return (
+    <Dialog id="dlg-whatsnew" title={`Neu in ASK ${info?.version || ''}`} onClose={onClose}
+      actions={<button id="whatsnew-ok" type="button" className="btn primary" autoFocus onClick={onClose}>Alles klar</button>}>
+      {lines.map((l, i) => <p key={i}>{l.replace(/^[-*•]\s*/, '')}</p>)}
+    </Dialog>
   );
 }
 
@@ -89,6 +101,25 @@ function ProjectDialog({ state, first, error: startError, onResult, onClose }) {
   );
 }
 
+// Was zu tun ist, und «Details kopieren» für die Lehrperson (ENTSCHEIDE E69)
+function HelpSteps({ text, state, extra = '' }) {
+  const help = errorHelp(text);
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="help-steps">
+      {help ? (
+        <>
+          <strong>{help.title}</strong>
+          <ol>{help.steps.map((s) => <li key={s}>{s}</li>)}</ol>
+        </>
+      ) : null}
+      <button type="button" className="btn small" onClick={() => { api().copy(`${errorDetails(text, state)}${extra ? `\n\nMeldungen:\n${extra}` : ''}`); setCopied(true); }}>
+        {copied ? 'Kopiert' : 'Details kopieren'}
+      </button>
+    </div>
+  );
+}
+
 function AskDialog({ state, onClose, onToken }) {
   const a = state.ask || {};
   return (
@@ -105,7 +136,12 @@ function AskDialog({ state, onClose, onToken }) {
           <p>Angemeldet als {a.user || '(unbekannt)'}. {state.models.length} Modell(e) verfügbar.</p>
           <p>Die App schickt deine Aufträge direkt an das gewählte Modell. Befehle und Dateizugriffe führt sie selbst auf diesem Laptop aus, nur im Arbeitsordner.</p>
         </>
-      ) : a.state === 'fehler' ? <p>ASK meldet einen Fehler: {a.message || 'unbekannt'}</p> : (
+      ) : a.state === 'fehler' ? (
+        <>
+          <p>ASK meldet einen Fehler: {a.message || 'unbekannt'}</p>
+          <HelpSteps text={a.message || 'Verbindung'} state={state} />
+        </>
+      ) : (
         <>
           <p>Nicht angemeldet. Die Anmeldeseite von ASK erscheint im Hauptfenster. Erscheint sie nicht, melde dich in einem eigenen Fenster oder im Browser an.</p>
           <div className="checks">
@@ -170,6 +206,7 @@ function TerminalDialog({ state, text, onClose }) {
       <p id="terminal-detail">{text || (t.state === 'läuft'
         ? `Das Terminal läuft im Ordner ${t.folder}. ${t.lowIntegrity ? 'Ausserhalb des Ordners kann es nichts schreiben oder löschen.' : ''}`
         : (t.error || `Status: ${t.state}`))}</p>
+      {!text && t.state === 'fehler' ? <HelpSteps text={`Terminal: ${t.error || ''}`} state={state} extra={logs} /> : null}
       {!text ? <pre id="terminal-logs" className="logs">{logs}</pre> : null}
     </Dialog>
   );
@@ -455,6 +492,7 @@ export function activeDialog(state, dialog) {
   if (!state.folder) return 'start';
   if (dialog?.name) return dialog.name;
   if (state.prefs && state.prefs.tourDone === false && !LOGIN_PENDING.includes(state.ask?.state)) return 'tour';
+  if (state.whatsNew) return 'whatsnew'; // nach jedem Update einmal (E65)
   return null;
 }
 
@@ -463,6 +501,13 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
   if (!name) return null;
   const close = () => setDialog(null);
   if (name === 'tour') return <Tour state={state} onDone={() => { api().setPrefs({ tourDone: true }); close(); }} />;
+  if (name === 'whatsnew') {
+    return (
+      <div id="overlay" className="overlay">
+        <WhatsNewDialog info={state.whatsNew} onClose={() => api().whatsNewSeen()} />
+      </div>
+    );
+  }
   return (
     <div id="overlay" className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && dialog && name === dialog.name) close(); }}>
       {name === 'warning' ? <WarningDialog /> : null}

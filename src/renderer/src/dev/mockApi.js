@@ -118,6 +118,7 @@ async function demoRun(text) {
   ev({ type: 'user', text, attachments: [] });
   await wait(400);
   if (state.mode === 'plan') { await demoPlan(ev); return; }
+  if (/fehler/i.test(text)) { ev({ type: 'error', text: 'error sending request for url (https://ask.ict-tfbern.ch/api/chat/completions): dns error' }); state = { ...state, chat: { ...state.chat, running: false } }; push(); ev({ type: 'done', summary: 'Fehler', failed: true }); return; }
   ev({ type: 'assistant-start' });
   for (const w of 'Ich räume den Ordner auf. '.split(' ')) { ev({ type: 'reasoning', text: `${w} ` }); await wait(40); }
   ev({ type: 'assistant-end', content: '', stats: stats(90), calls: [] });
@@ -307,6 +308,7 @@ export function install() {
       if (value === 'edit1') console.log('kopiert:', String(window.getSelection()) || document.activeElement?.value?.slice(document.activeElement.selectionStart, document.activeElement.selectionEnd));
     }, updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
     setPrefs: async (v) => { state = { ...state, prefs: { ...state.prefs, ...v } }; push(); },
+    whatsNewSeen: async () => { state = { ...state, whatsNew: null }; push(); },
     usageGet: async (withAsk = true) => (withAsk ? (await wait(600), { ...mockUsage(), ask: params.get('ohneask') ? null : { webChats: 42, webChats30: 12 } }) : { ...mockUsage(), ask: null }),
     chatRewind: async () => ({ ok: true, text: 'Räum den Ordner auf', attachments: [] }),
     chatRename: async (_f, id, title) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.title = title; return true; },

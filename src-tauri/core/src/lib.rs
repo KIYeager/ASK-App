@@ -14,6 +14,7 @@ pub mod doh;
 
 // Welle 1: Module ohne Abhängigkeiten untereinander
 pub mod approvals;
+pub mod vorlagen;
 pub mod folders;
 pub mod cleanup;
 pub mod lowlabel;

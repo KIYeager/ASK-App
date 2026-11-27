@@ -377,6 +377,7 @@ impl App {
 
     /// Wie app.whenReady in main.js
     pub async fn start(self: &Arc<Self>) {
+        self.prepare_python();
         // Ausweich-DNS vor dem ersten Laden (ENTSCHEIDE E57). «secureDns» aus 0.3.7 galt auch nach einer vertippten
         // Adresse: verworfen (E58). Gemerkt wird es mit der Adresse und gilt nur, wenn sie noch die der Schule ist.
         settings::remove("secureDns");
@@ -385,6 +386,7 @@ impl App {
         if !dns_for.is_empty() && crate::askapi::same_origin(&dns_for, &school) && crate::askapi::same_origin(&dns_for, &js_string(&settings::get("askUrl"))) {
             self.dns.enable();
         }
+        self.note_first_install();
         self.skip_tour_for_existing_users();
         self.apply_theme();
         self.wire_events();
@@ -402,14 +404,33 @@ impl App {
         }
         crate::portable::cleanup_old_versions();
         self.updater.start();
-        // Installierte App und einzelne EXE: Python einmal entpacken (ENTSCHEIDE E39), ohne den Start aufzuhalten
-        if paths::is_packaged() {
-            spawn(async {
-                if let Err(e) = crate::python::shared().ensure_quiet().await {
-                    eprintln!("Python nicht eingerichtet: {e}");
-                }
-            });
+    }
+
+    /// Installierte App und einzelne EXE: Python einmal entpacken (ENTSCHEIDE E39), ohne den Start aufzuhalten.
+    /// Gleich zu Beginn von `start`, damit es fertig ist, bevor das Modell Python braucht; der Fortschritt
+    /// steht unten links (Zustand «python», E68).
+    fn prepare_python(self: &Arc<Self>) {
+        if !paths::is_packaged() || crate::python::shared().ready() {
+            return;
         }
+        let me = Arc::downgrade(self);
+        spawn(async move {
+            let shown = std::sync::atomic::AtomicI32::new(-1);
+            let report = |p: u32| {
+                let last = shown.load(std::sync::atomic::Ordering::SeqCst);
+                if last < 0 || p as i32 >= last + 5 || p >= 100 {
+                    shown.store(p as i32, std::sync::atomic::Ordering::SeqCst);
+                    PYTHON_PERCENT.store(p as i32, std::sync::atomic::Ordering::SeqCst);
+                    if let Some(a) = me.upgrade() { a.push_state(); }
+                }
+            };
+            report(0);
+            if let Err(e) = crate::python::shared().ensure(report).await {
+                eprintln!("Python nicht eingerichtet: {e}");
+            }
+            PYTHON_PERCENT.store(-1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(a) = me.upgrade() { a.push_state(); }
+        });
     }
 
     /// Beim Beenden den laufenden Auftrag stoppen und abwarten, bis er gespeichert ist (höchstens 5 s)
@@ -454,6 +475,23 @@ impl App {
         for w in waits {
             let _ = w.await;
         }
+    }
+
+    /// «Neu in ASK» (ENTSCHEIDE E65): nach jedem Update einmal der Text dieser Version. Eine frische Installation
+    /// merkt sich die Version gleich; wer von der Electron-Fassung kommt (noch keine «lastVersion», Hinweis schon
+    /// bestätigt), sieht die Karte auch.
+    fn note_first_install(&self) {
+        if settings::get("lastVersion").as_str().is_none() && !bool_of(&settings::load(), "warningAccepted") {
+            settings::set(json!({ "lastVersion": self.host.app_version() }));
+        }
+    }
+
+    fn whats_new(&self) -> Value {
+        let current = self.host.app_version();
+        if settings::get("lastVersion").as_str() == Some(current.as_str()) {
+            return Value::Null;
+        }
+        whats_new_text(&crate::paths::resources(&["neu.json"]), &current)
     }
 
     fn skip_tour_for_existing_users(&self) {
@@ -689,6 +727,8 @@ impl App {
             "update": self.updater.snapshot(),
             "prefs": self.prefs(),
             "version": self.host.app_version(),
+            "whatsNew": self.whats_new(),
+            "python": match PYTHON_PERCENT.load(std::sync::atomic::Ordering::SeqCst) { p if p >= 0 => json!({ "percent": p }), _ => Value::Null },
             "approvals": self.approval_mode(),
             "mode": self.chat_mode(),
             "reviewModel": s.get("reviewModel").and_then(Value::as_str).unwrap_or(""),
@@ -852,7 +892,7 @@ impl App {
             move |chat: &str| {
                 let Some(a) = me.upgrade() else { return String::new() };
                 let history = if truthy(&settings::get("chatMemory")) { crate::history::history_prompt(Path::new(&f), chat) } else { String::new() };
-                format!("{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), project_notes(&f), a.knowledge.system_prompt(&f), history, a.thinking_switch())
+                format!("{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), project_notes(&f), crate::vorlagen::system_prompt(), a.knowledge.system_prompt(&f), history, a.thinking_switch())
             }
         });
         o.get_command_hint = Arc::new({ let f = f.clone(); move |chat: &str| read_instruction("befehle.md", &f, chat) });
@@ -1671,7 +1711,14 @@ impl App {
                 Value::Null
             }
             "workspace:list" => self.workspace().list(&sarg(a, 0)),
-            "workspace:find" => json!(self.workspace().find(&sarg(a, 0))),
+            "workspace:find" => {
+                // Dateien des Projekts, dazu Vorlagen der TF Bern (E66), damit sie unter den ersten acht stehen
+                let mut out = self.workspace().find(&sarg(a, 0));
+                let templates = crate::vorlagen::find(&sarg(a, 0));
+                let at = out.len().min(5);
+                out.splice(at..at, templates.into_iter().take(4));
+                json!(out)
+            }
             "workspace:import" => {
                 let files: Vec<ImportFile> = arg(a, 1).as_array().cloned().unwrap_or_default().iter()
                     .map(|f| ImportFile { name: str_of(f, "name"), kind: str_of(f, "type"), data: bytes_of(&f["data"]) }).collect();
@@ -1759,6 +1806,11 @@ impl App {
                     crate::usage::ask_usage(Some(&self.ask), Default::default()).await.unwrap_or(Value::Null)
                 };
                 result
+            }
+            "whatsnew:seen" => {
+                settings::set(json!({ "lastVersion": self.host.app_version() }));
+                self.push_state();
+                Value::Null
             }
             "prefs:set" => {
                 let mut next = self.prefs();
@@ -2016,8 +2068,30 @@ fn migrate_project(folder: &str) {
     project_file(folder, "sicherung", ".ask/sicherung");
 }
 
+/// Text für «Neu in ASK»: aus resources/neu.json ({ "version", "text" }, beim Bauen aus dem Release-Text
+/// geschrieben, scripts/dist.js); passt die Version nicht oder fehlt die Datei, ein allgemeiner Satz.
+/// Fortschritt beim Entpacken von Python in Prozent, -1: nichts zu tun (Zustand «python»)
+static PYTHON_PERCENT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+pub fn whats_new_text(file: &std::path::Path, current: &str) -> Value {
+    let stored: Value = std::fs::read_to_string(file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+    let text = if js_string(&stored["version"]) == current { js_string(&stored["text"]).trim().to_string() } else { String::new() };
+    let text = if text.is_empty() { format!("ASK ist jetzt auf Version {current}.") } else { text };
+    json!({ "version": current, "text": text })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn neu_in_ask_text_nur_fuer_die_passende_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("neu.json");
+        assert_eq!(whats_new_text(&f, "0.3.11")["text"], "ASK ist jetzt auf Version 0.3.11.");
+        std::fs::write(&f, r#"{ "version": "0.3.11", "text": "Schneller.\nNeu anmelden." }"#).unwrap();
+        assert_eq!(whats_new_text(&f, "0.3.11"), serde_json::json!({ "version": "0.3.11", "text": "Schneller.\nNeu anmelden." }));
+        assert_eq!(whats_new_text(&f, "0.3.12")["text"], "ASK ist jetzt auf Version 0.3.12.");
+    }
+
     use super::*;
 
     #[test]

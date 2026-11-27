@@ -494,7 +494,7 @@ Wie die Gründe aus E9 und E42 gelöst sind:
 - **Anmelden ohne die ASK-Seite (E57)** wie dort: Fenster «Bei ASK anmelden» mit demselben Datenordner wie die ASK-Seite (`src-tauri/src/askview.rs`, Token alle 1,5 Sekunden gelesen, `AskSession::watch_login`), Token aus dem Browser einfügen (`ask:use-token`, verschlüsselt mit DPAPI als `askToken`), Meldung «nicht erreichbar» mit Adresse und Proxy (`web::proxy_for`: Umgebung und Internetoptionen von Windows statt `session.resolveProxy`). WebView2 meldet «Name nicht gefunden» als eigenen Fehler; die Hülle gibt ihn mit dem Code von Chromium (-105) weiter, damit Oberfläche und askapi gleich bleiben.
 - **Ausweich-DNS (E57) nur für die Anfragen der App.** Electron stellte mit `app.configureHostResolver` die ganze App auf DNS über HTTPS um, auch die ASK-Seite. WebView2 lässt das zur Laufzeit nicht zu. Hier fragt die App für ihre eigenen Anfragen an ASK (Anmeldung prüfen, Modelle, Chats) nach einem Namensfehler zuerst Quad9 über DNS-over-HTTPS (RFC 8484, `src-tauri/core/src/doh.rs`, ohne zusätzliches Crate) und bei einem Fehler wieder Windows, nur für den Namen der Adresse der Schule, gemerkt wie dort mit `secureDnsFor`. Die ASK-Seite selbst und das Anmeldefenster benutzen weiter das DNS von Windows; lädt sie deshalb nicht, geht die Anmeldung über «Im Browser anmelden …». Ob Quad9 auf dem betroffenen Laptop hilft, ist wie in E57 nur dort prüfbar.
 - **Adresse der Schule (E58)** gleich: `askapi::effective_ask_url`, angewendet beim Laden der Einstellungen; `secureDns` aus 0.3.7 wird gelöscht.
-- **Fortschrittsfenster (E59) entfällt.** Es gestaltete das Fenster des Plugins SpiderBanner von electron-builder um. Der Installer der Tauri-Fassung ist der NSIS-Installer von Tauri mit eigenem Fortschrittsfenster (bei Updates im Modus «passive», ohne Klicks); dessen Aussehen ist noch nicht angepasst.
+- **Fortschrittsfenster (E59)** entfiel zunächst (0.3.11-beta.1 zeigte den Assistenten von NSIS mit Seiten); seit E64 wieder wie in der Electron-Fassung.
 
 Weiteres: Benachrichtigungen mit Klick über `tauri-winrt-notification`; das Kontextmenü in ASK und im Browser ist das von WebView2 (mit Rechtschreibprüfung), nicht mehr ein eigenes; Ctrl +/-/0, Ctrl+R und die Entwicklerwerkzeuge (Ctrl+Shift+I für ASK, Ctrl+Shift+J für die App) gehen über ein kleines Skript in der Oberfläche. Grösse: Installer ohne Chromium rund 85 MB kleiner; das mitgelieferte Python (rund 290 MB) bleibt der grösste Teil. Die End-to-End-Tests (`tests/e2e`) steuerten Electron direkt und sind noch nicht auf Tauri umgestellt; bis dahin gilt die Prüfliste im Testprotokoll von Hand.
 
@@ -519,3 +519,46 @@ Bisher bekamen die Lernenden einen Link, der `ASK-Setup.exe` sofort herunterlud.
 Ort: GitHub Pages von ASK-Releases (Branch `main`, Ordner `/docs`). Das Repository ist schon öffentlich und kostet nichts; der Code in ASK-App bleibt privat.
 
 Die Seite ist fest geschrieben und fragt nie selbst bei GitHub nach. Eine Klasse im Schulnetz teilt sich eine IP-Adresse, und die GitHub-API erlaubt ohne Anmeldung nur 60 Anfragen pro Stunde. Stattdessen baut `scripts/download-page.js` die Seite aus dem neuesten normalen Release (`gh release view`, also ohne Beta-Versionen und ohne das Release «updater»), der Workflow «Download-Seite» legt sie mit dem Token `RELEASES_TOKEN` über die Contents-API als `docs/index.html` in ASK-Releases ab. `release.yml` ruft ihn nach jeder normalen Version auf; von Hand geht es mit «Run workflow». Ist der Inhalt gleich, macht er keinen Commit. Die Links zeigen auf die Dateien genau der angezeigten Version (`releases/download/v<Version>/ASK-Setup.exe`), damit Seite und Datei immer zusammenpassen. Der feste Link `releases/latest/download/ASK-Setup.exe` gilt weiter.
+
+## E64 Installer wieder ohne Seiten, mit dem kleinen Fortschrittsfenster
+
+Der Installer von Tauri ist ein Assistent mit Seiten (Willkommen, Ordner, Startmenü, Fortschritt mit «Details anzeigen», Fertig). 0.3.11-beta.1 zeigte ihn so auch beim Update von der Electron-Fassung, mit der Zeile «Wird gestartet: …Uninstall ASK.exe». Lernende kannten den Installer ohne Seiten (electron-builder `oneClick`) mit dem kleinen Fenster aus E59.
+
+Jetzt wieder so: eigene Vorlage `src-tauri/windows/installer.nsi` (Kopie der Vorlage von tauri-bundler 2.10.6, Änderungen mit «ASK:» markiert, `bundle.windows.nsis.template`). Sie startet immer wie mit `/P` (keine Seiten, Desktop-Verknüpfung, Fenster schliesst sich selbst), zeigt vor allen Abschnitten das Fenster des Plugins SpiderBanner, gestaltet wie in E59 (`askStyleBanner` in `hooks.nsh`: Titel «ASK wird installiert» bzw. «ASK wird aktualisiert», zweite Zeile, flacher Balken in ASK-Farbe), und startet ASK danach. «Aktualisiert» gilt bei `/UPDATE` (Tauri-Updater), `--updated` (Electron-Fassung) oder wenn ASK schon installiert ist. Mit `/S` bleibt alles still wie bisher.
+
+Das Plugin kommt wie bei electron-builder aus `nsis-resources-3.4.1` (electron-builder-binaries) mit derselben Prüfsumme; `scripts/nsis-plugins.js` lädt es beim Bauen nach `src-tauri/windows/plugins/` (nicht im Repository). Fehlt es, baut der Installer trotzdem, dann mit der Fortschrittsseite von NSIS.
+
+Geprüft mit dem Workflow «Installer-Vorschau»: baut den Installer, installiert ASK auf einem Windows-Runner neu und als Update und nimmt dabei Bildschirmfotos auf (Artefakt «installer-bilder»). Er läuft nur auf Wunsch (Label «installer-vorschau» oder «Run workflow»).
+
+Nicht gewählt: Fenster von NSIS nur umgestalten (Knöpfe und Details ausblenden; bleibt das grosse Fenster); eigene Seite mit nsDialogs (Fortschritt müsste selbst nachgebildet werden); Updates ganz ohne Fenster (Lernende sehen dann nicht, dass etwas passiert).
+
+## E65 «Neu in ASK» nach jedem Update
+
+Nach jedem Update zeigt die App einmal eine Karte «Neu in ASK <Version>» mit dem Release-Text dieser Version (dem Text aus dem PR, Zeile «Release-Text: …», wie im Update-Dialog). «Alles klar» merkt sich die Version (`lastVersion` in den Einstellungen). Eine frische Installation merkt sich die Version gleich und zeigt die Karte nicht; die Einführung (E49) hat Vorrang. Wer von der Electron-Fassung kommt (noch keine `lastVersion`, Hinweis schon bestätigt), sieht sie.
+
+Der Text kommt beim Bauen in die App: Der Release-Workflow liest ihn vor dem Bauen aus dem Tag (Schritt «Release-Text», `ASK_NOTES_FILE`), `scripts/dist.js` legt ihn als `neu.json` zu den Ressourcen. Fehlt er (Build von Hand), steht «ASK ist jetzt auf Version …».
+
+## E66 Vorlagen der TF Bern aus C:\Vorlagen
+
+Auf den Laptops der Schule liegen alle Vorlagen der TF Bern in `C:\Vorlagen`, für Lernende nur zum Lesen. Gibt es den Ordner, darf das Terminal dort auflisten, lesen und suchen (`list_files`, `find_files`, `read_file`, `search_text`), schreiben weiterhin nur im Arbeitsordner (`FileApi::with_read_only`, Einstellung `read_only` des Terminal-Servers). Der Systemprompt nennt den Ordner, die Vorlagen darin (bis 80 Dateien, Office und PDF, drei Ebenen tief) und wie man eine .dotx/.xltx/.potx für python-docx, openpyxl und python-pptx in eine normale Datei kopiert. Befehle, die nur `C:\Vorlagen` nennen (etwa eine Vorlage kopieren), gelten bei den Rückfragen nicht als «ausserhalb des Ordners». Mit `@` im Eingabefeld erscheinen passende Vorlagen neben den Dateien des Projekts (Kennzeichen «Vorlage»; «@vorl» zeigt alle); das Modell bekommt dazu den Hinweis, die Vorlage zu kopieren und in der Kopie zu arbeiten. Ohne den Ordner ändert sich nichts.
+
+## E67 Schnellere CI und Releases
+
+Gemessen an PR #21: Die CI unter Windows brauchte rund 9 Minuten (davon 3,5 Minuten Release-Build), der Release nach dem Merge rund 16 Minuten (davon 6 Minuten dieselben Tests wie in der CI und 8 Minuten Installer, weil der Rust-Zwischenspeicher eines Releases im Bereich des PRs liegt und für den nächsten Release nicht gefunden wurde).
+
+Jetzt:
+- Tests und Clippy ohne Debug-Infos (`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`); unter Windows sind die PDB-Dateien teuer.
+- Der Release-Build in der CI läuft nur noch auf `main` (nach dem Merge). In PRs prüfen Tests und Clippy das Kompilieren.
+- Ein gemeinsamer Rust-Zwischenspeicher unter Windows (`shared-key: windows`): Die CI auf `main` füllt ihn mit Debug- und Release-Build, Release-Workflow und Installer-Vorschau lesen ihn nur. Die Umgebungsvariablen oben stehen darum in allen drei Workflows gleich, sonst passt der Schlüssel nicht.
+- Der Release nach einem Merge lässt «Lint und Tests» aus; die CI hat sie im PR bestanden (Pflicht vor dem Merge). Ein Tag von Hand prüft weiterhin.
+- Die Installer-Vorschau (E64) läuft nur auf Wunsch: von Hand oder mit dem Label «installer-vorschau» am PR. Sie ist kein Pflicht-Check.
+
+Nicht geändert: `lto = true` und `codegen-units = 1` im Release-Profil (kleinere EXE); «thin» LTO wäre beim Bauen schneller, die EXE etwas grösser.
+
+## E68 Python nach einem Update früher bereit
+
+Python wird nur entpackt, wenn sich seine Fassung ändert (E39; die Fassung hängt nur an `build-python.ps1` und `requirements.txt`). Nach so einem Update, etwa dem Wechsel auf Tauri mit dem schlankeren Python aus E61, beginnt das Entpacken jetzt als Erstes beim Start, nicht erst nach dem Laden von Projekt und Updates, und unten links steht «Python wird eingerichtet … 40 %» (Zustand `python`). Nur Befehle mit Python warten darauf.
+
+## E69 Hilfe bei Fehlern
+
+Fehler im Chat und in den Fenstern «ASK» und «Terminal» zeigen unter der Meldung, was sie in einfachen Worten bedeutet, und zwei, drei Schritte (`src/renderer/src/lib/errorHelp.mjs`: abgelaufene Anmeldung, keine Verbindung, zu viele Anfragen, Chat zu lang, Problem bei ASK, Terminal). «Details kopieren» legt Version, Zeit, ASK-Adresse, Anmelde- und Terminalzustand, Modell, Windows-Version und die Meldung (beim Terminal auch seine Meldungen) in die Zwischenablage, für die Lehrperson.

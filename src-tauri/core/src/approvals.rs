@@ -425,7 +425,7 @@ pub fn assess_risk(name: &str, args: &Value, ctx: &RiskCtx) -> Option<Risk> {
             return Some(Risk::new("loeschen", "Darf ASK Dateien löschen?", shorten(&command, 300),
                 "Sie kommen in die Sicherung. «Rückgängig» holt sie zurück."));
         }
-        if OUTSIDE.is_match(&command) {
+        if OUTSIDE.is_match(&crate::vorlagen::without_templates(&command)) {
             return Some(Risk::new("ausserhalb", "Befehl mit Pfad ausserhalb des Ordners", shorten(&command, 300),
                 "Der Befehl nennt einen Ort ausserhalb des Projekts."));
         }

@@ -198,6 +198,12 @@ Mit `/goal <Ziel>` setzt man ein Ziel für den Chat (Leiste «◎ Ziel» über d
 
 **Nutzung.** `/nutzung` oder «Nutzung …» in den Einstellungen zeigt, wie viel man mit ASK gearbeitet hat (ENTSCHEIDE E49): oben Aufträge, erzeugte Token, angelegte und geänderte Dateien und die Zeit des Modells, darunter die letzten 30 Tage als Balken (Aufträge oder Token, Darüberfahren zeigt den Tag) und eine Tabelle pro Projekt mit Chats, Aufträgen, Arbeitsschritten, Token, Dateien und Zeit. Gezählt wird aus den Chats in `.ask/chats` aller Projekte, nur auf diesem Laptop (`src/main/usage.js`); nichts davon geht an ASK. Eingaben, die die App selbst schickt («Weiter am Ziel»), zählen nicht als Auftrag, ein rückgängig gemachter Auftrag zählt bei den Dateien nicht. «≈» heisst, dass ein Teil der Token geschätzt ist. Darunter steht ein Abschnitt «ASK-Webseite» (Zahl der eigenen Chats auf der Webseite, allenfalls Nutzungszahlen), aber nur, wenn ASK dem Konto solche Angaben gibt; ob das echte ASK das tut, ist nicht geprüft.
 
+**Neu in ASK.** Nach jedem Update erscheint einmal eine Karte mit dem, was neu ist (ENTSCHEIDE E65).
+
+**Vorlagen der TF Bern.** Gibt es `C:\Vorlagen` (Laptops der Schule), kennt das Modell die Vorlagen darin, liest sie und arbeitet in einer Kopie im Projekt; in `C:\Vorlagen` schreibt es nie. Mit `@` lässt sich eine Vorlage direkt wählen (E66).
+
+**Hilfe bei Fehlern.** Fehler zeigen, was zu tun ist, und «Details kopieren» für die Lehrperson (E69).
+
 **Einführung.** Beim ersten Start, nach dem Hinweis, dem ersten Projekt und der Anmeldung, zeigt die App vier kurze Karten, die auf die Teile der Oberfläche zeigen: Projekte links, Eingabefeld mit Web, Denkaufwand und Modell, Arbeitsschritte, Fragen und Rückfragen im Chat, Dateien rechts mit «Rückgängig». «Weiter» (oder Pfeil nach rechts), «Überspringen» (oder Esc). Die App merkt sich, dass die Einführung gesehen ist; wer ASK schon vor dieser Version benutzt hat, bekommt sie nicht von selbst. «Einführung zeigen» in den Einstellungen zeigt sie wieder.
 
 **Tastatur.** Alles Anklickbare (Chats, Dateien, Arbeitsschritte, Befehle) ist mit Tab erreichbar und mit Enter oder Leertaste auslösbar. Dialoge halten den Fokus, Esc schliesst sie, und danach steht der Fokus wieder dort, wo er war.

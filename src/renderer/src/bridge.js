@@ -80,6 +80,7 @@ export function install() {
   chatRename: (folder, id, title) => call('chat:rename', folder, id, title),
   chatPin: (folder, id, on) => call('chat:pin', folder, id, on),
   chatSearch: (query) => call('chat:search', query),
+  whatsNewSeen: () => call('whatsnew:seen'),
   setPrefs: (values) => call('prefs:set', values),
   usageGet: (withAsk = true) => call('usage:get', withAsk),
   chatUndo: (snapshot) => call('chat:undo', snapshot),

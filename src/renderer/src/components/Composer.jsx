@@ -571,7 +571,9 @@ const Composer = forwardRef(function Composer(props, ref) {
               <div key={f.path} role="option" aria-selected={i === mention.index} className={i === mention.index ? 'active' : ''}
                 onMouseDown={(e) => { e.preventDefault(); pickMention(f); }}>
                 <Icon name={f.dir ? 'folder' : 'file'} size={14} />
-                <span className="cmd">{f.name}</span><span className="muted path">{f.path.replaceAll('\\', '/').split('/').slice(0, -1).join('/')}</span>
+                <span className="cmd">{f.name}</span>
+                {f.template ? <span className="mention-tag" title="Vorlage der TF Bern aus C:\Vorlagen (nur lesen)">Vorlage</span> : null}
+                <span className="muted path">{f.path.replaceAll('\\', '/').split('/').slice(0, -1).join('/')}</span>
               </div>
             ))}
           </div>

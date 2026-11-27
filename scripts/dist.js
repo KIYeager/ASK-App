@@ -49,8 +49,15 @@ function main() {
   require('./pack-python').pack(base);
   const conf = JSON.parse(fs.readFileSync(path.join(tauriDir, 'tauri.conf.json'), 'utf8'));
   const res = resources(conf, path.join(base, 'python-pack'));
+  // «Neu in ASK» (ENTSCHEIDE E65): Release-Text dieser Version, vom Release-Workflow in ASK_NOTES_FILE gelegt
+  const notesFile = process.env.ASK_NOTES_FILE;
+  const neu = path.join(base, 'neu.json');
+  const text = notesFile && fs.existsSync(notesFile) ? fs.readFileSync(notesFile, 'utf8').trim() : '';
+  fs.writeFileSync(neu, JSON.stringify({ version, text }, null, 2));
+  res[neu.replaceAll('\\', '/')] = 'neu.json';
   const extra = path.join(base, 'tauri.build.json');
   fs.writeFileSync(extra, JSON.stringify({ bundle: { resources: res, createUpdaterArtifacts: !unsigned } }, null, 2));
+  run('node', [path.join('scripts', 'nsis-plugins.js')]); // SpiderBanner fürs Fortschrittsfenster (E64)
   run('npx', ['tauri', 'build', '--config', extra, '--bundles', 'nsis']);
 
   const bundle = path.join(tauriDir, 'target', 'release', 'bundle', 'nsis');
