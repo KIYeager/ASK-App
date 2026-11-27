@@ -20,3 +20,12 @@ Wenn du einen PR nach `main` erstellst:
 Kannst du die Person nicht fragen (zum Beispiel ohne Rückkanal), setz kein Label und schreib im PR, dass die Release-Art noch gewählt werden muss.
 
 Mergen, freigeben und Labels an PRs anderer Personen ändern nur auf ausdrücklichen Wunsch.
+
+## Vor dem Mergen: neuen Stand von `main` holen
+
+Auf `main` kommen laufend Commits dazu, auch ohne dass jemand daran arbeitet: Nach jedem Merge mit `beta` oder `release` macht der Workflow «Release» einen Commit «Version …» (README, «Vom Pull Request zur neuen Version»), und andere PRs werden gemergt.
+
+1. **Vor der Arbeit:** `git fetch origin main` und vom neuesten `main` aus beginnen. Ist der PR deines Branches schon gemergt, den Branch neu von `origin/main` aufsetzen, statt auf dem alten Stand weiterzumachen.
+2. **Vor dem Push und vor dem PR:** nochmals `git fetch origin main`. Ist `main` weiter als die Basis deines Branches (`git log --oneline HEAD..origin/main` zeigt etwas), `origin/main` in den Branch mergen (nicht rebasen, kein Force-Push auf fremde Branches), Konflikte lösen, Lint und Tests erneut laufen lassen.
+3. **Vor dem Mergen:** direkt davor prüfen, ob `main` seit dem letzten Lauf der CI neue Commits hat (PR-Status «hinter `main`» oder `git log HEAD..origin/main`). Wenn ja: `main` in den Branch mergen, pushen und die CI auf diesem Stand abwarten. Erst mergen, wenn alle Prüfungen auf dem aktuellen Kopf des PRs grün sind und es keinen Konflikt gibt.
+4. **Nach dem Merge:** `git fetch origin main`; der Commit «Version …» des Release-Workflows gehört zur Basis der nächsten Arbeit.

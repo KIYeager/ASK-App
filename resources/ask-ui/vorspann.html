@@ -44,5 +44,7 @@
     addEventListener('load', report);
     addEventListener('DOMContentLoaded', () => new ResizeObserver(report).observe(document.body));
     setTimeout(report, 50);
+    // Esc im Baustein: die Oberfläche verkleinert eine vergrösserte Ansicht
+    addEventListener('keydown', (e) => { if (e.key === 'Escape') post('esc', 1); });
   })();
 </script>
