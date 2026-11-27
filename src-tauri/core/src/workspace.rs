@@ -269,7 +269,8 @@ fn files_of(root: &Path) -> Value {
     let is_dir = |v: &Value| v["dir"].as_bool().unwrap_or(false);
     let name = |v: &Value| v["name"].as_str().unwrap_or("").to_string();
     top.sort_by(|a, b| is_dir(b).cmp(&is_dir(a)).then_with(|| locale_cmp_de(&name(a), &name(b))));
-    json!({ "top": top, "recent": recent_files(root) })
+    // Anzahl Unterlagen im Ordner «Quellen» (E82): die Oberfläche zeigt damit den Schalter «Quellen»
+    json!({ "top": top, "recent": recent_files(root), "quellen": crate::sources::count(root) })
 }
 
 #[derive(Default)]

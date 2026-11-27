@@ -216,7 +216,8 @@ export function PreviewBody({ entry, big = false }) {
       api().preview(entry.path).then((r) => {
         if (!alive) return;
         setP(r);
-        if (r.kind === 'office' && r.auto && /\.(docx|xlsx|pptx)$/i.test(entry.path)) showPdf(entry.path, true, () => alive);
+        // Verweis auf eine Folie (Quellen, E82): Präsentation gleich als PDF zeigen, damit die Seite stimmt
+        if (r.kind === 'office' && (r.auto || (entry.seite && /\.pptx$/i.test(entry.path))) && /\.(docx|xlsx|pptx)$/i.test(entry.path)) showPdf(entry.path, true, () => alive);
       });
     }
     return () => { alive = false; };
@@ -224,9 +225,12 @@ export function PreviewBody({ entry, big = false }) {
   if (!entry) return <div className="panel-empty">Klicke im Dateibaum oder im Chat auf eine Datei, um sie hier anzusehen.</div>;
   if (!p) return <div className="panel-empty">Lädt …</div>;
   const v = Math.round(entry.modified || 0);
-  if (pdf) return <iframe className={`preview-frame${big ? ' big' : ''}`} src={`${pdf}?t=${Date.now()}`} title={entry.name} />;
+  // Seite aus einem Verweis (Quellen, E82): der PDF-Betrachter von WebView2 springt mit #page=N dorthin
+  const page = entry.seite ? `#page=${entry.seite}` : '';
+  const frameKey = `${entry.path}|${entry.seite || ''}|${entry.opened || ''}`;
+  if (pdf) return <iframe key={frameKey} className={`preview-frame${big ? ' big' : ''}`} src={`${pdf}?t=${Date.now()}${page}`} title={entry.name} />;
   if (p.kind === 'image') return <div className="preview-image"><img src={`${p.url}${p.url.includes('?') ? '&' : '?'}t=${v}`} alt={entry.name} /></div>;
-  if (p.kind === 'pdf') return <iframe className={`preview-frame${big ? ' big' : ''}`} src={`${p.url}?t=${v}`} title={entry.name} />;
+  if (p.kind === 'pdf') return <iframe key={frameKey} className={`preview-frame${big ? ' big' : ''}`} src={`${p.url}?t=${v}${page}`} title={entry.name} />;
   if (p.kind === 'text') return <pre className="preview-text">{p.text + (p.truncated ? '\n\n… (gekürzt)' : '')}</pre>;
   if (p.kind === 'missing') return <div className="panel-empty">Die Datei ist nicht mehr vorhanden.</div>;
   const office = p.kind === 'office';
@@ -312,7 +316,8 @@ function ModPanel({ el }) {
 export default function RightPanel({ tab, setTab, root, free, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice,
   servers = [], running, dialogOpen, onGithub, modPanels = [], docs = {} }) {
   const serversUp = servers.some((s) => s.state === 'läuft' || s.state === 'startet');
-  const entry = selected ? (files.recent.find((f) => f.path === selected.path) || selected) : null;
+  // Seite und Zeitpunkt des Öffnens (Verweis auf eine Unterlage, E82) bleiben, auch wenn die Datei in «recent» steht
+  const entry = selected ? { ...(files.recent.find((f) => f.path === selected.path) || selected), seite: selected.seite, opened: selected.opened } : null;
   return (
     <aside id="sidebar" className="sidebar">
       <div className="rt" role="tablist">

@@ -141,7 +141,7 @@ pub fn plan_tool() -> Value {
 }
 
 /// Werkzeuge, die im Planmodus erlaubt sind: nichts, was den Ordner oder etwas ausserhalb verändert
-const PLAN_ALLOWED: &[&str] = &["read_file", "list_files", "find_files", "search_text", "view_file", "web_search", "web_fetch", HELPER,
+const PLAN_ALLOWED: &[&str] = &["read_file", "list_files", "find_files", "search_text", "quellen_suchen", "quelle_lesen", "view_file", "web_search", "web_fetch", HELPER,
     "chat_search", "chat_read", "github_status", "server_liste", "skill_lesen", "mod_liste", "mod_lesen", "katalog_suchen", "update_tasks", "frage_stellen", "plan_vorlegen", EFFORT_TOOL,
     "doc_liste", "doc_lesen"];
 /// Chat ohne Projekt (ENTSCHEIDE E78): Gespräch, Web, Bilder, Anhänge lesen und Gedächtnis. Nichts, was Dateien
@@ -150,6 +150,8 @@ const PLAN_ALLOWED: &[&str] = &["read_file", "list_files", "find_files", "search
 const FREE_ALLOWED: &[&str] = &["read_file", "view_file", "web_search", "web_fetch", "bild_erstellen", "chat_search", "chat_read", "skill_lesen",
     "merken", "vergessen", "update_tasks", "frage_stellen", "goal_done", EFFORT_TOOL,
     "doc_liste", "doc_lesen", "doc_erstellen", "doc_bearbeiten", "doc_kommentieren"];
+/// Werkzeuge der Quellen (ENTSCHEIDE E82): nur angeboten, wenn der Ordner «Quellen» Unterlagen hat
+const SOURCE_TOOLS: [&str; 2] = ["quellen_suchen", "quelle_lesen"];
 const FREE_PROMPT: &str = "\n\n# Chat ohne Projekt\nDieser Chat gehört zu keinem Projekt. Hier beantwortest du Fragen, erklärst, suchst im Web und erstellst auf Wunsch Bilder. Du kannst hier keine Dateien schreiben oder ändern, keine Befehle ausführen und keinen Server starten; es gibt keinen Projektordner. Docs (doc_erstellen, doc_bearbeiten) gehen trotzdem: Sie liegen bei den Chats ohne Projekt. Angehängte Dateien liest du mit read_file, angehängte Bilder siehst du direkt. Will die Person, dass du Dateien erstellst oder bearbeitest, Programme ausführst oder mit einem Ordner arbeitest, sag ihr in einem Satz, dass das in einem Projekt geht: links bei «Projekte» auf + klicken und den Auftrag dort stellen. Code, Texte und Tabellen kannst du hier direkt in der Antwort schreiben.";
 const PLAN_PROMPT: &str = "\n\n# Planmodus\nDie Person will zuerst einen Plan sehen. Ändere nichts: keine Befehle, keine Dateien schreiben. Sieh dir mit den Lese- und Suchwerkzeugen an, was du brauchst, frag bei Unklarem mit frage_stellen, und lege dann mit plan_vorlegen einen kurzen, konkreten Plan vor (Schritte, betroffene Dateien). Danach hörst du auf.";
 
@@ -662,6 +664,8 @@ pub struct AgentOptions {
     /// Reserve des Kontextfensters in Token: Ist der Verlauf bis auf diese Reserve voll, fasst ASK vor dem nächsten
     /// Auftrag die älteren Aufträge zusammen (E78). 0: nie vorbeugend, nur wenn ASK den Verlauf ablehnt.
     pub get_compact_reserve: Arc<dyn Fn() -> i64 + Send + Sync>,
+    /// Quellen des Projekts (ENTSCHEIDE E82): (gibt es Unterlagen, «Nur aus Quellen»), bei jedem Schritt gelesen
+    pub get_sources: Arc<dyn Fn() -> (bool, bool) + Send + Sync>,
 }
 
 impl AgentOptions {
@@ -702,6 +706,7 @@ impl AgentOptions {
             auto_title: false,
             free: false,
             get_compact_reserve: Arc::new(|| 0),
+            get_sources: Arc::new(|| (false, false)),
         }
     }
 }
@@ -1752,7 +1757,15 @@ impl Agent {
         let memory = (self.o.get_chat_memory)();
         let flux = self.o.images.as_ref().is_some_and(|i| i.available());
         let remember = self.o.knowledge.as_ref().and_then(|k| k.memory_on.as_ref()).is_none_or(|f| f());
-        let offered = |name: &str| (memory || !name.starts_with("chat_")) && (flux || name != "bild_erstellen") && (remember || !MEMORY_TOOLS.contains(&name));
+        // Quellen (E82): Werkzeuge nur mit Unterlagen; «Nur aus Quellen» ohne Internet
+        let (has_sources, strict) = (self.o.get_sources)();
+        let offered = |name: &str| {
+            (memory || !name.starts_with("chat_"))
+                && (flux || name != "bild_erstellen")
+                && (remember || !MEMORY_TOOLS.contains(&name))
+                && (has_sources || !SOURCE_TOOLS.contains(&name))
+                && !(strict && matches!(name, "web_search" | "web_fetch"))
+        };
         let free = self.o.free;
         let plan = !free && (self.o.get_mode)() == "plan"; // ohne Projekt gibt es nichts zu planen
         let chat_id = self.chat_id();
@@ -1859,6 +1872,8 @@ impl Agent {
         // gelesen hat (ohne gelesene Seiten die ersten Treffer von web_search)
         let mut sources: Vec<Source> = completion.sources.clone();
         if tool_calls.is_empty() {
+            // Verweise auf Unterlagen in der Antwort zuerst (E82)
+            sources.splice(0..0, crate::sources::cited(&content));
             let web: Option<Vec<Source>> = self.inner.lock().turn_sources.as_ref().map(|t| if t.read.is_empty() { t.found.iter().take(5).cloned().collect() } else { t.read.clone() });
             if let Some(web) = web {
                 let mut seen: Vec<Source> = Vec::new();

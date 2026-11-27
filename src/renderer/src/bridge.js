@@ -43,6 +43,7 @@ export function install() {
   getState: () => call('state:get'),
   onState: on('state'),
   onFiles: on('files'),
+  onNotice: on('app:notice'),
   onMenuChooseFolder: on('menu:choose-folder'),
   onMenuNewFolder: on('menu:new-folder'),
   onMenuGithub: on('menu:github'),

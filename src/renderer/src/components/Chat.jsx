@@ -4,6 +4,7 @@ import Markdown from './Markdown.jsx';
 import AnswerText from './UiBlocks.jsx';
 import { groupTitle, statsText } from '../lib/chatModel.mjs';
 import { baseName, extOf, fileBadge, fileUrl } from '../lib/format.js';
+import { parseSourceLink } from '../lib/md.mjs';
 import { errorDetails, errorHelp } from '../lib/errorHelp.mjs';
 import { api } from '../api.js';
 
@@ -251,15 +252,37 @@ function Answer({ entry, streaming, ctx }) {
 
 function Sources({ entry, ctx }) {
   const host = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
+  // Unterlagen aus dem Ordner «Quellen» (E82) und Webseiten getrennt
+  const list = entry.sources.slice(0, 10);
+  const docs = list.filter((s) => parseSourceLink(s.url));
+  const web = list.filter((s) => /^https?:/i.test(s.url));
   return (
     <div className="msg sources">
-      <div className="label"><Icon name="globe" size={14} /> {entry.sources.length} {entry.sources.length === 1 ? 'Quelle' : 'Quellen'}</div>
-      <ol>
-        {entry.sources.slice(0, 10).map((s) => (
-          <li key={s.url}><a href={s.url} title={s.url} onClick={(e) => { e.preventDefault(); ctx.openLink(s.url); }}>{s.title || host(s.url)}</a>
-            <span className="host"> · {host(s.url)}</span></li>
-        ))}
-      </ol>
+      {docs.length ? (
+        <>
+          <div className="label"><Icon name="book" size={14} /> {docs.length} {docs.length === 1 ? 'Unterlage' : 'Unterlagen'}</div>
+          <ol>
+            {docs.map((s) => {
+              const ref = parseSourceLink(s.url);
+              return (
+                <li key={s.url}><a href={s.url} className="quelle" title={`${ref.path}${ref.seite ? `, S. ${ref.seite}` : ''}`} onClick={(e) => { e.preventDefault(); ctx.openLink(s.url); }}>{s.title || baseName(ref.path)}</a>
+                  <span className="host"> · {baseName(ref.path)}</span></li>
+              );
+            })}
+          </ol>
+        </>
+      ) : null}
+      {web.length ? (
+        <>
+          <div className="label"><Icon name="globe" size={14} /> {web.length} {web.length === 1 ? (docs.length ? 'Webquelle' : 'Quelle') : (docs.length ? 'Webquellen' : 'Quellen')}</div>
+          <ol>
+            {web.map((s) => (
+              <li key={s.url}><a href={s.url} title={s.url} onClick={(e) => { e.preventDefault(); ctx.openLink(s.url); }}>{s.title || host(s.url)}</a>
+                <span className="host"> · {host(s.url)}</span></li>
+            ))}
+          </ol>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -289,7 +289,8 @@ function mentionAt(text, caret) {
 
 const Composer = forwardRef(function Composer(props, ref) {
   const { state, chatId, free, running, block, fileBlock, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
-    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode, autoEffort } = props;
+    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode, autoEffort,
+    sources, setStrictSources } = props;
   const [text, setText] = useState('');
   const [pending, setPending] = useState([]); // neue Anhänge { name, type, size, data, url }
   const [kept, setKept] = useState([]); // schon gespeicherte Anhänge einer zurückgenommenen Eingabe { path, name, image }
@@ -666,9 +667,20 @@ const Composer = forwardRef(function Composer(props, ref) {
             <button type="button" id="attach-btn" className="chip icon-only" title="Dateien oder Bilder anhängen (auch mit Ctrl+V oder Hineinziehen)"
               aria-label="Anhängen" onClick={() => fileInput.current?.click()}><Icon name="clip" size={15} /></button>
             <input ref={fileInput} id="attach-file" type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-            <button type="button" id="web-btn" className={`chip${state.webSearch && state.webSearchAvailable ? ' on' : ''}`} disabled={!state.webSearchAvailable}
+            {/* Quellen (E82): nur in Projekten mit Unterlagen; an heisst «Nur aus Quellen», dann ohne Web */}
+            {!free && sources?.count > 0 ? (
+              <button type="button" id="sources-btn" className={`chip${sources.strict ? ' on' : ''}`} aria-pressed={!!sources.strict}
+                onClick={() => setStrictSources?.(!sources.strict)}
+                title={sources.strict ? `Nur aus Quellen an: ASK antwortet nur aus den ${sources.count === 1 ? 'Unterlage' : `${sources.count} Unterlagen`} im Ordner Quellen, ohne Web (/quellen)`
+                  : `Nur aus Quellen aus: ASK benutzt die ${sources.count === 1 ? 'Unterlage' : `${sources.count} Unterlagen`} im Ordner Quellen zuerst, darf aber auch eigenes Wissen und das Web nutzen (/quellen)`}>
+                <Icon name="book" size={14} /> <span className="chip-label">Quellen</span>
+              </button>
+            ) : null}
+            <button type="button" id="web-btn" className={`chip${state.webSearch && state.webSearchAvailable && !(sources?.strict && sources?.count > 0) ? ' on' : ''}`}
+              disabled={!state.webSearchAvailable || (!free && sources?.strict && sources?.count > 0)}
               onClick={() => setWeb(!state.webSearch)}
-              title={!state.webSearchAvailable ? 'Websuche ist in ASK für dein Konto nicht freigegeben' : state.webSearch ? 'Websuche an: ASK sucht vor der Antwort im Web (/web)' : 'Websuche aus (/web)'}>
+              title={!state.webSearchAvailable ? 'Websuche ist in ASK für dein Konto nicht freigegeben' : (!free && sources?.strict && sources?.count > 0) ? 'Websuche aus, weil «Nur aus Quellen» an ist'
+                : state.webSearch ? 'Websuche an: ASK sucht vor der Antwort im Web (/web)' : 'Websuche aus (/web)'}>
               <Icon name="globe" size={14} /> <span className="chip-label">Web</span>
             </button>
             <ThinkPicker level={state.thinking || 'standard'} autoLevel={autoEffort} onChange={setThinking} />

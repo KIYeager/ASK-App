@@ -23,7 +23,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 pub const HELPER: &str = "hilfsagent";
-pub const HELPER_TOOLS: [&str; 6] = ["read_file", "list_files", "find_files", "search_text", "web_search", "web_fetch"];
+pub const HELPER_TOOLS: [&str; 8] = ["read_file", "list_files", "find_files", "search_text", "quellen_suchen", "quelle_lesen", "web_search", "web_fetch"];
 /// danach muss der Hilfsagent ohne Werkzeuge zusammenfassen
 pub const MAX_STEPS: usize = 20;
 /// so viele Hilfsagenten eines Chats arbeiten gleichzeitig

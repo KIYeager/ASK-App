@@ -200,7 +200,7 @@ pub fn remove_recent(folder: &str) {
     save(data);
 }
 
-/// Name oder Farbe eines Projekts ändern
+/// Name, Farbe oder «Nur aus Quellen» eines Projekts ändern
 pub fn update_project(folder: &str, patch: &Value) -> bool {
     let mut g = DATA.lock();
     let data = loaded(&mut g);
@@ -209,6 +209,10 @@ pub fn update_project(folder: &str, patch: &Value) -> bool {
         if !name.trim().is_empty() {
             data["projects"][i]["name"] = Value::String(crate::util::take_chars(name.trim(), 80));
         }
+    }
+    // «Nur aus Quellen» (ENTSCHEIDE E82)
+    if let Some(Value::Bool(on)) = patch.get("nurQuellen") {
+        data["projects"][i]["nurQuellen"] = Value::Bool(*on);
     }
     if let Some(Value::String(color)) = patch.get("color") {
         let ok = color.len() == 7 && color.starts_with('#') && color[1..].chars().all(|c| c.is_ascii_hexdigit());

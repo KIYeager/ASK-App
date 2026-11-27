@@ -287,6 +287,9 @@ button.work-head:hover { background: var(--hover); }
 .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
 .md li { margin: 2px 0; }
 .md a { color: var(--acc-text); }
+/* Verweis auf eine Unterlage im Ordner «Quellen» (E82): öffnet die Vorschau, darum ohne Unterstrich und mit Hintergrund */
+.md a.quelle { text-decoration: none; padding: 0 .3em; border-radius: 4px; background: color-mix(in srgb, var(--acc-text) 10%, transparent); white-space: nowrap; }
+.md a.quelle:hover { background: color-mix(in srgb, var(--acc-text) 18%, transparent); }
 .md code { font-size: .88em; }
 .md code.file { color: var(--acc-text); background: var(--acc-soft); cursor: pointer; }
 .md code.file:hover { text-decoration: underline; }

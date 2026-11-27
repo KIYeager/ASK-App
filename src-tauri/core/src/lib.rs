@@ -41,6 +41,7 @@ pub mod terminal;
 pub mod updater;
 
 // Welle 2
+pub mod sources;
 pub mod tools;
 pub mod bild;
 pub mod helpers;

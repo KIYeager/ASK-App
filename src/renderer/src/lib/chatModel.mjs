@@ -3,7 +3,7 @@
 // Aufträge: Eingabe, Arbeitsschritte (einklappbare Karte), Schlussantwort und alles danach.
 // Reine Funktionen ohne DOM, damit sie sich mit node --test prüfen lassen.
 
-export const READ_ONLY = new Set(['read_file', 'list_files', 'find_files', 'search_text', 'chat_search', 'chat_read']);
+export const READ_ONLY = new Set(['read_file', 'list_files', 'find_files', 'search_text', 'chat_search', 'chat_read', 'quellen_suchen', 'quelle_lesen']);
 
 export function emptyChat() {
   return { entries: [], turnStats: [], seq: 0, streaming: null };
@@ -368,7 +368,12 @@ export function groupTitle(entries) {
   const reads = count(['read_file', 'chat_read']);
   const lists = count(['list_files']);
   const searches = count(['find_files', 'search_text', 'chat_search']);
+  // Quellen (E82): Suchen und gelesene Teile in den Unterlagen
+  const sourceSearches = count(['quellen_suchen']);
+  const sourceReads = count(['quelle_lesen']);
   const parts = [];
+  if (sourceSearches) parts.push(`${sourceSearches === 1 ? 'In den Quellen gesucht' : `${sourceSearches}× in den Quellen gesucht`}`);
+  if (sourceReads) parts.push(`${sourceReads} ${sourceReads === 1 ? 'Stelle' : 'Stellen'} in den Quellen gelesen`);
   if (reads) parts.push(`${reads} ${reads === 1 ? 'Datei' : 'Dateien'} gelesen`);
   if (lists) parts.push(`${lists} Ordner angesehen`);
   if (searches) parts.push(`${searches} ${searches === 1 ? 'Suche' : 'Suchen'}`);
