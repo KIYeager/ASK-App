@@ -24,10 +24,25 @@ pub fn relative_path(host: &str, path: &str) -> Option<String> {
     Some(decoded.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
+/// Eine eben geschriebene Datei (Bild vom Modell) kann unter Windows kurz gesperrt sein, etwa während der
+/// Virenschutz sie prüft: dann bis gut eine Sekunde lang nochmals versuchen statt gleich «nicht gefunden»
+fn read_with_retry(rel: &str) -> Option<(std::path::PathBuf, Vec<u8>)> {
+    for attempt in 0..8 {
+        if let Some(full) = crate::shell().core().resolve_file(rel) {
+            if let Ok(data) = std::fs::read(&full) {
+                return Some((full, data));
+            }
+        }
+        if attempt < 7 {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+    }
+    None
+}
+
 fn respond(uri: &tauri::http::Uri, range: Option<&str>) -> Response<Vec<u8>> {
     let Some(rel) = relative_path(uri.host().unwrap_or(""), uri.path()) else { return not_found() };
-    let Some(full) = crate::shell().core().resolve_file(&rel) else { return not_found() };
-    let Ok(data) = std::fs::read(&full) else { return not_found() };
+    let Some((full, data)) = read_with_retry(&rel) else { return not_found() };
     let mime = mime_of(&full);
     let total = data.len();
     let builder = Response::builder()

@@ -65,14 +65,23 @@ function Detail({ entry, hidden }) {
   );
 }
 
+// Bild aus dem Arbeitsordner; lädt es nicht (Datei eben erst geschrieben und unter Windows kurz gesperrt),
+// bis zu dreimal mit neuer Adresse nachladen, statt ein kaputtes Bild stehen zu lassen
+function Shot({ p, big, ctx }) {
+  const [tries, setTries] = useState(0);
+  const [stamp] = useState(() => Date.now());
+  return (
+    <img src={fileUrl(p, `${stamp}-${tries}`)} alt={big ? baseName(p) : ''} title={`${p} · klicken für die Vorschau`}
+      onClick={(e) => { e.stopPropagation(); ctx.openFile(p); }} onLoad={ctx.onMediaLoad}
+      onError={() => { if (tries < 3) setTimeout(() => setTries((t) => t + 1), 600 * (tries + 1)); }} />
+  );
+}
+
 function Shots({ images, big, ctx }) {
   if (!images?.length) return null;
   return (
     <div className={big ? 'shots big' : 'shots'}>
-      {images.map((p) => (
-        <img key={p} src={fileUrl(p, big ? String(p.length) : '')} alt={big ? baseName(p) : ''} title={`${p} · klicken für die Vorschau`}
-          onClick={(e) => { e.stopPropagation(); ctx.openFile(p); }} onLoad={ctx.onMediaLoad} />
-      ))}
+      {images.map((p) => <Shot key={p} p={p} big={big} ctx={ctx} />)}
     </div>
   );
 }
