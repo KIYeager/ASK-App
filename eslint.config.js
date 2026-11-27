@@ -20,11 +20,6 @@ module.exports = [
     files: ['src/renderer/**/*.js', 'src/render/**/*.js'],
     languageOptions: { sourceType: 'script', globals: { ...globals.browser, module: 'readonly', renderMarkdown: 'readonly', pdfjsLib: 'readonly' } },
   },
-  // Code von Mods läuft in der Oberfläche mit der Schnittstelle ASK (ENTSCHEIDE E72)
-  {
-    files: ['resources/mods-beispiele/**/*.js'],
-    languageOptions: { sourceType: 'script', globals: { ...globals.browser, ASK: 'readonly' } },
-  },
   // Oberfläche mit React und Vite (ENTSCHEIDE E42): ES-Module und JSX
   {
     files: ['src/renderer/src/**/*.{js,jsx,mjs}', 'vite.config.mjs'],

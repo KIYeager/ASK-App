@@ -307,7 +307,7 @@ function modParts(m) {
 function useModsList() {
   const [data, setData] = useState(null);
   useEffect(() => {
-    const load = () => api().modsList?.().then(setData).catch(() => setData({ mods: [], examples: [] }));
+    const load = () => api().modsList?.().then(setData).catch(() => setData({ mods: [] }));
     load();
     const off = api().onModsChanged?.(load);
     return () => { if (typeof off === 'function') off(); };
@@ -350,7 +350,7 @@ function ModsPane({ state, go, onCompose }) {
         <button type="button" className="btn small" onClick={async () => { const r = await api().modsGuide('speichern'); if (r?.path) setMsg({ text: `Gespeichert: ${r.path}` }); else if (r?.ok === false && !r.canceled) setMsg({ bad: true, text: r.reason }); }}>Speichern …</button>
       </Row>
       <h3>Deine Mods</h3>
-      {data === null ? <p className="muted">Lädt …</p> : !mods.length ? <p className="muted small">Noch keine Mods. Probier ein Beispiel aus oder lass ASK einen erstellen.</p> : mods.map((m) => (
+      {data === null ? <p className="muted">Lädt …</p> : !mods.length ? <p className="muted small">Noch keine Mods. Lass ASK einen erstellen oder hol einen aus einem Katalog (unten).</p> : mods.map((m) => (
         <Row key={m.id} title={<>{m.name} <span className="s-ver">{m.version}</span></>}
           text={<>{m.beschreibung}{m.geaendert ? <span className="s-warn"> Seit dem Einschalten geändert: erst nach erneuter Vorschau wieder aktiv.</span> : null}{m.fehler ? <span className="s-warn"> {m.fehler}</span> : null}
             <span className="s-tags">{modParts(m).map((t) => <span key={t} className={`s-tag${t === 'Code' ? ' code' : ''}`}>{t}</span>)}</span></>}>
@@ -360,17 +360,6 @@ function ModsPane({ state, go, onCompose }) {
             onChange={(v) => (v ? go('mod-preview', { id: m.id }) : run(() => api().modsEnable(m.id, false), true))} />
         </Row>
       ))}
-      {data?.examples?.length ? (
-        <>
-          <h3>Beispiele</h3>
-          {data.examples.map((e) => (
-            <Row key={`x-${e.id}`} title={e.name} text={<>{e.beschreibung}<span className="s-tags">{modParts(e).map((t) => <span key={t} className={`s-tag${t === 'Code' ? ' code' : ''}`}>{t}</span>)}</span></>}>
-              {e.installiert ? <span className="muted small">Hinzugefügt</span>
-                : <button type="button" className="btn small" onClick={() => run(() => api().modsExample(e.id), true)}>Hinzufügen</button>}
-            </Row>
-          ))}
-        </>
-      ) : null}
       <CatalogSection state={state} go={go} kind="mod" />
     </div>
   );

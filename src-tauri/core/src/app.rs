@@ -301,7 +301,6 @@ impl App {
             kcfg.standard_skills = Some(paths::standard_skills_dir());
             kcfg.catalog = Some(catalog.clone());
             kcfg.catalog_sources = Arc::new(|| crate::extensions::catalogs().iter().filter_map(|c| c["repo"].as_str().map(str::to_string)).collect());
-            kcfg.example_mods = Some(paths::example_mods_dir());
             let knowledge = Arc::new(Knowledge::new(kcfg));
 
             // Prüfer für den Modus «Auto»: eigenes Modell aus den Einstellungen, sonst das Modell des Chats
@@ -1770,7 +1769,6 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             "skills:enable" if on(1) => ("Mitgelieferten Skill einschalten?".into(), sarg(a, 0)),
             "memory:add" | "memory:update" => ("Eintrag im Gedächtnis speichern?".into(), crate::util::take_chars(&str_of(&arg(a, if channel == "memory:add" { 0 } else { 1 }), "text"), 300)),
             "mods:enable" if on(1) => ("Mod einschalten?".into(), sarg(a, 0)),
-            "mods:example" => ("Beispiel-Mod hinzufügen?".into(), sarg(a, 0)),
             "catalog:install" => (format!("Aus dem Katalog hinzufügen: {}?", sarg(a, 2)), sarg(a, 0)),
             "catalog:link" => ("Von Link hinzufügen?".into(), sarg(a, 0)),
             "catalog:sources" if a.first().is_some_and(|v| v.is_array()) => ("Kataloge ändern?".into(), String::new()),

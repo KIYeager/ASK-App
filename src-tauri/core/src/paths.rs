@@ -118,10 +118,6 @@ pub fn mod_guide_file() -> PathBuf {
     resources(&["mod-anleitung", "SKILL.md"])
 }
 
-/// Mitgelieferte Beispiel-Mods (E72)
-pub fn example_mods_dir() -> PathBuf {
-    resources(&["mods-beispiele"])
-}
 
 pub fn instructions_dir() -> PathBuf {
     resources(&["anweisungen"])

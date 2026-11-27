@@ -168,7 +168,6 @@ export function install() {
   modsOffAll: () => call('mods:off-all'),
   modsRemove: (id) => call('mods:remove', id),
   modsImport: () => call('mods:import'),
-  modsExample: (id) => call('mods:example', id),
   modsFolder: () => call('mods:folder'),
   modsGuide: (action) => call('mods:guide', action || ''),
   onModsChanged: on('mods:changed'),

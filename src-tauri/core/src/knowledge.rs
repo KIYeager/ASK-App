@@ -74,8 +74,6 @@ pub struct KnowledgeConfig {
     pub on_settings: Arc<dyn Fn() + Send + Sync>,
     /// Mitgelieferte Skills (resources/standard-skills, ENTSCHEIDE E70); `None`: keine
     pub standard_skills: Option<PathBuf>,
-    /// Mitgelieferte Beispiel-Mods (resources/mods-beispiele, E72)
-    pub example_mods: Option<PathBuf>,
     /// Kataloge auf GitHub (catalog.rs, E71) für die Werkzeuge katalog_suchen und katalog_hinzufuegen
     pub catalog: Option<Arc<crate::catalog::Catalog>>,
     pub catalog_sources: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
@@ -93,7 +91,6 @@ impl KnowledgeConfig {
             projects: Arc::new(|| json!([])),
             on_settings: Arc::new(|| {}),
             standard_skills: None,
-            example_mods: None,
             catalog: None,
             catalog_sources: Arc::new(Vec::new),
         }
@@ -180,7 +177,7 @@ impl Knowledge {
                 }
                 None => Skills::new(cfg.dir.join("skills")),
             }),
-            mods: Arc::new(Mods::new(cfg.dir.join("mods"), cfg.example_mods.clone())),
+            mods: Arc::new(Mods::new(cfg.dir.join("mods"))),
             cfg,
             state: Arc::new(Mutex::new(LearnState::default())),
         }

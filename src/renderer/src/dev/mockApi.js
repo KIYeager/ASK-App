@@ -236,16 +236,11 @@ let mods = [
   { id: 'robo-helfer', name: 'Robo-Helfer', version: '1.0.0', beschreibung: 'Ein kleiner Roboter, der auf ASK reagiert, Tipps gibt und sich verschieben lässt.', autor: 'ASK', style: 'style.css', script: 'mod.js', befehle: [], anweisungen: '', nachfragen: [], aktiv: params.get('mods') === 'an', geaendert: false, groesse: 6400, dateien: 3, hash: 'abc', fehler: '' },
   { id: 'vokabeln', name: 'Vokabeln und einfach erklärt', version: '1.0.0', beschreibung: 'Zwei Befehle zum Lernen: /vokabeln und /erklaer-einfach.', autor: 'ASK', style: '', script: '', befehle: [{ name: 'vokabeln', beschreibung: 'Vokabeln abfragen', prompt: 'Frag mich 10 Vokabeln ab: {{text}}' }], anweisungen: 'Korrigiere freundlich.', nachfragen: ['loeschen'], aktiv: true, geaendert: false, groesse: 700, dateien: 1, hash: 'def', fehler: '' },
 ];
-const examples = [
-  { id: 'neon', name: 'Neon', beschreibung: 'Ein dunkles Neon-Design mit leuchtenden Akzenten.', style: 'style.css', script: '', befehle: [] },
-  { id: 'pomodoro', name: 'Pomodoro-Timer', beschreibung: 'Ein Lern-Timer im Seitenpanel: 25 Minuten arbeiten, 5 Minuten Pause.', style: 'style.css', script: 'mod.js', befehle: [] },
-  { id: 'robo-helfer', name: 'Robo-Helfer', beschreibung: 'Ein kleiner Roboter, der auf ASK reagiert.', style: 'style.css', script: 'mod.js', befehle: [] },
-];
 let ownCatalogs = [];
 const catalogsNow = () => [{ repo: 'KIYeager/ASK-Erweiterungen', eigen: false }, { repo: 'anthropics/skills', eigen: false }, ...ownCatalogs.map((repo) => ({ repo, eigen: true }))];
 const modsChanged = () => { state = { ...state, modsCode: mods.some((m) => m.aktiv && m.script) }; emit('mods:changed', {}); push(); };
 const extensionsApi = {
-  modsList: async () => ({ mods, examples: examples.map((e) => ({ ...e, installiert: mods.some((m) => m.id === e.id) })), code: mods.some((m) => m.aktiv && m.script), folder: 'C:\\Users\\lernende\\AppData\\Roaming\\ASK\\mods' }),
+  modsList: async () => ({ mods, code: mods.some((m) => m.aktiv && m.script), folder: 'C:\\Users\\lernende\\AppData\\Roaming\\ASK\\mods' }),
   modsGet: async (id) => { const m = mods.find((x) => x.id === id); return m ? { ...m, files: [
     { path: 'mod.json', size: 300, text: JSON.stringify({ id: m.id, name: m.name, version: m.version, style: m.style, script: m.script }, null, 2) },
     ...(m.style ? [{ path: m.style, size: 900, text: '.robo-helfer-figur {\n  position: fixed;\n  right: 24px;\n  bottom: 120px;\n}' }] : []),
@@ -264,7 +259,6 @@ const extensionsApi = {
   modsOffAll: async () => { mods = mods.map((m) => ({ ...m, aktiv: false })); modsChanged(); return { ok: true }; },
   modsRemove: async (id) => { if (!window.confirm('Mod löschen?')) return false; mods = mods.filter((m) => m.id !== id); modsChanged(); return true; },
   modsImport: async () => ({ ok: false, reason: 'Importieren geht nur in der App.' }),
-  modsExample: async (id) => { const e = examples.find((x) => x.id === id); mods = [...mods.filter((m) => m.id !== id), { ...e, version: '1.0.0', autor: 'ASK', anweisungen: '', nachfragen: [], aktiv: false, geaendert: false, groesse: 4000, dateien: 3, hash: 'x', fehler: '' }]; modsChanged(); return { ok: true, kind: 'mod' }; },
   modsFolder: async () => {},
   modsGuide: async (action) => (action === 'kopieren' ? { ok: true, copied: true } : action === 'speichern' ? { ok: true, path: 'C:\\Users\\lernende\\Downloads\\SKILL.md' } : { ok: true, text: '---\nname: ask-mods\n---' }),
   onModsChanged: on('mods:changed'),
