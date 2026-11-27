@@ -688,7 +688,8 @@ pub async fn learn(p: LearnParams<'_>) -> Result<Option<Learned>> {
     }
     let mut added = Vec::new();
     for n in &result.neu {
-        if n.bereich == "projekt" && p.folder.is_empty() {
+        // Ohne Projekt (auch in Chats ohne Projekt, E78) gibt es nichts, was nur für ein Projekt gilt
+        if n.bereich == "projekt" && (p.folder.is_empty() || crate::paths::is_free_dir(p.folder)) {
             continue;
         }
         let item = p.memory.add(NewItem {

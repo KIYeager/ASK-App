@@ -33,15 +33,16 @@ function FileMenu({ menu, onClose, onOpen, onPreview, onMention, onShow }) {
   const top = Math.max(4, Math.min(menu.y, window.innerHeight - 170));
   return (
     <div ref={ref} className="chat-menu popover" role="menu" aria-label={menu.entry.name} style={{ left, top }}>
-      {menu.entry.dir ? item('Öffnen', onOpen) : item('Öffnen', onOpen)}
+      {item('Öffnen', onOpen)}
       {!menu.entry.dir ? item('Vorschau', onPreview) : null}
-      {item('Im Chat erwähnen', onMention)}
+      {onMention ? item('Im Chat erwähnen', onMention) : null}
       {item('Im Explorer zeigen', onShow)}
     </div>
   );
 }
 
-function FileExplorer({ root, files, marks, removed, selected, onSelect, onPreview, onMention, notice }) {
+function FileExplorer({ root, free, files, marks, removed, selected, onSelect, onPreview, onMention, notice }) {
+  const rootName = free ? 'Ohne Projekt' : baseName(root);
   const [dir, setDir] = useState('');
   const [entries, setEntries] = useState(null);
   const [sort, setSort] = useState({ key: 'name', asc: true });
@@ -105,15 +106,15 @@ function FileExplorer({ root, files, marks, removed, selected, onSelect, onPrevi
     <div className={`explorer${dropping ? ' dropping' : ''}`} onDragOver={onDragOver} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropping(false); }} onDrop={onDrop}>
       <div className="ex-search">
         <Icon name="search" size={14} />
-        <input id="file-search" type="search" placeholder="Im Projekt suchen" spellCheck={false} value={query} onChange={(e) => setQuery(e.target.value)}
+        <input id="file-search" type="search" placeholder={free ? 'Dateien suchen' : 'Im Projekt suchen'} spellCheck={false} value={query} onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setQuery(''); } }} aria-label="Dateien im Projekt suchen" />
       </div>
       <div className="ex-crumbs">
         <button type="button" className="icon-btn" title="Eine Ebene hoch" aria-label="Eine Ebene hoch" disabled={!dir || !!results} onClick={up}><Icon name="arrowLeft" size={15} /></button>
         <nav className="crumbs" aria-label="Ordner">
-          {results ? <span className="muted">{results.length} {results.length === 1 ? 'Treffer' : 'Treffer'} im Projekt</span> : (
+          {results ? <span className="muted">{results.length} Treffer{free ? '' : ' im Projekt'}</span> : (
             <>
-              <button type="button" className={`crumb-btn${!dir ? ' cur' : ''}`} onClick={() => go('')}>{baseName(root)}</button>
+              <button type="button" className={`crumb-btn${!dir ? ' cur' : ''}`} onClick={() => go('')}>{rootName}</button>
               {parts.map((p, i) => (
                 <span key={i} className="crumb-part"><Icon name="chevRight" size={12} />
                   <button type="button" className={`crumb-btn${i === parts.length - 1 ? ' cur' : ''}`} onClick={() => go(parts.slice(0, i + 1).join('\\'))}>{p}</button>
@@ -159,18 +160,19 @@ function FileExplorer({ root, files, marks, removed, selected, onSelect, onPrevi
           </div>
         ))}
         {entries && !results && !entries.length && !gone.length ? (
-          <div className="panel-empty">{dir ? 'Der Ordner ist leer.' : 'Das Projekt ist noch leer. Ziehe Dateien hierher, um sie hineinzukopieren.'}</div>
+          <div className="panel-empty">{dir ? 'Der Ordner ist leer.' : free ? 'Hier erscheinen Bilder, die ASK in Chats ohne Projekt erstellt. Mit Dateien arbeitet ASK in einem Projekt.'
+            : 'Das Projekt ist noch leer. Ziehe Dateien hierher, um sie hineinzukopieren.'}</div>
         ) : null}
         {results && !results.length ? <div className="panel-empty">Keine Datei mit diesem Namen.</div> : null}
       </div>
-      {dropping ? <div className="ex-drop">In «{parts.length ? parts[parts.length - 1] : baseName(root)}» kopieren</div> : null}
+      {dropping ? <div className="ex-drop">In «{parts.length ? parts[parts.length - 1] : rootName}» kopieren</div> : null}
       {menu ? <FileMenu menu={menu} onClose={() => setMenu(null)} onOpen={() => open(menu.entry)} onPreview={() => onPreview(menu.entry)}
-        onMention={() => onMention(menu.entry.path)} onShow={() => api().showFile(menu.entry.path)} /> : null}
+        onMention={free ? null : () => onMention(menu.entry.path)} onShow={() => api().showFile(menu.entry.path)} /> : null}
     </div>
   );
 }
 
-function Peek({ entry, onPreview, onMention }) {
+function Peek({ entry, onPreview, onMention, free }) {
   if (!entry) return null;
   const image = /\.(png|jpe?g|gif|webp|bmp)$/i.test(entry.path);
   return (
@@ -184,7 +186,7 @@ function Peek({ entry, onPreview, onMention }) {
       <div className="peek-acts">
         <button type="button" className="btn small primary" onClick={() => api().openFile(entry.path)}>Öffnen</button>
         <button type="button" className="btn small" onClick={() => onPreview(entry)}>Vorschau</button>
-        <button type="button" className="btn small" onClick={() => onMention(entry.path)}>Im Chat erwähnen</button>
+        {free ? null : <button type="button" className="btn small" onClick={() => onMention(entry.path)}>Im Chat erwähnen</button>}
       </div>
     </div>
   );
@@ -277,7 +279,7 @@ function BrowserTab({ browser, active, onClose, onBig, big, servers, root, notic
           <input id="bp-url" className="bp-url" spellCheck={false} autoComplete="off" placeholder="Adresse oder Suchbegriffe" aria-label="Adresse"
             value={url} onChange={(e) => setUrl(e.target.value)} onFocus={(e) => { editing.current = true; e.target.select(); }} onBlur={() => { editing.current = false; }} />
         </form>
-        <button id="bp-big" type="button" className="icon-btn" title="Gross" aria-label="Gross" onClick={onBig}><Icon name="expand" size={15} /></button>
+        <button id="bp-big" type="button" className={`icon-btn${big ? ' on' : ''}`} title={big ? 'Wieder klein (Esc)' : 'Gross anzeigen'} aria-label={big ? 'Wieder klein' : 'Gross anzeigen'} aria-pressed={big} onClick={onBig}><Icon name="expand" size={15} /></button>
         <button id="bp-close" type="button" className="icon-btn" title="Browser schliessen" aria-label="Browser schliessen" onClick={onClose}><Icon name="close" size={15} /></button>
       </div>
       {root ? <ServerBar servers={servers} notice={notice} onOpen={(u) => api().browserGo(u)} /> : null}
@@ -306,7 +308,7 @@ function ModPanel({ el }) {
 
 // ---------- Panel ----------
 
-export default function RightPanel({ tab, setTab, root, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice,
+export default function RightPanel({ tab, setTab, root, free, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice,
   servers = [], running, dialogOpen, onGithub, modPanels = [] }) {
   const serversUp = servers.some((s) => s.state === 'läuft' || s.state === 'startet');
   const entry = selected ? (files.recent.find((f) => f.path === selected.path) || selected) : null;
@@ -319,7 +321,7 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
           <Icon name="browser" size={15} /> Browser{browser.running ? <span className="live-dot" aria-hidden="true" />
             : serversUp ? <span className="srv-dot up" title="Ein Server läuft" aria-hidden="true" /> : null}
         </button>
-        <button id="tab-github" type="button" role="tab" aria-selected={tab === 'github'} className={tab === 'github' ? 'on' : ''} onClick={() => setTab('github')}><Icon name="github" size={15} /> GitHub</button>
+        {free ? null : <button id="tab-github" type="button" role="tab" aria-selected={tab === 'github'} className={tab === 'github' ? 'on' : ''} onClick={() => setTab('github')}><Icon name="github" size={15} /> GitHub</button>}
         {modPanels.map((p) => (
           <button key={p.key} type="button" role="tab" aria-selected={tab === `mod:${p.key}`} className={`mod-tab${tab === `mod:${p.key}` ? ' on' : ''}`}
             title={`${p.titel} (Mod)`} onClick={() => setTab(`mod:${p.key}`)}><Icon name="puzzle" size={14} /> {p.titel}</button>
@@ -328,9 +330,9 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
       <div className="rp-body">
         {tab === 'dateien' ? (
           <div className="files-pane">
-            <FileExplorer root={root} files={files} marks={marks} removed={removed} selected={selected?.path}
+            <FileExplorer root={root} free={free} files={files} marks={marks} removed={removed} selected={selected?.path}
               onSelect={onSelect} onPreview={(e) => { onSelect(e); setTab('vorschau'); }} onMention={onMention} notice={notice} />
-            <Peek entry={entry} onPreview={(e) => { onSelect(e); setTab('vorschau'); }} onMention={onMention} />
+            <Peek entry={entry} free={free} onPreview={(e) => { onSelect(e); setTab('vorschau'); }} onMention={onMention} />
           </div>
         ) : null}
         {tab === 'vorschau' ? (
@@ -348,8 +350,8 @@ export default function RightPanel({ tab, setTab, root, files, marks, removed, s
           </div>
         ) : null}
         {tab === 'browser' ? <BrowserTab browser={browser} active={browserActive} onClose={onBrowserClose} onBig={onBrowserBig} big={browserBig}
-          servers={servers} root={root} notice={notice} /> : null}
-        {tab === 'github' ? <GithubPane root={root} files={files} running={running} dialogOpen={dialogOpen} onConnect={onGithub} /> : null}
+          servers={servers} root={free ? '' : root} notice={notice} /> : null}
+        {tab === 'github' && !free ? <GithubPane root={root} files={files} running={running} dialogOpen={dialogOpen} onConnect={onGithub} /> : null}
         {modPanels.filter((p) => tab === `mod:${p.key}`).map((p) => <ModPanel key={p.key} el={p.el} />)}
       </div>
     </aside>

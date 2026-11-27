@@ -5,7 +5,7 @@ import { RenameField } from './Sidebar.jsx';
 
 // Tabs oben: zuletzt geöffnete Chats dieser Sitzung. Ziehen sortiert um, Mittelklick schliesst, Rechtsklick öffnet ein Menü,
 // Doppelklick benennt um. Der aktive Tab liegt auf der Trennlinie und geht nahtlos in den Chat über.
-export default function Tabs({ tabs, chatId, colorOf, isBusy, onOpen, onClose, onCloseMany, onMove, onRename, onNew, onStop }) {
+export default function Tabs({ tabs, chatId, colorOf, placeOf = (t) => t.folder, isBusy, onOpen, onClose, onCloseMany, onMove, onRename, onNew, onStop }) {
   const [menu, setMenu] = useState(null); // { tab, index, x, y }
   const [renaming, setRenaming] = useState(null);
   const [drag, setDrag] = useState(null); // { id, over, after }
@@ -39,7 +39,7 @@ export default function Tabs({ tabs, chatId, colorOf, isBusy, onOpen, onClose, o
                 <RenameField name={t.title} className="tab-rename" onDone={(title) => { setRenaming(null); if (title.trim() && title.trim() !== t.title) onRename(t, title.trim()); }} />
               </span>
             ) : (
-              <button type="button" className="tab-open" title={`${t.title}\n${t.folder}\nDoppelklick: umbenennen · Rechtsklick: Menü`} aria-current={on ? 'page' : undefined}
+              <button type="button" className="tab-open" title={`${t.title}\n${placeOf(t)}${t.placeholder ? '' : '\nDoppelklick: umbenennen · Rechtsklick: Menü'}`} aria-current={on ? 'page' : undefined}
                 onClick={() => { if (!on) onOpen(t); }} onDoubleClick={() => { if (!t.placeholder) setRenaming(t.id); }}>
                 <span className={`swatch${isBusy(t) ? ' busy' : ''}`} style={{ background: colorOf(t) }} />
                 <span className="ell">{t.title}</span>

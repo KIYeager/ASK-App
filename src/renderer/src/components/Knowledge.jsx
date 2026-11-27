@@ -319,6 +319,7 @@ export function MemoryDialog({ state, onClose }) {
   const items = data?.items || [];
   const projects = data?.projects || [];
   const enabled = data ? data.enabled : state.memory !== false;
+  const folder = state.free ? '' : state.folder; // ein Chat ohne Projekt ist kein Projekt, für das etwas gelten könnte
   const changed = (item) => { load(); if (item === null) setSelected(null); };
   const head = (
     <div className="segmented" role="tablist" aria-label="Ansicht">
@@ -351,9 +352,9 @@ export function MemoryDialog({ state, onClose }) {
           <button type="button" className="btn" onClick={() => { setTab('liste'); setAdding(true); }}><Icon name="plus" size={14} /> Eintrag hinzufügen</button>
         </div>
       ) : tab === 'netz' ? (
-        <MemoryNet items={items} projects={projects} folder={state.folder} selected={selected} onSelect={setSelected} onChanged={changed} />
+        <MemoryNet items={items} projects={projects} folder={folder} selected={selected} onSelect={setSelected} onChanged={changed} />
       ) : (
-        <MemoryList items={items} projects={projects} folder={state.folder} adding={adding} setAdding={setAdding} onChanged={() => load()} />
+        <MemoryList items={items} projects={projects} folder={folder} adding={adding} setAdding={setAdding} onChanged={() => load()} />
       )}
     </Shell>
   );

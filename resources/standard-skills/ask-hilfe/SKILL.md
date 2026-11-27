@@ -21,7 +21,7 @@ Dieses Wissen beschreibt die App ASK (Windows, TF Bern) so, wie sie heute aussie
 ## 2. Aufbau des Fensters
 
 - ASK hat keine Titelleiste von Windows. Oben ist die Kopfzeile: Projekte-Knopf, Logo, Tabs, Knopf für die rechte Seitenleiste und die Knöpfe Minimieren, Maximieren und Schliessen. Leere Stellen der Kopfzeile ziehen das Fenster, ein Doppelklick maximiert.
-- Links: die Projekte mit ihren Chats.
+- Links: oben die Gruppe «Chats» (Chats ohne Projekt), darunter die Projekte mit ihren Chats.
 - Mitte: der Chat. Das Eingabefeld steht in einem leeren Chat in der Mitte (mit Vorschlägen), sobald der Chat beginnt unten.
 - Rechts: die Reiter «Dateien», «Vorschau», «Browser» und «GitHub».
 - Unten links: der Profil-Knopf mit Menü (Name, Einstellungen, Hilfe, Updates). Fehlt etwas (nicht angemeldet, Terminal läuft nicht), steht es dort; ein Klick zeigt Details. Während eines Updates steht dort auch eine Karte mit Fortschritt oder Countdown.
@@ -171,7 +171,8 @@ Die Liste steht auch unter Profil → Tastenkombinationen. Alles Anklickbare ist
 ## 8. Projekte, Chats und Tabs
 
 - **Projekt** = ein Arbeitsordner mit Namen und Farbe. Neu: `/projekt` (Name eingeben, ASK legt `%USERPROFILE%\ASK-Projekte\<Name>` an). Vorhandenen Ordner öffnen: `/ordner`. Im Ordner legt ASK nur das versteckte `.ask/` an (Chats, Anleitungen, Anhänge, Projektnotizen).
-- **Chat starten**: «+» neben dem Projekt oder `/neu` oder Ctrl+N. Ein Klick auf einen Chat öffnet ihn; liegt er in einem anderen Projekt, wechselt die App dorthin (das Terminal startet neu).
+- **Chat ohne Projekt**: die Gruppe «Chats» oben links, neu mit dem «+» daneben. Dort antwortet ASK, sucht im Web, liest angehängte Dateien und Bilder und erstellt Bilder, ändert aber keine Dateien und führt keine Befehle aus; im Eingabefeld gibt es darum keinen Modus, rechts keinen Reiter «GitHub». Beim ersten Start landet man in einem solchen Chat. Soll ASK mit Dateien arbeiten: «+» bei «Projekte» oder `/projekt`.
+- **Chat starten**: «Neuer Chat» oben links, `/neu`, Ctrl+N oder das «+» bei den Tabs legen einen Chat dort an, wo man gerade ist (im offenen Projekt oder ohne Projekt); «+» neben einem Projekt beginnt dort einen. Das geht auch, während ein anderer Chat arbeitet: Der arbeitet im Hintergrund weiter (Kreisel in der Liste, pulsierender Punkt am Tab). Ein Klick auf einen Chat öffnet ihn; liegt er in einem anderen Projekt, wechselt die App dorthin (das Terminal startet neu). Jeder Chat behält seinen Entwurf im Eingabefeld.
 - **Menü des Projekts** («…» oder Rechtsklick): Umbenennen, Farbe, im Explorer öffnen, Projektnotizen bearbeiten, GitHub, aus der Liste entfernen (der Ordner bleibt).
 - **Menü eines Chats** («…» oder Rechtsklick): Umbenennen, Anheften (angeheftete Chats stehen oben), Löschen, bei laufendem Chat «Stoppen».
 - **Titel**: Nach der ersten Antwort schreibt ASK automatisch einen kurzen Titel. Wer den Chat selbst umbenennt, behält seinen Titel.
@@ -179,7 +180,7 @@ Die Liste steht auch unter Profil → Tastenkombinationen. Alles Anklickbare ist
 - **Projekte ohne Ordner** sind durchgestrichen mit «Ordner nicht gefunden»; im Menü lassen sie sich aus der Liste entfernen.
 - **Projektnotizen**: `.ask/projekt.md`; ASK hält darin fest, was spätere Chats wissen müssen. Bearbeiten im Menü des Projekts.
 - **Tabs** oben: die zuletzt geöffneten Chats (höchstens sechs) mit Punkt in der Farbe des Projekts; er pulsiert, solange der Chat arbeitet. Ziehen sortiert um, Doppelklick benennt um, Mittelklick oder × schliesst, Rechtsklick öffnet ein Menü (Stoppen, Umbenennen, Schliessen, Andere Tabs schliessen, Tabs rechts davon schliessen, Neuer Chat). Schliessen entfernt nur den Tab, nicht den Chat.
-- Chats liegen nur im Projektordner unter `.ask/chats`, nicht im Verlauf der ASK-Webseite.
+- Chats liegen nur im Projektordner unter `.ask/chats`, Chats ohne Projekt in den Daten der App (`%APPDATA%\ASK\chats`); keiner steht im Verlauf der ASK-Webseite.
 
 ## 9. Dateien, Vorschau, Browser, Server, GitHub
 
@@ -198,7 +199,7 @@ Die Liste steht auch unter Profil → Tastenkombinationen. Alles Anklickbare ist
 
 **Skills** (Profil → Skills, Einstellungen → Skills oder `/skills`):
 - Ein Skill ist eine Anleitung für wiederkehrende Aufträge. ASK prüft bei jedem Auftrag, ob einer passt, liest ihn selbst und sagt kurz, welchen es benutzt («Skill benutzt»). Mit `/name` ruft man einen direkt auf.
-- «Mitgeliefert»: elf Skills (`/skill-erstellen`, `/mod-erstellen`, `/code-erklaeren`, `/lernjournal`, `/quellen-pruefen`, `/fehler-suchen`, `/tests-schreiben`, `/code-review`, `/commit-nachricht`, `/webseite-gestalten`, `/praesentation-planen`) und dieser Hilfe-Skill. Pro Skill gibt es «Ansehen» und einen Schalter zum Ausschalten. «Als eigenen Skill kopieren» ist der Weg, einen anzupassen; ein eigener Skill mit gleichem Namen ersetzt den mitgelieferten («durch eigenen ersetzt»).
+- «Mitgeliefert»: sechzehn Skills (`/skill-erstellen`, `/mod-erstellen`, `/code-erklaeren`, `/lernjournal`, `/quellen-pruefen`, `/fehler-suchen`, `/tests-schreiben`, `/code-review`, `/commit-nachricht`, `/webseite-gestalten`, `/praesentation-planen`, für Dokumente `/word-dokument`, `/powerpoint-folien`, `/excel-tabelle`, `/dokument-zusammenfassen`, `/dokument-verbessern`) und dieser Hilfe-Skill. Pro Skill gibt es «Ansehen» und einen Schalter zum Ausschalten. «Als eigenen Skill kopieren» ist der Weg, einen anzupassen; ein eigener Skill mit gleichem Namen ersetzt den mitgelieferten («durch eigenen ersetzt»).
 - «Eigene Skills»: «Neuer Skill», «Mit ASK erstellen» (startet `/skill-erstellen`), «Importieren …» (Datei, höchstens 100 KB), pro Skill «Bearbeiten». Eigene Skills liegen in `%APPDATA%\ASK\skills\<name>\SKILL.md`.
 - «Kataloge»: Skills (und Mods) aus öffentlichen GitHub-Repositories. Mitgeliefert sind `KIYeager/ASK-Erweiterungen` (Schule) und `anthropics/skills` (Englisch). «Durchsuchen …» zeigt die Einträge mit «Ansehen» und «Hinzufügen». Eigener Katalog: Feld «Weiterer Katalog: besitzer/repository» und «Katalog hinzufügen» (mit × wieder entfernen).
 - «Von Link hinzufügen»: Link auf einen Ordner mit `SKILL.md` (Skill) oder `mod.json` (Mod) auf GitHub. Liegen mehrere Einträge darunter, wählt man aus. Ein Skill bringt nur seine `SKILL.md` mit.

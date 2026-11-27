@@ -10,7 +10,7 @@ import RightPanel, { norm } from './components/RightPanel.jsx';
 import Dialogs, { activeDialog } from './components/Dialogs.jsx';
 import { useSkillCommands } from './components/Knowledge.jsx';
 import { Turn } from './components/Chat.jsx';
-import { applyEvent, buildTurns, emptyChat, fromTranscript, lastTasks } from './lib/chatModel.mjs';
+import { applyEvent, buildTurns, emptyChat, lastTasks, loadChat, reuseTurns } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
 import { emitMod, fillTemplate, loadMods, modCommandFor, modsChanged, setModHost, takeDialogAfterReload, useMods } from './lib/mods.js';
 
@@ -84,7 +84,7 @@ function UpdateBar({ u }) {
 }
 
 function reducer(model, action) {
-  if (action.type === 'load') return fromTranscript(action.items, action.running);
+  if (action.type === 'load') return loadChat(action.items, action.running, action.pending);
   if (action.type === 'events') return action.evs.reduce(applyEvent, model);
   return model;
 }
@@ -96,6 +96,16 @@ const EXAMPLES = [
   ['list', 'CSV auswerten', 'Werte die CSV-Datei aus: Summen pro Kategorie und ein Diagramm, alles in Excel.'],
   ['term', 'Python-Skript', 'Schreibe ein Python-Skript, das prüft, ob ein Passwort sicher ist, und teste es.'],
 ];
+
+// Chat ohne Projekt (ENTSCHEIDE E78): ASK antwortet, sucht im Web und erstellt Bilder, ändert aber keine Dateien
+const FREE_EXAMPLES = [
+  ['help', 'Etwas erklären', 'Erklär mir in einfachen Worten, was eine Subnetzmaske ist, mit einem Beispiel.'],
+  ['globe', 'Im Web suchen', 'Such im Web, was in der neusten Version von Python neu ist, und fass es kurz zusammen.'],
+  ['image', 'Bild erstellen', 'Erstelle ein Bild: ein freundlicher Roboter am Laptop, im Comic-Stil.'],
+  ['pen', 'Text verbessern', 'Verbessere diesen Text sprachlich und sag kurz, was du geändert hast:\n\n'],
+];
+// Befehle, die ein Projekt brauchen (Dateien, Terminal, GitHub, Modus)
+const PROJECT_COMMANDS = new Set(['/explorer', '/dateien', '/github', '/plan', '/auto', '/nachfragen', '/neustart']);
 
 // Breiten der Seitenleisten (ziehbar, pro Rechner gespeichert)
 const PANELS = { chatbar: { css: '--left-w', min: 200, max: 460, def: 260, grows: 1 }, sidebar: { css: '--right-w', min: 280, max: 900, def: 360, grows: -1 } };
@@ -183,8 +193,17 @@ export default function App() {
   // ---------- Laden ----------
 
   const loadChats = useCallback(async () => setGroups(await api().chatGroups()), []);
+  // Chat, «arbeitet» und Beginn des Auftrags wechseln zusammen (ein Render): Sonst sähe das Eingabefeld kurz den
+  // alten Chat mit dem Zustand des neuen und schickte eine wartende Nachricht in den falschen Chat.
+  const loadSeq = useRef(0);
+  // Chat, den der Hauptprozess zuletzt gemeldet hat. Verglichen wird damit, nicht mit dem angezeigten Chat: Wer rasch
+  // von A nach B und zurück nach A wechselt, bevor B geladen ist, bekäme sonst B angezeigt, während A sichtbar sein soll.
+  const latestChat = useRef(null);
+  const doneSeen = useRef(true); // «done» des laufenden Auftrags gesehen (sonst nach dem Ende den Verlauf neu laden)
   const loadTranscript = useCallback(async () => {
+    const seq = ++loadSeq.current;
     const t = await api().chatTranscript();
+    if (seq !== loadSeq.current) return; // inzwischen nochmals gewechselt: die neuere Antwort gilt
     // Anderer Chat: noch gesammelte Ereignisse gehören zum vorherigen, verwerfen, sonst landen sie im neuen
     if (t.id !== chatIdRef.current) {
       clearTimeout(flushTimer.current);
@@ -192,10 +211,16 @@ export default function App() {
       buf.current = [];
     }
     chatIdRef.current = t.id;
+    latestChat.current = t.id;
     runningRef.current = t.running;
+    doneSeen.current = !t.running;
     setChatId(t.id);
     setRunning(t.running);
-    dispatch({ type: 'load', items: t.items, running: t.running });
+    setRunStarted(t.running ? t.started || Date.now() : 0);
+    const open = t.pending || [];
+    setAct(open.some((e) => e.type === 'question') ? 'Wartet auf deine Antwort' : open.length ? 'Wartet auf deine Entscheidung' : 'Denkt nach …');
+    setAutoEffort('');
+    dispatch({ type: 'load', items: t.items, running: t.running, pending: open });
     followRef.current = true;
     setFollow(true);
   }, []);
@@ -249,9 +274,10 @@ export default function App() {
       case 'review': setAct('Prüft, ob der Schritt sicher ist …'); break;
       case 'approval-end': setAct('Denkt nach …'); break;
       case 'user':
+        doneSeen.current = false;
         if (!ev.auto) { followRef.current = true; setFollow(true); setAutoEffort(''); emitMod('gesendet', { text: ev.text || '' }); }
         break;
-      case 'done': setTimeout(() => {
+      case 'done': doneSeen.current = true; setTimeout(() => {
         const last = [...(modelRef.current?.entries || [])].reverse().find((e) => e.k === 'assistant' && e.text);
         emitMod('antwort', { text: last?.text || '' });
         emitMod('fertig', { gestoppt: !!ev.stopped, fehler: !!ev.failed });
@@ -277,19 +303,27 @@ export default function App() {
         setState(s);
         if (s.servers) setServers(s.servers);
         if (prev && s.folder !== prev.folder) loadChats();
-        if (s.chat.running !== runningRef.current) {
+        // Anderer Chat: loadTranscript setzt Chat und «arbeitet» zusammen
+        if (s.chat.id !== latestChat.current) { latestChat.current = s.chat.id; loadTranscript(); emitMod('chat', { id: s.chat.id, titel: s.chat.title || '' }); }
+        else if (s.chat.id === chatIdRef.current && s.chat.running !== runningRef.current) {
           runningRef.current = s.chat.running;
           setRunning(s.chat.running);
+          if (s.chat.running) setRunStarted((t) => t || s.chat.started || Date.now());
         }
-        if (s.chat.id !== chatIdRef.current) { loadTranscript(); emitMod('chat', { id: s.chat.id, titel: s.chat.title || '' }); }
       }),
       a.onChatEvent(onChatEvent),
       a.onChatChanged((c) => {
-        if (c.id !== chatIdRef.current) loadTranscript();
-        runningRef.current = c.running;
-        setRunning(c.running);
+        if (c.id !== latestChat.current) { latestChat.current = c.id; loadTranscript(); }
+        else if (c.id === chatIdRef.current) {
+          // Fertig, aber das Ende ist hier nicht angekommen (z. B. während der Verlauf lud): Verlauf nochmals holen,
+          // sonst blieben Arbeitsschritte für immer auf «läuft»
+          if (!c.running && runningRef.current && !doneSeen.current) loadTranscript();
+          runningRef.current = c.running;
+          setRunning(c.running);
+        }
         loadChats();
-        if (!c.running) composer.current?.focus();
+        // Fokus zurück ins Eingabefeld, aber nicht aus einem Dialog oder einem anderen Feld heraus
+        if (!c.running && !document.querySelector('.overlay, .tour') && (!document.activeElement || document.activeElement === document.body)) composer.current?.focus();
       }),
       a.onFiles((f) => setFiles(f)),
       a.onGroupsChanged?.(() => loadChats()),
@@ -321,6 +355,7 @@ export default function App() {
       stateRef.current = s;
       setState(s);
       if (s.servers) setServers(s.servers);
+      latestChat.current = s.chat?.id ?? null;
       await loadTranscript();
       await loadChats();
       loadMods();
@@ -334,8 +369,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (running) { setRunStarted((t) => t || Date.now()); setAct('Denkt nach …'); } else setRunStarted(0);
-    if (!running && reloadAfterRun.current) setTimeout(() => window.location.reload(), 1500); // Mods geändert: Antwort kurz stehen lassen
+    if (running) setRunStarted((t) => t || Date.now()); else setRunStarted(0);
+    // Mods geändert: Antwort kurz stehen lassen, dann neu laden (Chats im Hintergrund arbeiten dabei weiter)
+    if (!running && reloadAfterRun.current) {
+      const t = setTimeout(() => window.location.reload(), 1500);
+      return () => clearTimeout(t);
+    }
+    return undefined;
   }, [running]);
 
   // Ausführliche Ansicht aus den gespeicherten Einstellungen (einmal beim Start)
@@ -345,9 +385,6 @@ export default function App() {
     prefsLoaded.current = true;
     setVerbose(!!state.prefs.verbose);
   }, [state?.prefs]);
-
-  // Anderer Chat: eine wartende Nachricht kommt zurück ins Eingabefeld, statt im falschen Chat loszugehen
-  useEffect(() => { composer.current?.restoreQueued(); }, [chatId]);
 
   // Tabs: zuletzt geöffnete Chats dieser Sitzung
   useEffect(() => {
@@ -363,7 +400,8 @@ export default function App() {
 
   // ---------- Abgeleitete Werte ----------
 
-  const turns = useMemo(() => buildTurns(model, running), [model, running]);
+  const prevTurns = useRef([]);
+  const turns = useMemo(() => { prevTurns.current = reuseTurns(prevTurns.current, buildTurns(model, running)); return prevTurns.current; }, [model, running]);
   const tasksAll = useMemo(() => lastTasks(model), [model]);
   const lastTurn = turns[turns.length - 1];
   const tasksLive = running && !!lastTurn && lastTurn.steps.some((s) => s.type === 'tool' && s.entry.tasks?.length);
@@ -414,9 +452,13 @@ export default function App() {
     const t = setTimeout(() => setSlow(true), 15000);
     return () => clearTimeout(t);
   }, [waiting]);
+  const free = !!state?.free; // sichtbar ist ein Chat ohne Projekt
   const leftOpen = state?.chatbarOpen !== false;
   const rightOpen = state?.sidebarOpen !== false;
   const browserActive = rightOpen && tab === 'browser' && !dialogName && !needsLogin && !uiMenu; // Menüs lägen sonst unter der Browser-Ansicht
+
+  // Ohne Projekt gibt es kein Repository: vom Reiter «GitHub» zurück zu den Dateien
+  useEffect(() => { if (free && tab === 'github') setTab('dateien'); }, [free, tab]);
 
   // ---------- Aktionen ----------
 
@@ -446,8 +488,10 @@ export default function App() {
     }
     if (hit?.cmd.prompt) text = fillTemplate(hit.cmd.prompt, hit.rest);
     runningRef.current = true;
+    doneSeen.current = false;
     setRunning(true);
     setRunStarted(Date.now());
+    setAct('Denkt nach …');
     let res;
     try {
       res = await api().chatSend(text, fileList.map(({ name, type, data }) => ({ name, type, data })), kept);
@@ -481,12 +525,13 @@ export default function App() {
   const blocker = !state?.folder ? 'Zuerst ein Projekt wählen.'
     : ask.state === 'fehler' ? 'ASK meldet einen Fehler (Hinweis über dem Eingabefeld).'
     : ask.state !== 'angemeldet' ? 'Zuerst bei ASK anmelden.'
-    : state.terminal.state === 'startet' ? 'Das Terminal startet …'
-    : state.terminal.state !== 'läuft' ? 'Das Terminal läuft nicht (unten links auf «Terminal» klicken).'
+    // Ein Chat ohne Projekt braucht das Terminal nicht (es liest dort nur Anhänge)
+    : !free && state.terminal.state === 'startet' ? 'Das Terminal startet …'
+    : !free && state.terminal.state !== 'läuft' ? 'Das Terminal läuft nicht (unten links auf «Terminal» klicken).'
     : !state.model ? 'ASK bietet kein Modell an.' : '';
 
+  // Geht auch, während ein Chat arbeitet: Der läuft im Hintergrund weiter (parallele Chats, ENTSCHEIDE E46)
   const newChat = async (folder) => {
-    if (runningRef.current) return;
     const res = await api().chatNew(folder);
     if (res && res.ok === false && res.reason) setDialog({ name: 'terminal', text: res.reason });
     composer.current?.focus();
@@ -512,7 +557,7 @@ export default function App() {
   const skillCommands = useSkillCommands({ composer, stateRef, notice }); // eigene Skills als /name (ENTSCHEIDE E51)
 
   const commands = [
-    { cmd: '/neu', text: 'Neuen Chat beginnen', run: () => newChat() },
+    { cmd: '/neu', text: free ? 'Neuen Chat ohne Projekt beginnen' : 'Neuen Chat im Projekt beginnen', run: () => newChat() },
     { cmd: '/projekt', text: 'Neues Projekt anlegen', run: () => setDialog({ name: 'project' }) },
     { cmd: '/goal', text: 'Ziel setzen: /goal <Ziel>; das Modell arbeitet, bis es erreicht ist', run: () => composer.current?.setText('/goal ') },
     { cmd: '/suchen', text: 'Chats durchsuchen', run: () => { if (!leftOpen) api().setChatbar(true); setTimeout(() => document.getElementById('chat-search')?.focus(), 50); } },
@@ -525,7 +570,7 @@ export default function App() {
     { cmd: '/nachfragen', text: 'Nachfragen: ASK fragt vor heiklen Schritten', run: () => api().setSettings({ mode: 'nachfragen' }) },
     { cmd: '/modell', text: 'Modell wählen', run: () => document.getElementById('model-select')?.focus() },
     { cmd: '/denken', text: 'Denkaufwand einstellen (Standard, Tief bis Maximal)', run: () => document.getElementById('think-btn')?.click() },
-    { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api().setWebSearch(!state.webSearch); } },
+    { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api().setWebSearch(!state.webSearch); else notice('Websuche ist in ASK für dein Konto nicht freigegeben.'); } },
     { cmd: '/chats', text: 'Frühere Chats für das Modell ein- oder ausschalten', run: () => api().setChatMemory(!state.chatMemory) },
     { cmd: '/einstellungen', text: 'Einstellungen: Darstellung, Rückfragen, Version', run: () => setDialog({ name: 'settings' }) },
     { cmd: '/nutzung', text: 'Nutzung: Aufträge, Token und Dateien pro Projekt', run: () => setDialog({ name: 'usage' }) },
@@ -538,7 +583,7 @@ export default function App() {
     { cmd: '/mods', text: 'Mods: Aussehen, Befehle und Erweiterungen', run: () => setDialog({ name: 'settings', pane: 'mods' }) },
     ...skillCommands,
     ...modState.commands.map((c) => ({ cmd: c.cmd, text: c.text, skill: true, run: () => composer.current?.setText(`${c.cmd} `) })),
-  ];
+  ].filter((c) => !free || !PROJECT_COMMANDS.has(c.cmd));
 
   // Was Mods von der Oberfläche benutzen dürfen (immer die aktuelle Fassung)
   setModHost({
@@ -552,21 +597,27 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e) => {
+      if (!state) return; // noch am Starten
       const k = e.key.toLowerCase();
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 't') { e.preventDefault(); composer.current?.toggleTodo(); }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'o') { e.preventDefault(); setVerboseSaved(!verbose); }
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'n') { e.preventDefault(); newChat(); }
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') { e.preventDefault(); setDialog({ name: 'settings' }); }
+      // Chats und Tabs wechseln nur, wenn kein Dialog davor liegt und man angemeldet ist (sonst geschähe es unsichtbar dahinter)
+      const chats = !dialogName && !needsLogin && !uiMenu;
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'n') { e.preventDefault(); if (chats && state?.folder) newChat(); }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key === ',') { e.preventDefault(); if (!dialogName || dialog) setDialog({ name: 'settings' }); }
       // Tabs: Ctrl+W schliesst, Ctrl+Tab wechselt, Ctrl+1 bis 9 springt, Ctrl+Shift+T holt den zuletzt geschlossenen zurück
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'w') { e.preventDefault(); if (!dialog) closeTab(shownTabs.find((t) => t.id === chatId)); }
-      if (e.ctrlKey && !e.altKey && e.key === 'Tab') { e.preventDefault(); switchTab(e.shiftKey ? -1 : 1); }
-      if (e.ctrlKey && e.shiftKey && !e.altKey && k === 't') { e.preventDefault(); reopenTab(); }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && k === 'w') { e.preventDefault(); const t = shownTabs.find((x) => x.id === chatId); if (chats && t) closeTab(t); }
+      if (e.ctrlKey && !e.altKey && e.key === 'Tab') { e.preventDefault(); if (chats) switchTab(e.shiftKey ? -1 : 1); }
+      if (e.ctrlKey && e.shiftKey && !e.altKey && k === 't') { e.preventDefault(); if (chats) reopenTab(); }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
         const t = e.key === '9' ? shownTabs[shownTabs.length - 1] : shownTabs[Number(e.key) - 1];
-        if (t) { e.preventDefault(); if (t.id !== chatId && !t.placeholder) openChat(t.folder, t.id); }
+        if (t) { e.preventDefault(); if (chats && t.id !== chatId && !t.placeholder) openChat(t.folder, t.id); }
       }
       if (e.key === 'Escape') {
-        if (dialog) { setDialog(null); return; }
+        // Ein Dialog aus den Einstellungen geht dorthin zurück, wie sein Knopf «Schliessen»
+        if (dialog) { setDialog(dialog.back || null); return; }
+        // Pflichtdialoge und «Neu in ASK» liegen davor: Esc stoppt dann nicht den Auftrag dahinter
+        if (dialogName) { if (dialogName === 'whatsnew') api().whatsNewSeen(); return; }
         if (browserBig) { setBrowserBig(false); return; }
         if (runningRef.current && !document.querySelector('.popover')) composer.current?.stop();
       }
@@ -594,7 +645,6 @@ export default function App() {
     if (e.deltaY < 0) { followRef.current = false; setFollow(false); }
   };
   const jump = () => { followRef.current = true; setFollow(true); const t = transcript.current; if (t) t.scrollTop = t.scrollHeight; setShowJump(false); };
-  const onMediaLoad = () => { const t = transcript.current; if (t && followRef.current) t.scrollTop = t.scrollHeight; };
 
   // ---------- Anmeldeseite von ASK (WebContentsView über #ask-host) ----------
 
@@ -652,11 +702,15 @@ export default function App() {
     try { localStorage.setItem('ask.breiten', JSON.stringify(w)); } catch { /* egal */ }
   };
 
-  if (!state) return <div className="boot"><img src="./tf-mark.png" alt="" className="logo-mark" /> ASK startet …</div>;
-
-  const ctx = {
+  // Was die Aufträge im Chat brauchen. Bleibt dasselbe Objekt, solange sich nichts davon ändert: Zusammen mit
+  // reuseTurns zeichnet React beim Schreiben der Antwort dann nur den laufenden Auftrag neu. Aktionen greifen über
+  // `acts` auf die aktuelle Fassung zu.
+  const acts = useRef({});
+  acts.current = { editLast, send, blocker };
+  const undoSnapshot = lastChanges?.snapshot;
+  const ctx = useMemo(() => ({
     verbose, running, activity, blocker,
-    editLast,
+    editLast: (resend) => acts.current.editLast(resend),
     isFile: (t) => !!findFile(t),
     openFile,
     openFileByName: (t) => { const f = findFile(t); if (f) openFile(f.path); },
@@ -667,15 +721,18 @@ export default function App() {
     answer: (id, t) => api().chatAnswer(id, t),
     forgetMemory: async (id) => { try { return !!(await api().memoryRemove(id)); } catch { return false; } },
     undo: async (snap) => { const res = await api().chatUndo(snap); if (res && !res.ok && !res.cancelled) dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] }); },
-    undoSnapshot: lastChanges?.snapshot,
+    undoSnapshot,
     lastPlanKey,
     // Plan umsetzen: auf Auto wechseln und loslegen; ändern: Wunsch ins Eingabefeld schreiben lassen
-    implementPlan: async () => { await api().setSettings({ mode: 'auto' }); send('Setze den Plan um.', []); },
+    implementPlan: async () => { if (runningRef.current || acts.current.blocker) return; await api().setSettings({ mode: 'auto' }); acts.current.send('Setze den Plan um.', []); },
     revisePlan: () => composer.current?.setText('Ändere den Plan: '),
-    onMediaLoad,
-  };
+    onMediaLoad: () => { const t = transcript.current; if (t && followRef.current) t.scrollTop = t.scrollHeight; },
+  }), [verbose, running, activity, blocker, state, findFile, openFile, undoSnapshot, lastPlanKey]);
 
-  const project = groups.find((g) => g.current);
+  if (!state) return <div className="boot"><img src="./tf-mark.png" alt="" className="logo-mark" /> ASK startet …</div>;
+
+  const project = groups.find((g) => g.current && !g.free);
+  const groupOf = (t) => groups.find((g) => g.folder.toLowerCase() === (t.folder || '').toLowerCase());
   // Tabs oben: der aktuelle Chat steht immer drin, ein neuer noch ohne Titel als «Neuer Chat»
   const shownTabs = tabs.some((t) => t.id === chatId) ? tabs : [{ id: chatId, folder: state.folder, title: 'Neuer Chat', placeholder: true }, ...tabs];
   const closeTabs = (list, keep) => {
@@ -725,15 +782,16 @@ export default function App() {
           <span className="wordmark">ASK</span>
         </div>
         <Tabs tabs={shownTabs} chatId={chatId} onNew={() => newChat()} onOpen={(t) => openChat(t.folder, t.id)}
-          colorOf={(t) => groups.find((g) => g.folder.toLowerCase() === (t.folder || '').toLowerCase())?.color || 'var(--dim)'}
+          colorOf={(t) => groupOf(t)?.color || 'var(--dim)'} placeOf={(t) => (groupOf(t)?.free ? 'Chat ohne Projekt' : t.folder)}
           isBusy={(t) => (t.id === chatId && running) || (state.running || []).some((r) => r.id === t.id)}
           onStop={(t) => (t.id === chatId ? composer.current?.stop() : api().chatStopChat(t.folder, t.id))}
           onClose={closeTab} onCloseMany={closeTabs} onMove={moveTab} onRename={renameTab} />
         <span className="spacer" />
-        <button type="button" id="folder-btn" className="crumb" hidden={leftOpen} title={state.folder ? `${state.folder}\nKlicken für weitere Projekte und Aktionen` : 'Projekt wählen'}
+        <button type="button" id="folder-btn" className="crumb" hidden={leftOpen}
+          title={free ? 'Chat ohne Projekt\nKlicken für Projekte und Aktionen' : state.folder ? `${state.folder}\nKlicken für weitere Projekte und Aktionen` : 'Projekt wählen'}
           onClick={() => api().folderMenu()} disabled={!state.warningAccepted || !state.askUrl}>
-          {project ? <span className="swatch" style={{ background: project.color }} /> : null}
-          <span id="folder-name">{project?.name || (state.folder ? baseName(state.folder) : 'Kein Projekt')}</span>
+          {project?.color ? <span className="swatch" style={{ background: project.color }} /> : null}
+          <span id="folder-name">{free ? 'Ohne Projekt' : project?.name || (state.folder ? baseName(state.folder) : 'Kein Projekt')}</span>
           <Icon name="chevDown" size={13} />
         </button>
         {modState.buttons.length ? (
@@ -808,7 +866,11 @@ export default function App() {
               {!turns.length ? (
                 <div id="welcome" className="welcome">
                   <img src="./tf-mark.png" alt="" className="welcome-mark logo-mark" />
-                  <h1>Woran arbeiten wir{project ? ` in ${project.name}` : ''}?</h1>
+                  <h1>{free ? 'Was möchtest du wissen?' : `Woran arbeiten wir${project ? ` in ${project.name}` : ''}?`}</h1>
+                  {free ? (
+                    <p id="free-hint" className="muted">Chat ohne Projekt: ASK antwortet, sucht im Web und erstellt Bilder, ändert aber keine Dateien.{' '}
+                      <button type="button" className="link" onClick={() => setDialog({ name: 'project' })}>Für Dateien ein Projekt anlegen</button></p>
+                  ) : null}
                 </div>
               ) : null}
               <div id="messages" className="messages">
@@ -831,7 +893,7 @@ export default function App() {
           ) : null}
           {/* auch während der Anmeldung da (unter der Anmeldeseite), mit Hinweis im Platzhalter */}
           {(
-            <Composer ref={composer} state={state} running={running} block={blocker} goal={state.chat?.goal} tasks={tasks} tasksLive={tasksLive}
+            <Composer ref={composer} state={state} chatId={chatId} free={free} running={running} block={blocker} goal={state.chat?.goal} tasks={tasks} tasksLive={tasksLive}
               context={state.chat?.context} todoCollapsed={state.prefs?.todoCollapsed ?? true}
               activity={(tasksLive && tasks?.find((t) => t.status === 'in_arbeit')?.titel) ? `${tasks.find((t) => t.status === 'in_arbeit').titel} · ${activity}` : activity}
               runStarted={runStarted} commands={commands} pendingQuestion={pendingQuestion} pendingApproval={pendingApproval}
@@ -844,7 +906,7 @@ export default function App() {
             // Leerer Chat: Eingabe in der Mitte, Vorschläge darunter (wie in Claude)
             <div className="column examples-wrap">
               <div className="examples">
-                {EXAMPLES.map(([icon, label, text]) => (
+                {(free ? FREE_EXAMPLES : EXAMPLES).map(([icon, label, text]) => (
                   <button key={label} type="button" className="example" title={text} onClick={() => composer.current?.setText(text)}><Icon name={icon} size={14} />{label}</button>
                 ))}
               </div>
@@ -855,7 +917,7 @@ export default function App() {
         {rightOpen ? <div className="resizer" data-panel="sidebar" role="separator" aria-orientation="vertical" tabIndex={0} aria-label="Breite der Seitenleiste"
           title="Ziehen: Breite ändern · Doppelklick: Standardbreite" onPointerDown={startResize('sidebar')} onDoubleClick={resetWidth('sidebar')} onKeyDown={keyResize('sidebar')} /> : <span />}
         {rightOpen ? (
-          <RightPanel tab={tab} setTab={setTab} root={state.folder} files={files} marks={marks} removed={removed} selected={selected}
+          <RightPanel tab={tab} setTab={setTab} root={state.folder} free={free} files={files} marks={marks} removed={removed} selected={selected}
             onSelect={setSelected} onBig={() => setDialog({ name: 'preview' })} browser={browser} browserActive={browserActive}
             onBrowserClose={() => { api().browserClose(); setBrowser(BROWSER0); setBrowserBig(false); setTab('dateien'); }}
             onBrowserBig={() => setBrowserBig(!browserBig)} browserBig={browserBig}

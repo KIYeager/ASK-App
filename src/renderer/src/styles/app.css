@@ -1112,3 +1112,36 @@ textarea.gh-input { resize: vertical; min-height: 56px; line-height: 1.45; }
 .s-badge.kind-mod { background: var(--kind-mod-soft); border-color: transparent; color: var(--kind-mod); font-family: var(--sans); }
 .s-badge.kind-skill { background: var(--kind-skill-soft); border-color: transparent; color: var(--kind-skill); font-family: var(--sans); }
 .cat-done { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Chats ohne Projekt (ENTSCHEIDE E78): Gruppe «Chats» über den Projekten, die ganze Liste scrollt gemeinsam */
+.chat-groups > .side-label { margin-top: 8px; }
+.chat-group.free > .side-label { padding-left: 0; }
+.label-toggle { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; border: 0; background: none; padding: 4px 8px; border-radius: 6px;
+  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; }
+.label-toggle:hover { color: var(--text); }
+.label-toggle .chev { color: var(--dim); opacity: 0; }
+.label-toggle:hover .chev, .label-toggle:focus-visible .chev, .chat-group.collapsed .label-toggle .chev { opacity: 1; }
+.chat-group.free .chat-item { padding-left: 10px; }
+.chat-group.free .chat-empty { padding-left: 10px; }
+.chat-more { padding: 2px 10px 0; font-size: 12.5px; }
+.projects-empty { padding: 4px 8px 6px; line-height: 1.45; }
+#free-hint { font-size: 13.5px; line-height: 1.5; }
+
+/* Reiter rechts: passen bei Standardbreite ganz hinein; mit Reitern von Mods lässt sich die Zeile seitlich schieben */
+.rt { overflow-x: auto; scrollbar-width: none; }
+.rt::-webkit-scrollbar { display: none; }
+@container (max-width: 430px) {
+  .rt button { padding: 9px 6px; gap: 4px; }
+}
+
+/* Feinschliff: abgeschnittene Texte enden mit … statt mitten im Wort oder Kästchen */
+.msg.changes .fname { display: inline; font: inherit; }
+.search input, .ex-search input, .settings-search input, .bp-url { text-overflow: ellipsis; }
+/* Dialog ohne Knopfzeile (z. B. «Neues Projekt»): unten derselbe Abstand wie mit */
+.dialog-body:last-child { padding-bottom: 22px; }
+/* Zeile «Dateien: …»: bei wenig Platz kürzen beide Teile mit …, statt dass vom Dateinamen ein einzelner Buchstabe übrig bleibt */
+.msg.changes .sum { overflow: hidden; text-overflow: ellipsis; min-width: 6ch; flex: 0 1 auto; }
+.msg.changes .names { flex: 1 1 0; min-width: 7ch; }
+/* Konto unten links: der Zustand bleibt auf einer Zeile, auch in der schmalen Leiste */
+.account .who { min-width: 0; }
+.account .status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

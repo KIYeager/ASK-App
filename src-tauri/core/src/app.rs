@@ -414,14 +414,11 @@ impl App {
         self.load_ask();
         let s = settings::load();
         let folder = str_of(&s, "folder");
-        if !folder.is_empty() && !str_of(&s, "askUrl").is_empty() {
-            let res = self.open_folder(&folder, "").await;
-            if !bool_of(&res, "ok") {
-                settings::set(json!({ "folder": "" }));
-                self.push_state();
-            }
-        } else {
+        if str_of(&s, "askUrl").is_empty() {
             let _ = self.agent();
+        } else if folder.is_empty() || !bool_of(&self.open_folder(&folder, "").await, "ok") {
+            // Noch kein Projekt, oder der Ordner des letzten Projekts fehlt: Chats ohne Projekt (ENTSCHEIDE E78)
+            self.open_free().await;
         }
         crate::portable::cleanup_old_versions();
         self.updater.start();
@@ -752,6 +749,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             "askUrl": s["askUrl"],
             "secureDns": self.dns.enabled(),
             "folder": s["folder"],
+            // Sichtbar sind die Chats ohne Projekt (E78): kein Terminal nötig, keine Dateien, kein GitHub
+            "free": paths::is_free_dir(&js_string(&s["folder"])),
             "recent": s["recent"],
             "warningAccepted": s["warningAccepted"],
             "sidebarOpen": s["sidebarOpen"],
@@ -920,7 +919,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
     // ---- Projekte, Laufzeiten, Agenten -----------------------------------------------------------------------
 
     fn snapshots_for(&self, folder: &str) -> Option<Arc<Snapshots>> {
-        if folder.is_empty() {
+        // Chats ohne Projekt ändern keine Dateien: keine Sicherung, kein «Rückgängig» (E78)
+        if folder.is_empty() || paths::is_free_dir(folder) {
             return None;
         }
         let key = path_key(folder);
@@ -940,6 +940,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         let auto = self.test_mode && env_on("ASK_TEST_AUTOCONFIRM");
         let rt_weak = rt.map(Arc::downgrade);
         let ws = rt.map(|r| r.workspace.clone());
+        let free = paths::is_free_dir(folder);
         let mut o = AgentOptions::new(self.ask.clone() as Arc<dyn ChatApi>, { let f = f.clone(); move || f.clone() },
             { let me = me.clone(); move || me.upgrade().map(|a| a.current_model()).unwrap_or_default() });
         o.terminal = Some(Arc::new(terminal) as Arc<dyn TerminalEndpoint>);
@@ -948,7 +949,9 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             move |chat: &str| {
                 let Some(a) = me.upgrade() else { return String::new() };
                 let history = if truthy(&settings::get("chatMemory")) { crate::history::history_prompt(Path::new(&f), chat) } else { String::new() };
-                format!("{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), project_notes(&f), crate::vorlagen::system_prompt(), a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch())
+                // Ohne Projekt (E78): keine Projektnotizen und keine Vorlagen für Dateien
+                let (notes, templates) = if free { (String::new(), String::new()) } else { (project_notes(&f), crate::vorlagen::system_prompt()) };
+                format!("{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, templates, a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch())
             }
         });
         o.get_command_hint = Arc::new({ let f = f.clone(); move |chat: &str| read_instruction("befehle.md", &f, chat) });
@@ -965,6 +968,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         o.get_snapshots = Arc::new({ let (me, f) = (me.clone(), f.clone()); move || me.upgrade().and_then(|a| a.snapshots_for(&f)) });
         o.knowledge = Some(self.knowledge.for_agent());
         o.auto_title = !self.test_mode;
+        o.free = free;
         o.get_ask_before = Arc::new({ let mods = self.knowledge.mods.clone(); move || mods.ask_before() });
         o.get_chat_memory = Arc::new(|| truthy(&settings::get("chatMemory")));
         // Hilfsagenten (ENTSCHEIDE E55): eigenes Modell aus den Einstellungen, sonst das Modell des Chats
@@ -1049,7 +1053,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             let active = a.is_active_rt(&rt);
             if state == "läuft" && !*started.lock() {
                 *started.lock() = true;
-                if active {
+                // Chats ohne Projekt sind schon offen (open_folder wartet dort nicht auf das Terminal)
+                if active && !paths::is_free_dir(&rt.folder) {
                     let want = a.st.lock().pending_chat.take();
                     match want {
                         Some(id) => { a.open_in_runtime(&rt, &id); }
@@ -1190,6 +1195,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             rt.agents.lock().clear();
             rt.workspace.close();
             self.st.lock().runtimes.remove(&key);
+            self.snapshots.lock().remove(&key); // samt Dateiliste; beim nächsten Öffnen neu
             spawn(async move { stop_runtime(&rt).await });
         }
     }
@@ -1245,7 +1251,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
 
     /// Chat (id oder NEW) in einem Ordner öffnen; bei anderem Ordner zuerst wechseln.
     async fn open_chat(&self, folder: &str, id: &str) -> Value {
-        if same_path(folder, &js_string(&settings::get("folder"))) && self.terminal().state() == "läuft" {
+        // Chats ohne Projekt (E78) hängen nicht am Terminal: Es liest dort nur Anhänge und darf auch fehlen
+        if same_path(folder, &js_string(&settings::get("folder"))) && (self.terminal().state() == "läuft" || paths::is_free_dir(folder)) {
             let rt = self.runtime(folder);
             return json!({ "ok": self.open_in_runtime(&rt, id) });
         }
@@ -1260,8 +1267,16 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
     /// Projekt sichtbar machen. Laufende Aufträge in anderen Projekten arbeiten im Hintergrund weiter, jeder mit
     /// seinem eigenen Terminal und Ordner (ENTSCHEIDE E52).
     pub async fn open_folder(&self, folder: &str, name: &str) -> Value {
-        let result = crate::folders::check_folder(folder, &crate::folders::FolderContext::system());
-        let Some(path) = result.path.clone().filter(|_| result.ok) else { return result.to_json() };
+        // Der Ordner der Chats ohne Projekt liegt in den Daten der App (E78): keine Prüfung wie bei Projekten
+        // (AppData ist dort gesperrt), und er kommt nicht in die Projektliste
+        let free = paths::is_free_dir(folder);
+        let path = if free {
+            Self::free_folder()
+        } else {
+            let result = crate::folders::check_folder(folder, &crate::folders::FolderContext::system());
+            let Some(path) = result.path.clone().filter(|_| result.ok) else { return result.to_json() };
+            path
+        };
         let rt = self.runtime(&path);
         if rt.workspace.root() != path {
             if let Err(err) = rt.workspace.open(&path) {
@@ -1271,15 +1286,23 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 return fail(format!("Der Ordner kann nicht vorbereitet werden: {err}"));
             }
         }
-        settings::add_recent(&path, name);
+        if free {
+            settings::set(json!({ "folder": path }));
+        } else {
+            settings::add_recent(&path, name);
+        }
         {
             let mut st = self.st.lock();
             st.terminal = rt.terminal.clone();
             st.workspace = rt.workspace.clone();
         }
         self.send("files", rt.workspace.files());
-        if rt.terminal.state() == "läuft" {
-            // schon offen (z. B. weil dort ein Auftrag im Hintergrund läuft): gewünschten oder letzten Chat zeigen
+        if rt.terminal.state() == "läuft" || free {
+            // schon offen (z. B. weil dort ein Auftrag im Hintergrund läuft): gewünschten oder letzten Chat zeigen.
+            // Chats ohne Projekt warten nicht auf das Terminal; es startet nebenher (für read_file bei Anhängen).
+            if free && !["läuft", "startet"].contains(&rt.terminal.state().as_str()) {
+                self.start_terminal();
+            }
             let want = self.st.lock().pending_chat.take();
             let running = rt.agents().into_iter().find(|a| a.running());
             if let Some(id) = want {
@@ -1312,6 +1335,19 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             }
         });
         json!({ "ok": true, "path": path })
+    }
+
+    /// Ordner der Chats ohne Projekt (ENTSCHEIDE E78), bei Bedarf angelegt
+    fn free_folder() -> String {
+        let dir = paths::free_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        dir.to_string_lossy().to_string()
+    }
+
+    /// Chats ohne Projekt zeigen: wie ein Projekt mit eigenem Ordner, aber der Agent bekommt dort nur Werkzeuge,
+    /// die nichts ändern (agent.rs, `FREE_ALLOWED`).
+    pub async fn open_free(&self) -> Value {
+        self.open_folder(&Self::free_folder(), "").await
     }
 
     fn project_base() -> PathBuf {
@@ -1386,6 +1422,9 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
 
     /// Ordner aus der Liste nehmen. Beim aktuellen Ordner auch Terminal und Beobachtung beenden.
     fn forget_folder(&self, f: &str) -> bool {
+        if paths::is_free_dir(f) {
+            return false; // kein Projekt: steht nicht in der Liste
+        }
         let current = same_path(f, &js_string(&settings::get("folder")));
         let rt = self.st.lock().runtimes.get(&path_key(f)).cloned();
         if rt.as_ref().is_some_and(|rt| rt.agents().iter().any(|a| a.running())) {
@@ -1393,6 +1432,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             return false;
         }
         settings::remove_recent(f);
+        self.snapshots.lock().remove(&path_key(f));
         // Marke «Low» erst entfernen, wenn kein Terminal des Ordners mehr läuft
         let mut stopped: Option<BoxFuture<'static, ()>> = if rt.is_none() { Some(Box::pin(async {})) } else { None };
         if current {
@@ -1425,6 +1465,17 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         }
         self.push_state();
         self.send("chat:changed", self.agent().state());
+        if current {
+            // Das sichtbare Projekt ist weg: weiter in den Chats ohne Projekt, statt ohne Chat dazustehen
+            let me = self.me.clone();
+            spawn(async move {
+                if let Some(a) = me.upgrade() {
+                    if js_string(&settings::get("folder")).is_empty() && !str_of(&settings::load(), "askUrl").is_empty() {
+                        a.open_free().await;
+                    }
+                }
+            });
+        }
         true
     }
 
@@ -1434,12 +1485,17 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         let s = settings::load();
         let folder = str_of(&s, "folder");
         let agent = self.agent();
-        Value::Array(s["projects"].as_array().cloned().unwrap_or_default().iter().map(|p| {
+        // Zuerst die Chats ohne Projekt (E78): eigene Gruppe, kein Projekt (free)
+        let free = paths::free_dir().to_string_lossy().to_string();
+        let mut groups = vec![json!({ "folder": free, "name": "Chats", "color": "", "free": true, "current": same_path(&free, &folder), "missing": false,
+            "chats": agent.list(&free) })];
+        groups.extend(s["projects"].as_array().cloned().unwrap_or_default().iter().filter(|p| !paths::is_free_dir(&str_of(p, "folder"))).map(|p| {
             let pf = str_of(p, "folder");
             let exists = Path::new(&pf).exists();
             json!({ "folder": pf, "name": p["name"], "color": p["color"], "current": same_path(&pf, &folder), "missing": !exists,
                 "chats": if exists { agent.list(&pf) } else { json!([]) } })
-        }).collect())
+        }));
+        Value::Array(groups)
     }
 
     fn open_notes(&self, folder: &str) {
@@ -1509,7 +1565,12 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         let s = settings::load();
         let folder = str_of(&s, "folder");
         let recent: Vec<String> = s["projects"].as_array().cloned().unwrap_or_default().iter().map(|p| str_of(p, "folder")).collect();
-        let mut items: Vec<MenuItem> = recent.iter().map(|f| {
+        let free = paths::is_free_dir(&folder);
+        let mut items: Vec<MenuItem> = vec![
+            MenuItem { kind: "radio", checked: free, ..MenuItem::new("Chats ohne Projekt", self.action(|a, _| Box::pin(async move { a.open_free().await; }))) },
+            MenuItem::separator(),
+        ];
+        items.extend(recent.iter().map(|f| {
             let f2 = f.clone();
             if Path::new(f).exists() {
                 MenuItem { kind: "radio", checked: same_path(f, &folder), ..MenuItem::new(f.clone(), self.action(move |a, _| { let f = f2.clone(); Box::pin(async move {
@@ -1525,17 +1586,18 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                     }
                 }) }))
             }
-        }).collect();
-        if !items.is_empty() {
+        }));
+        if !recent.is_empty() {
             items.push(MenuItem::separator());
         }
         items.push(MenuItem::new("Anderen Ordner wählen …", self.action(|a, _| Box::pin(async move { a.send("menu:choose-folder", Value::Null); }))));
         items.push(MenuItem::new("Neues Projekt …", self.action(|a, _| Box::pin(async move { a.send("menu:new-folder", Value::Null); }))));
         items.push(MenuItem::new("GitHub …", self.action(|a, _| Box::pin(async move { a.send("menu:github", Value::Null); }))));
-        if !folder.is_empty() || !recent.is_empty() {
+        let project = !folder.is_empty() && !free;
+        if project || !recent.is_empty() {
             items.push(MenuItem::separator());
         }
-        if !folder.is_empty() {
+        if project {
             let f2 = folder.clone();
             items.push(MenuItem::new("Arbeitsordner im Explorer öffnen", self.action(move |a, _| { let f = f2.clone(); Box::pin(async move { a.host.open_path(&f).await; }) })));
             let f2 = folder.clone();
@@ -1576,7 +1638,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         Fut: std::future::Future<Output = anyhow::Result<Value>>,
     {
         let folder = js_string(&settings::get("folder"));
-        if folder.is_empty() {
+        if folder.is_empty() || paths::is_free_dir(&folder) {
             return json!({ "ok": false, "message": "Kein Projekt geöffnet." });
         }
         match f(PathBuf::from(folder)).await {
@@ -1593,7 +1655,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         Fut: std::future::Future<Output = anyhow::Result<Value>>,
     {
         let folder = js_string(&settings::get("folder"));
-        if folder.is_empty() {
+        if folder.is_empty() || paths::is_free_dir(&folder) {
             return json!({ "ok": false, "message": "Kein Projekt geöffnet." });
         }
         if self.st.lock().runtimes.get(&path_key(&folder)).is_some_and(|rt| rt.busy()) {
@@ -1885,7 +1947,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 }
             }
             "folder:menu" => { let me = self.clone(); spawn(async move { let items = me.folder_menu_items(); me.popup_menu(items).await; }); Value::Null }
-            "folder:show" => { let f = js_string(&settings::get("folder")); if !f.is_empty() { self.host.open_path(&f).await; } Value::Null }
+            "folder:show" => { let f = js_string(&settings::get("folder")); if !f.is_empty() && !paths::is_free_dir(&f) { self.host.open_path(&f).await; } Value::Null }
             "terminal:restart" => { self.start_terminal(); Value::Null }
             "terminal:logs" => json!(self.terminal().logs().join("\n")),
             "warning:accept" => { settings::set(json!({ "warningAccepted": true })); self.push_state(); Value::Null }
@@ -1898,7 +1960,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                         let clean = format!("{}{}", u.origin().ascii_serialization(), u.path().trim_end_matches('/'));
                         settings::set(json!({ "askUrl": clean }));
                         self.load_ask();
-                        self.start_terminal();
+                        // Erste Einrichtung: noch kein Projekt, also in die Chats ohne Projekt (E78)
+                        if js_string(&settings::get("folder")).is_empty() { self.open_free().await; } else { self.start_terminal(); }
                         self.push_state();
                         json!({ "ok": true })
                     }
@@ -1957,7 +2020,12 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             }
             // Nutzungsübersicht (ENTSCHEIDE E49): lokal aus den Chats aller Projekte; withAsk=false ohne Anfrage an ASK
             "usage:get" => {
-                let projects = settings::load()["projects"].as_array().cloned().unwrap_or_default();
+                let mut projects = settings::load()["projects"].as_array().cloned().unwrap_or_default();
+                // Chats ohne Projekt zählen mit (E78), sobald es welche gibt
+                let free = paths::free_dir();
+                if free.join(".ask").join("chats").exists() {
+                    projects.insert(0, json!({ "folder": free.to_string_lossy(), "name": "Chats ohne Projekt", "color": "" }));
+                }
                 let mut result = serde_json::to_value(crate::usage::aggregate(&projects, Default::default())).unwrap_or(json!({}));
                 result["ask"] = if arg(a, 0) == json!(false) { Value::Null } else {
                     crate::usage::ask_usage(Some(&self.ask), Default::default()).await.unwrap_or(Value::Null)
@@ -1984,7 +2052,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             "chat:goal" => { agent.set_goal(&sarg(a, 0)); Value::Null }
             "github:status" => {
                 let folder = js_string(&settings::get("folder"));
-                let res: anyhow::Result<Value> = if folder.is_empty() {
+                let res: anyhow::Result<Value> = if folder.is_empty() || paths::is_free_dir(&folder) {
                     let login = if self.github.connected() { self.github.whoami().await.unwrap_or_default() } else { String::new() };
                     Ok(json!({ "linked": false, "connected": self.github.connected(), "login": login }))
                 } else {
@@ -2022,7 +2090,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             "chat:delete" => {
                 let (folder, id, title) = (sarg(a, 0), sarg(a, 1), sarg(a, 2));
                 let res = self.show_box(json!({ "type": "question", "buttons": ["Löschen", "Abbrechen"], "defaultId": 1, "cancelId": 1, "dangerId": 0,
-                    "message": "Chat löschen?", "detail": format!("«{title}» wird aus {folder} entfernt. Die Dateien im Ordner bleiben.") })).await;
+                    "message": "Chat löschen?", "detail": if paths::is_free_dir(&folder) { format!("«{title}» wird gelöscht.") }
+                        else { format!("«{title}» wird aus {folder} entfernt. Die Dateien im Ordner bleiben.") } })).await;
                 let rt = self.st.lock().runtimes.get(&path_key(&folder)).cloned();
                 let busy = rt.as_ref().and_then(|rt| Self::agent_for(rt, &id));
                 if busy.as_ref().is_some_and(|b| b.running()) || res.get("response").and_then(Value::as_i64) != Some(0) {
@@ -2036,12 +2105,14 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                     json!(ok)
                 }
             }
-            "chat:transcript" => { let mut s = agent.state(); s["items"] = agent.transcript(); s }
+            // pending: offene Frage oder Rückfrage eines Chats, der schon arbeitet (z. B. nach dem Wechsel aus einem anderen Chat)
+            "chat:transcript" => { let mut s = agent.state(); s["items"] = agent.transcript(); s["pending"] = agent.pending_events(); s }
             "ui:chatbar" => { settings::set(json!({ "chatbarOpen": truthy(&arg(a, 0)) })); self.push_state(); Value::Null }
             "ui:sidebar" => { settings::set(json!({ "sidebarOpen": truthy(&arg(a, 0)) })); self.push_state(); Value::Null }
             // Entwicklungsserver des sichtbaren Projekts (ENTSCHEIDE E48). Die Person startet ohne Rückfrage: Sie tippt den Befehl selbst.
             "servers:list" => self.active_rt().map(|rt| json!(rt.servers.list())).unwrap_or(json!([])),
             "servers:start" => match self.active_rt() {
+                Some(rt) if paths::is_free_dir(&rt.folder) => fail("Server gibt es nur in einem Projekt."),
                 Some(rt) if rt.terminal.state() == "läuft" => match rt.servers.start(&sarg(a, 0), &sarg(a, 1), "person").await {
                     Ok(s) => json!({ "ok": true, "server": s }),
                     Err(err) => fail(err.to_string()),

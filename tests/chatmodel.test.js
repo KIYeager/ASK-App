@@ -165,3 +165,38 @@ test('«merken» steht als eigener Eintrag im Chat, live und aus dem gespeichert
   const failed = [{ type: 'tool-start', id: 't2', name: 'merken' }, { type: 'tool-end', id: 't2', ok: false, output: 'Nicht gemerkt' }].reduce(applyEvent, emptyChat());
   assert.ok(!failed.entries.some((e) => e.k === 'remembered'));
 });
+
+test('Chat laden: offene Frage und Rückfrage eines arbeitenden Chats sind nach dem Wechsel wieder da', async () => {
+  const { loadChat } = await import('../src/renderer/src/lib/chatModel.mjs');
+  const items = [
+    { role: 'user', content: 'Räum auf' },
+    { role: 'assistant', content: '', calls: [{ id: 'q1', name: 'frage_stellen', label: 'Frage', detail: 'Was löschen?' }] },
+  ];
+  const question = { type: 'question', id: 'q1', frage: 'Was löschen?', optionen: ['Alles', 'Nichts'] };
+  const approval = { type: 'approval', id: 'p1', title: 'Darf ASK löschen?', detail: 'del x' };
+  const m = loadChat(items, true, [question, approval]);
+  const q = m.entries.find((e) => e.id === 'q1');
+  assert.equal(q.question.open, true);
+  assert.deepEqual(q.question.optionen, ['Alles', 'Nichts']);
+  assert.equal(m.entries.filter((e) => e.k === 'tool' && e.id === 'q1').length, 1, 'die Frage steht nicht doppelt da');
+  assert.equal(m.entries.find((e) => e.k === 'approval').answer, null);
+  // Arbeitet der Chat nicht mehr, ist nichts offen (veraltete Angaben zählen nicht)
+  assert.equal(loadChat(items, false, [question]).entries.find((e) => e.id === 'q1').question.open, false);
+});
+
+test('Aufträge: unveränderte behalten ihr Objekt, nur der geänderte ist neu', async () => {
+  const { applyEvent, buildTurns, emptyChat, reuseTurns } = await import('../src/renderer/src/lib/chatModel.mjs');
+  let m = [{ type: 'user', text: 'eins' }, { type: 'text', text: 'Antwort eins' }, { type: 'assistant-end', content: 'Antwort eins' }, { type: 'done' },
+    { type: 'user', text: 'zwei' }, { type: 'text', text: 'Ant' }].reduce(applyEvent, emptyChat());
+  const first = reuseTurns([], buildTurns(m, true));
+  m = applyEvent(m, { type: 'text', text: 'wort' });
+  const second = reuseTurns(first, buildTurns(m, true));
+  assert.equal(second.length, 2);
+  assert.equal(second[0], first[0], 'der fertige Auftrag ist dasselbe Objekt');
+  assert.notEqual(second[1], first[1], 'der laufende Auftrag ist neu');
+  assert.equal(second[1].answer.text, 'Antwort');
+  // Ende des Auftrags: «arbeitet» ändert sich, also ist der letzte Auftrag neu
+  const third = reuseTurns(second, buildTurns(m, false));
+  assert.equal(third[0], first[0]);
+  assert.notEqual(third[1], second[1]);
+});

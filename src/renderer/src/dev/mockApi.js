@@ -26,13 +26,19 @@ if (params.get('offline')) state = { ...state, ask: { state: 'unbekannt', loadEr
 if (params.get('dns')) state = { ...state, secureDns: true, askUrl: 'https://ask.ict-tfbern.ch', ask: { state: 'unbekannt', loadError: { code: -105, description: 'ERR_NAME_NOT_RESOLVED', url: 'https://ask.ict-tfbern.ch/', proxy: 'DIRECT' } }, models: [], model: '' }; // ?dns=1
 if (params.get('askfehler')) state = { ...state, ask: { state: 'fehler', user: 'Lea Muster', message: 'ASK bietet diesem Konto kein Modell an. Wer ASK betreut, muss deinem Konto zuerst ein Modell freigeben.' }, models: [], model: '' }; // ?askfehler=1
 if (params.get('leer')) state.chat = { id: 'neu1', title: '', running: false, goal: null };
-if (params.get('erst')) state = { ...state, folder: '', chat: { id: 'neu1', title: '', running: false } };
+// Chats ohne Projekt (E78): eigener Ordner in den Daten der App, kein Projekt. ?frei=1 startet dort, ?erst=1 wie beim ersten Start.
+const FREE = 'C:\\Users\\lernende\\AppData\\Roaming\\ASK\\chats';
+if (params.get('erst')) state = { ...state, folder: FREE, free: true, recent: [], chat: { id: 'neu1', title: '', running: false } };
+if (params.get('frei')) state = { ...state, folder: FREE, free: true, chat: { id: 'f1', title: 'Was ist ein Subnetz?', running: false, context: { tokens: 900, estimated: false, limit: 131072 } } };
+if (params.get('url')) state = { ...state, askUrl: '', folder: '', chat: { id: 'neu1', title: '', running: false } }; // ?url=1: Adresse fehlt noch
 
-const projects = [
+const allProjects = [
   { folder: FOLDER, name: 'Haushaltsbudget', color: '#0082B4', chats: [{ id: 'c1', title: 'Ausgaben auswerten', updated: Date.now() - 5 * 60000, count: 2 }, { id: 'c2', title: 'Budgetplan 2027', updated: Date.now() - 26 * 3600000, count: 4 }] },
   { folder: 'C:\\Users\\lernende\\ASK-Projekte\\Modul 293', name: 'Modul 293 · Webauftritt', color: '#F28855', chats: [{ id: 'c3', title: 'Startseite in HTML', updated: Date.now() - 3 * 86400000, count: 6 }, { id: 'c4', title: 'Bilder verkleinern', updated: Date.now() - 4 * 86400000, count: 1 }] },
   { folder: 'C:\\Users\\lernende\\ASK-Projekte\\Lernjournal', name: 'Lernjournal', color: '#4EB68E', chats: [{ id: 'c5', title: 'Wochenbericht KW 47', updated: Date.now() - 6 * 86400000, count: 3 }] },
 ];
+const projects = params.get('erst') ? [] : allProjects;
+const freeChats = params.get('erst') ? [] : [{ id: 'f1', title: 'Was ist ein Subnetz?', updated: Date.now() - 2 * 3600000, count: 1 }];
 
 const now = Date.now();
 const tree = {
@@ -84,7 +90,30 @@ function mockUsage() {
   return { projects: list, total, days };
 }
 
-let transcriptItems = params.get('leer') || params.get('erst') ? [] : saved;
+const savedFree = [
+  { role: 'user', content: 'Was ist ein Subnetz?', time: now - 2 * 3600000 },
+  { role: 'assistant', content: 'Ein **Subnetz** ist ein Teil eines grösseren Netzes. Die Subnetzmaske legt fest, welcher Teil der IP-Adresse das Netz bezeichnet und welcher den einzelnen Rechner.\n\nBeispiel: `192.168.1.0/24` hat 254 nutzbare Adressen.', stats: stats(160) },
+];
+
+// Chats der Attrappe: jeder mit eigenem Verlauf und eigenem Auftrag, damit parallele Chats und der Wechsel prüfbar sind
+const store = new Map(); // id → { id, folder, items, running, started, pending, waits, stopped }
+const chatOf = (id, folder = state.folder) => {
+  if (!store.has(id)) store.set(id, { id, folder, items: id === 'c1' && !params.get('leer') ? [...saved] : id === 'f1' ? [...savedFree] : [], running: false, started: 0, pending: [], waits: {}, stopped: false });
+  return store.get(id);
+};
+const listed = (folder) => (folder === FREE ? freeChats : projects.find((x) => x.folder === folder)?.chats || []);
+const entryOf = (id) => [...freeChats, ...projects.flatMap((x) => x.chats)].find((x) => x.id === id);
+const titleOf = (id) => entryOf(id)?.title || '';
+const runningList = () => [...store.values()].filter((c) => c.running).map((c) => ({ folder: c.folder, id: c.id, title: titleOf(c.id) }));
+const chatState = (c) => ({ id: c.id, title: titleOf(c.id), running: c.running, started: c.running ? c.started : 0, goal: null, pinned: !!entryOf(c.id)?.pinned,
+  context: c.items.length ? { tokens: 900 + c.items.length * 2400, estimated: false, limit: 131072 } : null });
+// Sichtbaren Chat wechseln (wie show_agent im Hauptprozess)
+function show(id, folder) {
+  const c = chatOf(id, folder);
+  state = { ...state, folder: c.folder, free: c.folder === FREE, terminal: { ...state.terminal, folder: c.folder }, chat: chatState(c) };
+  push();
+  emit('chat:changed', state.chat);
+}
 
 // Entwicklungsserver (servers.js): ein laufender Vite-Server und einer, der mit Fehler beendet ist
 const serverLines = {
@@ -110,56 +139,109 @@ async function mockServerStart(command) {
 }
 state.servers = servers;
 
-const push = () => emit('state', { ...state, servers });
+const full = () => ({ ...state, running: runningList(), servers: state.free ? [] : servers });
+const push = () => emit('state', full());
 
-async function demoRun(text) {
-  const ev = (e) => emit('chat:event', e);
-  state = { ...state, chat: { ...state.chat, running: true, title: state.chat.title || text.slice(0, 60) } };
-  push();
+// Ein Auftrag gehört zu seinem Chat: Ereignisse tragen chatId und folder, der Verlauf wächst mit (für den Wechsel zurück)
+const SPEED = params.get('langsam') ? 6 : 1;
+async function demoRun(c, text) {
+  const ev = (e) => emit('chat:event', { ...e, chatId: c.id, folder: c.folder });
+  const sync = () => {
+    if (state.chat.id === c.id) { state = { ...state, chat: chatState(c) }; push(); emit('chat:changed', state.chat); } else push();
+    emit('groups');
+  };
+  const pause = (ms) => wait(ms * SPEED);
+  // Frage oder Rückfrage: wartet auf die Person, bleibt offen (pending), auch wenn man den Chat wechselt
+  const ask = (id, event) => new Promise((resolve) => { c.pending.push(event); c.waits[id] = (v) => { c.pending = c.pending.filter((x) => x.id !== id); delete c.waits[id]; resolve(v); }; ev(event); });
+  const finish = (extra = {}) => { c.running = false; c.pending = []; c.waits = {}; ev({ type: 'done', ...extra }); sync(); };
+  if (!entryOf(c.id)) listed(c.folder).unshift({ id: c.id, title: text.slice(0, 60), updated: Date.now(), count: 0 });
+  entryOf(c.id).count += 1;
+  entryOf(c.id).updated = Date.now();
+  Object.assign(c, { running: true, started: Date.now(), stopped: false });
+  c.items.push({ role: 'user', content: text, time: Date.now() });
+  sync();
   ev({ type: 'user', text, attachments: [] });
-  await wait(400);
-  if (state.mode === 'plan') { await demoPlan(ev); return; }
-  if (/fehler/i.test(text)) { ev({ type: 'error', text: 'error sending request for url (https://ask.ict-tfbern.ch/api/chat/completions): dns error' }); state = { ...state, chat: { ...state.chat, running: false } }; push(); ev({ type: 'done', summary: 'Fehler', failed: true }); return; }
+  await pause(400);
+  if (c.stopped) return finish({ stopped: true });
+  if (/fehler/i.test(text)) {
+    const msg = 'error sending request for url (https://ask.ict-tfbern.ch/api/chat/completions): dns error';
+    c.items.push({ role: 'error', text: msg });
+    ev({ type: 'error', text: msg });
+    return finish({ failed: true });
+  }
+  if (c.folder === FREE) return demoFree(c, ev, pause, finish, text);
+  if (state.mode === 'plan') return demoPlan(c, ev, pause, finish);
   ev({ type: 'assistant-start' });
-  for (const w of 'Ich räume den Ordner auf. '.split(' ')) { ev({ type: 'reasoning', text: `${w} ` }); await wait(40); }
+  for (const w of 'Ich räume den Ordner auf. '.split(' ')) { ev({ type: 'reasoning', text: `${w} ` }); await pause(40); }
   ev({ type: 'assistant-end', content: '', stats: stats(90), calls: [] });
+  c.items.push({ role: 'assistant', content: '', reasoning: 'Ich räume den Ordner auf.', stats: stats(90), calls: [{ id: 'd1', name: 'list_files', label: 'Ordner', detail: '.' }] });
   ev({ type: 'tool-start', id: 'd1', name: 'list_files', label: 'Ordner', detail: '.' });
-  await wait(300);
+  await pause(300);
+  c.items.push({ role: 'tool', id: 'd1', ok: true, summary: '6 Einträge', output: '' });
   ev({ type: 'tool-end', id: 'd1', ok: true, summary: '6 Einträge', output: '' });
-  ev({ type: 'tool-start', id: 'q1', name: 'frage_stellen', label: 'Frage', detail: 'Welche Dateien darf ich löschen?' });
-  ev({ type: 'question', id: 'q1', frage: 'Welche Dateien darf ich löschen?', optionen: ['Nur Zwischendateien', 'Auch alte Entwürfe', 'Nichts löschen'] });
-  const answer = await new Promise((r) => { pendingAnswer = r; });
+  if (c.stopped) return finish({ stopped: true });
+  const q = { frage: 'Welche Dateien darf ich löschen?', optionen: ['Nur Zwischendateien', 'Auch alte Entwürfe', 'Nichts löschen'] };
+  c.items.push({ role: 'assistant', content: '', stats: stats(40), calls: [{ id: 'q1', name: 'frage_stellen', label: 'Frage', detail: q.frage, optionen: q.optionen }] });
+  ev({ type: 'tool-start', id: 'q1', name: 'frage_stellen', label: 'Frage', detail: q.frage });
+  const answer = await ask('q1', { type: 'question', id: 'q1', ...q });
+  if (c.stopped) { ev({ type: 'question-end', id: 'q1', answer: '' }); return finish({ stopped: true }); }
   ev({ type: 'question-end', id: 'q1', answer });
+  c.items.push({ role: 'tool', id: 'q1', ok: true, summary: answer, output: `Antwort: ${answer}` });
   ev({ type: 'tool-end', id: 'q1', ok: true, summary: answer, output: `Antwort: ${answer}` });
+  c.items.push({ role: 'assistant', content: '', stats: stats(30), calls: [{ id: 'd2', name: 'run_command', label: 'Befehl', detail: 'del /q entwurf_alt.xlsx' }] });
   ev({ type: 'tool-start', id: 'd2', name: 'run_command', label: 'Befehl', detail: 'del /q entwurf_alt.xlsx' });
-  ev({ type: 'approval', id: 'p1', kind: 'loeschen', title: 'Darf ASK Dateien löschen?', detail: 'del /q entwurf_alt.xlsx', reason: 'Der Befehl löscht Dateien oder Ordner. Sie kommen in die Sicherung und lassen sich mit «Rückgängig» zurückholen.' });
-  const ok = await new Promise((r) => { pendingApproval = r; });
-  ev({ type: 'approval-end', id: 'p1', answer: ok });
-  ev({ type: 'tool-end', id: 'd2', ok: ok !== 'no', summary: ok === 'no' ? 'abgelehnt' : '', output: ok === 'no' ? 'Die Person hat diesen Schritt abgelehnt.' : '' });
+  const ok = await ask('p1', { type: 'approval', id: 'p1', kind: 'loeschen', title: 'Darf ASK Dateien löschen?', detail: 'del /q entwurf_alt.xlsx', reason: 'Der Befehl löscht Dateien oder Ordner. Sie kommen in die Sicherung und lassen sich mit «Rückgängig» zurückholen.' });
+  ev({ type: 'approval-end', id: 'p1', answer: ok || 'no' });
+  const denied = !ok || ok === 'no';
+  c.items.push({ role: 'tool', id: 'd2', ok: !denied, summary: denied ? 'abgelehnt' : '', output: denied ? 'Die Person hat diesen Schritt abgelehnt.' : '' });
+  ev({ type: 'tool-end', id: 'd2', ok: !denied, summary: denied ? 'abgelehnt' : '', output: denied ? 'Die Person hat diesen Schritt abgelehnt.' : '' });
+  if (c.stopped) return finish({ stopped: true });
+  const reply = 'Erledigt. Ich habe den Ordner aufgeräumt; `auswertung.xlsx` bleibt unverändert.';
   ev({ type: 'assistant-start' });
-  for (const w of 'Erledigt. Ich habe den Ordner aufgeräumt; `auswertung.xlsx` bleibt unverändert.'.split(' ')) { ev({ type: 'text', text: `${w} ` }); await wait(50); }
-  ev({ type: 'assistant-end', content: 'Erledigt. Ich habe den Ordner aufgeräumt; `auswertung.xlsx` bleibt unverändert.', stats: stats(70) });
-  ev({ type: 'changes', snapshot: 's2', changes: { added: [], changed: [], removed: ok === 'no' ? [] : ['entwurf_alt.xlsx'], counts: [0, 0, ok === 'no' ? 0 : 1] } });
-  ev({ type: 'done' });
-  state = { ...state, chat: { ...state.chat, running: false } };
-  push();
-  emit('chat:changed', state.chat);
+  for (const w of reply.split(' ')) { ev({ type: 'text', text: `${w} ` }); await pause(50); }
+  c.items.push({ role: 'assistant', content: reply, stats: stats(70) });
+  ev({ type: 'assistant-end', content: reply, stats: stats(70) });
+  ev({ type: 'changes', snapshot: 's2', changes: { added: [], changed: [], removed: denied ? [] : ['entwurf_alt.xlsx'], counts: [0, 0, denied ? 0 : 1] } });
+  return finish();
+}
+// Chat ohne Projekt: nur eine Antwort, keine Werkzeuge
+async function demoFree(c, ev, pause, finish, text) {
+  const reply = /bild/i.test(text) ? 'Hier ist dein Bild. Soll ich etwas daran ändern?'
+    : 'Gern. Kurz erklärt: Das ist ein Chat ohne Projekt. Ich kann hier antworten, im Web suchen und Bilder erstellen. Für Dateien und Befehle legst du links ein Projekt an.';
+  ev({ type: 'assistant-start' });
+  for (const w of reply.split(' ')) {
+    if (c.stopped) return finish({ stopped: true });
+    ev({ type: 'text', text: `${w} ` });
+    await pause(60);
+  }
+  c.items.push({ role: 'assistant', content: reply, stats: stats(60) });
+  ev({ type: 'assistant-end', content: reply, stats: stats(60) });
+  return finish();
 }
 // Planmodus: umsehen, dann Plan vorlegen
-async function demoPlan(ev) {
+async function demoPlan(c, ev, pause, finish) {
   ev({ type: 'assistant-start' });
   ev({ type: 'assistant-end', content: '', stats: stats(40), calls: [] });
+  c.items.push({ role: 'assistant', content: '', stats: stats(40), calls: [{ id: 'r1', name: 'list_files', label: 'Ordner', detail: '.' }] });
   ev({ type: 'tool-start', id: 'r1', name: 'list_files', label: 'Ordner', detail: '.' });
-  await wait(200);
+  await pause(200);
+  c.items.push({ role: 'tool', id: 'r1', ok: true, summary: '6 Einträge', output: '' });
   ev({ type: 'tool-end', id: 'r1', ok: true, summary: '6 Einträge', output: '' });
   ev({ type: 'retry', text: 'Verbindung zu ASK unterbrochen. Neuer Versuch in 2 s (1/5).' });
-  await wait(300);
+  await pause(300);
+  const plan = '**Auswertung als Excel**\n\n1. `umfrage.csv` einlesen und prüfen\n2. Summen pro Kategorie berechnen\n3. `auswertung.xlsx` mit Tabelle und Diagramm anlegen\n4. Kurz zusammenfassen, was auffällt';
+  c.items.push({ role: 'assistant', content: '', stats: stats(40), calls: [{ id: 'p1', name: 'plan_vorlegen', label: 'Plan', detail: 'Auswertung als Excel' }] });
   ev({ type: 'tool-start', id: 'p1', name: 'plan_vorlegen', label: 'Plan', detail: 'Auswertung als Excel' });
-  ev({ type: 'tool-end', id: 'p1', ok: true, summary: 'Plan vorgelegt', output: '',
-    plan: '**Auswertung als Excel**\n\n1. `umfrage.csv` einlesen und prüfen\n2. Summen pro Kategorie berechnen\n3. `auswertung.xlsx` mit Tabelle und Diagramm anlegen\n4. Kurz zusammenfassen, was auffällt' });
-  ev({ type: 'done' });
-  state = { ...state, chat: { ...state.chat, running: false } };
-  push();
+  c.items.push({ role: 'tool', id: 'p1', ok: true, summary: 'Plan vorgelegt', output: '', plan });
+  ev({ type: 'tool-end', id: 'p1', ok: true, summary: 'Plan vorgelegt', output: '', plan });
+  return finish();
+}
+// Stoppen: offene Frage oder Rückfrage endet ohne Antwort, der Auftrag hört beim nächsten Schritt auf
+function stopChat(id) {
+  const c = store.get(id);
+  if (!c?.running) return;
+  c.stopped = true;
+  Object.values(c.waits).forEach((resolve) => resolve(null));
 }
 // Gedächtnis und Skills (src/main/knowledge.js): Beispieldaten, ?gedaechtnis=leer zeigt den leeren Zustand
 const M293 = 'C:\\Users\\lernende\\ASK-Projekte\\Modul 293';
@@ -275,8 +357,6 @@ const extensionsApi = {
   winMinimize: async () => {}, winMaximize: async () => {}, winClose: async () => {}, winDrag: () => {}, winState: async () => ({ maximized: false }), onWinState: on('win:state'),
 };
 
-let pendingAnswer = null;
-let pendingApproval = null;
 
 // GitHub: ?github=aus (nicht verbunden), ?github=leer (verbunden, kein Repository), sonst verbunden mit Beispieldaten
 const ghMode = params.get('github') || '';
@@ -325,6 +405,13 @@ const ghMock = {
   },
 };
 
+function answerWait(id, value) {
+  const c = [store.get(state.chat.id), ...store.values()].find((x) => x?.waits[id]);
+  if (!c) return false;
+  c.waits[id](value);
+  return true;
+}
+
 export function install() {
   // Rechtsklick ins Textfeld oder auf markierten Text: wie der Hauptprozess (context-menu → ui:menu)
   document.addEventListener('contextmenu', (e) => {
@@ -338,7 +425,7 @@ export function install() {
       : [{ key: 'edit1', label: 'Kopieren', enabled: true }] }), 0);
   });
   window.ask = {
-    getState: async () => ({ ...state, servers }),
+    getState: async () => { chatOf(state.chat.id); return full(); },
     onState: on('state'), onFiles: on('files'), onTasks: on('tasks'),
     onMenuChooseFolder: on('x1'), onMenuNewFolder: on('x2'), onMenuGithub: on('x3'), onFolderError: on('folder:error'),
     onProjectRename: on('project:rename'), onGroupsChanged: on('groups'), onChatEvent: on('chat:event'), onChatChanged: on('chat:changed'),
@@ -380,7 +467,7 @@ export function install() {
     chatRename: async (_f, id, title) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.title = title; return true; },
     chatPin: async (_f, id, on) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.pinned = on; return true; },
     chatSearch: async (q) => (/proxmox|budget/i.test(q) ? [{ folder: FOLDER, name: 'Haushaltsbudget', id: 'c2', title: 'Budgetplan 2027', updated: Date.now(), snippets: ['Person: Budget für 2027 aufstellen …'] }] : []),
-    listDir: async (rel) => ({ ok: true, entries: tree[rel] || [] }),
+    listDir: async (rel) => ({ ok: true, entries: state.free ? [] : tree[rel] || [] }),
     findFiles: async (q) => Object.values(tree).flat().filter((e) => e.path.toLowerCase().includes(String(q).toLowerCase())),
     importFiles: async () => ({ ok: true, paths: [] }),
     restartTerminal: async () => {}, terminalLogs: async () => 'open-terminal läuft auf 127.0.0.1', acceptWarning: async () => {},
@@ -389,19 +476,23 @@ export function install() {
     askUseToken: async (t) => (String(t).trim() ? { ok: true } : { ok: false, reason: 'Das sieht nicht wie ein Token aus. Kopiere es ganz, ohne Leerzeichen.' }),
     setModel: async (id) => { state = { ...state, model: id }; push(); }, setWebSearch: async (v) => { state = { ...state, webSearch: v }; push(); },
     setChatMemory: async (v) => { state = { ...state, chatMemory: v }; push(); }, setThinking: async (v) => { state = { ...state, thinking: v }; push(); },
-    chatSend: async (text) => { demoRun(text); return { ok: true }; }, chatUndo: async () => ({ ok: true }), chatStop: async () => {}, chatStopChat: async () => true,
-    chatGoal: async () => {}, chatApprove: async (_id, a) => { pendingApproval?.(a); return true; }, chatAnswer: async (_id, t) => { pendingAnswer?.(t); return true; },
+    chatSend: async (text) => { const c = chatOf(state.chat.id); if (c.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' }; demoRun(c, text); return { ok: true }; },
+    chatUndo: async () => ({ ok: true }), chatStop: async () => stopChat(state.chat.id), chatStopChat: async (_f, id) => { stopChat(id); return true; },
+    // wie im Hauptprozess: zuerst der sichtbare Chat, sonst der Chat, der diese Frage gestellt hat
+    chatGoal: async () => {}, chatApprove: async (id, a) => answerWait(id, a), chatAnswer: async (id, t) => answerWait(id, t),
     ...ghMock,
-    chatNew: async () => { state = { ...state, chat: { id: `neu${Date.now()}`, title: '', running: false } }; transcriptItems = []; push(); return { ok: true }; },
-    chatGroups: async () => projects.map((p) => ({ ...p, current: p.folder === state.folder })),
-    chatOpen: async (_f, id) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); state = { ...state, chat: { id, title: c?.title || '', running: false } }; transcriptItems = id === 'c1' ? saved : []; push(); return { ok: true }; },
+    chatNew: async (folder) => { show(`neu${Date.now()}`, folder || state.folder); return { ok: true }; },
+    chatGroups: async () => [{ folder: FREE, name: 'Chats', color: '', free: true, missing: false, current: state.folder === FREE, chats: [...freeChats] },
+      ...projects.map((p) => ({ ...p, chats: [...p.chats], current: p.folder === state.folder }))],
+    chatOpen: async (folder, id) => { show(id, entryOf(id) ? (freeChats.some((x) => x.id === id) ? FREE : projects.find((p) => p.chats.some((x) => x.id === id)).folder) : folder); return { ok: true }; },
     chatDelete: async (_f, _id, title) => { emit('ui:ask', { id: Date.now(), type: 'question', buttons: ['Löschen', 'Abbrechen'], defaultId: 1, cancelId: 1, dangerId: 0,
-      message: 'Chat löschen?', detail: `«${title}» wird aus ${FOLDER} entfernt. Die Dateien im Ordner bleiben.` }); return false; }, chatTranscript: async () => ({ ...state.chat, items: transcriptItems }),
+      message: 'Chat löschen?', detail: `«${title}» wird aus ${FOLDER} entfernt. Die Dateien im Ordner bleiben.` }); return false; },
+    chatTranscript: async () => { const c = chatOf(state.chat.id); await wait(Number(params.get('verzug')) || 0); return { ...chatState(c), items: [...c.items], pending: [...c.pending] }; },
     reloadAsk: async () => {}, setSidebar: async (v) => { state = { ...state, sidebarOpen: v }; push(); }, setChatbar: async (v) => { state = { ...state, chatbarOpen: v }; push(); },
     setAskBounds: () => {}, setAskVisible: () => {}, setBrowserBounds: () => {}, setBrowserVisible: () => {},
     browserShow: async () => {}, browserGo: async () => {}, browserBack: async () => {}, browserForward: async () => {}, browserClear: async () => {}, browserReload: async () => {}, browserClose: async () => {},
     copy: async (t) => navigator.clipboard?.writeText(t).catch(() => {}), openLink: async (u) => window.open(u, '_blank'),
-    files: async () => files, tasks: async () => null,
+    files: async () => (state.free ? { top: [], recent: [] } : files), tasks: async () => null,
     preview: async (rel) => (/\.(csv|py|txt)$/.test(rel) ? { kind: 'text', text: rel.endsWith('.csv') ? 'Datum;Kategorie;Beschreibung;Betrag CHF\n02.08.2026;Bücher;Fachbuch Netzwerktechnik;32.75\n02.08.2026;Verpflegung;Mittagessen Mensa;15.85' : 'import pandas as pd\n\ndf = pd.read_csv("ausgaben.csv", sep=";", encoding="cp1252")\nsummen = df.groupby("Kategorie")["Betrag CHF"].sum()' } : { kind: 'office', name: rel }),
     openFile: async () => '', toPdf: async () => ({ fehler: 'Nur in der App.' }), showFile: async () => {},
     ...memoryApi,

@@ -143,6 +143,12 @@ pub fn plan_tool() -> Value {
 /// Werkzeuge, die im Planmodus erlaubt sind: nichts, was den Ordner oder etwas ausserhalb verändert
 const PLAN_ALLOWED: [&str; 20] = ["read_file", "list_files", "find_files", "search_text", "view_file", "web_search", "web_fetch", HELPER,
     "chat_search", "chat_read", "github_status", "server_liste", "skill_lesen", "mod_liste", "mod_lesen", "katalog_suchen", "update_tasks", "frage_stellen", "plan_vorlegen", EFFORT_TOOL];
+/// Chat ohne Projekt (ENTSCHEIDE E78): Gespräch, Web, Bilder, Anhänge lesen und Gedächtnis. Nichts, was Dateien
+/// ändert, Befehle ausführt oder nach aussen wirkt; andere Aufrufe lehnt `step` auch dann ab, wenn das Modell sie
+/// trotzdem schickt.
+const FREE_ALLOWED: [&str; 14] = ["read_file", "view_file", "web_search", "web_fetch", "bild_erstellen", "chat_search", "chat_read", "skill_lesen",
+    "merken", "vergessen", "update_tasks", "frage_stellen", "goal_done", EFFORT_TOOL];
+const FREE_PROMPT: &str = "\n\n# Chat ohne Projekt\nDieser Chat gehört zu keinem Projekt. Hier beantwortest du Fragen, erklärst, suchst im Web und erstellst auf Wunsch Bilder. Du kannst hier keine Dateien schreiben oder ändern, keine Befehle ausführen und keinen Server starten; es gibt keinen Projektordner. Angehängte Dateien liest du mit read_file, angehängte Bilder siehst du direkt. Will die Person, dass du Dateien erstellst oder bearbeitest, Programme ausführst oder mit einem Ordner arbeitest, sag ihr in einem Satz, dass das in einem Projekt geht: links bei «Projekte» auf + klicken und den Auftrag dort stellen. Code, Texte und Tabellen kannst du hier direkt in der Antwort schreiben.";
 const PLAN_PROMPT: &str = "\n\n# Planmodus\nDie Person will zuerst einen Plan sehen. Ändere nichts: keine Befehle, keine Dateien schreiben. Sieh dir mit den Lese- und Suchwerkzeugen an, was du brauchst, frag bei Unklarem mit frage_stellen, und lege dann mit plan_vorlegen einen kurzen, konkreten Plan vor (Schritte, betroffene Dateien). Danach hörst du auf.";
 
 /// Verbindung zu ASK weg oder ASK kurz überlastet: so lange warten und nochmals versuchen (Sekunden)
@@ -537,6 +543,8 @@ pub struct AgentOptions {
     pub get_ask_before: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     /// Nach der ersten Antwort einen Titel von ASK schreiben lassen (in Tests aus, sonst bekäme die Attrappe eine Anfrage mehr)
     pub auto_title: bool,
+    /// Chat ohne Projekt (ENTSCHEIDE E78): nur die Werkzeuge aus `FREE_ALLOWED`, kein Planmodus
+    pub free: bool,
 }
 
 impl AgentOptions {
@@ -575,6 +583,7 @@ impl AgentOptions {
             get_helper_model: Arc::new(String::new),
             get_ask_before: Arc::new(Vec::new),
             auto_title: false,
+            free: false,
         }
     }
 }
@@ -676,6 +685,10 @@ pub struct Agent {
     /// Titel und Details offener Rückfragen (für die Bestätigung bei eingeschalteten Mods, E72)
     approval_text: Mutex<HashMap<String, (String, String)>>,
     questions: Mutex<HashMap<String, oneshot::Sender<String>>>,
+    /// Ereignisse offener Fragen und Rückfragen (Kennung → Ereignis). Wer in einen Chat wechselt, der im Hintergrund
+    /// auf eine Antwort wartet, bekommt sie mit dem Verlauf nochmals (`pending_events`), sonst sähe man die Frage nicht
+    /// mehr und könnte nur noch stoppen.
+    open_events: Mutex<Vec<(String, Value)>>,
 }
 
 fn blank() -> Value {
@@ -709,6 +722,7 @@ impl Agent {
             approvals: Mutex::new(HashMap::new()),
             approval_text: Mutex::new(HashMap::new()),
             questions: Mutex::new(HashMap::new()),
+            open_events: Mutex::new(Vec::new()),
         })
     }
 
@@ -740,6 +754,19 @@ impl Agent {
 
     pub fn pending_approvals(&self) -> usize {
         self.approvals.lock().len()
+    }
+
+    /// Ereignisse der offenen Fragen und Rückfragen in der Reihenfolge, in der sie gestellt wurden
+    pub fn pending_events(&self) -> Value {
+        Value::Array(self.open_events.lock().iter().map(|(_, ev)| ev.clone()).collect())
+    }
+
+    fn open_event(&self, id: &str, ev: &Value) {
+        self.open_events.lock().push((id.to_string(), ev.clone()));
+    }
+
+    fn close_event(&self, id: &str) {
+        self.open_events.lock().retain(|(k, _)| k != id);
     }
 
     /// Offene Fragen und Rückfragen (für die Oberfläche nach dem Neuladen): `{ questions: [id], approvals: [id] }`
@@ -829,6 +856,8 @@ impl Agent {
             "textMode": g.text_mode_for.contains(&model),
             "goal": if truthy(&g.chat["goal"]) { g.chat["goal"].clone() } else { Value::Null },
             "pinned": truthy(&g.chat["pinned"]), "context": context,
+            // Beginn des laufenden Auftrags: Wer in einen Chat wechselt, der schon arbeitet, sieht die richtige Dauer
+            "started": if self.running() { self.turn_started.load(Ordering::SeqCst) } else { 0 },
         })
     }
 
@@ -1258,7 +1287,7 @@ impl Agent {
                 // zweimal ohne Arbeitsschritt dazwischen; danach wartet das Modell offenbar auf die Person.
                 let goal = self.inner.lock().chat["goal"].clone();
                 // Im Planmodus fehlt goal_done: dort wartet der Plan auf die Person, nicht auf einen Anstoss
-                if !truthy(&goal) || truthy(&goal["done"]) || signal.is_cancelled() || (self.o.get_mode)() == "plan" {
+                if !truthy(&goal) || truthy(&goal["done"]) || signal.is_cancelled() || (!self.o.free && (self.o.get_mode)() == "plan") {
                     break;
                 }
                 if idle >= GOAL_IDLE_LIMIT {
@@ -1361,7 +1390,8 @@ impl Agent {
         let flux = self.o.images.as_ref().is_some_and(|i| i.available());
         let remember = self.o.knowledge.as_ref().and_then(|k| k.memory_on.as_ref()).is_none_or(|f| f());
         let offered = |name: &str| (memory || !name.starts_with("chat_")) && (flux || name != "bild_erstellen") && (remember || !MEMORY_TOOLS.contains(&name));
-        let plan = (self.o.get_mode)() == "plan";
+        let free = self.o.free;
+        let plan = !free && (self.o.get_mode)() == "plan"; // ohne Projekt gibt es nichts zu planen
         let chat_id = self.chat_id();
         let name_of = |s: &Value| s["function"]["name"].as_str().unwrap_or("").to_string();
         let mut specs: Vec<Value> = tool_specs(&(self.o.get_command_hint)(&chat_id)).into_iter().filter(|s| offered(&name_of(s))).collect();
@@ -1376,6 +1406,9 @@ impl Agent {
         if plan {
             specs.push(plan_tool());
             specs.retain(|s| PLAN_ALLOWED.contains(&name_of(s).as_str()));
+        }
+        if free {
+            specs.retain(|s| FREE_ALLOWED.contains(&name_of(s).as_str()));
         }
         let sent_images = AtomicBool::new(false);
         let request = |this: Arc<Agent>| {
@@ -1506,7 +1539,7 @@ impl Agent {
                 continue;
             }
             // Hilfsagenten, die direkt hintereinander aufgerufen werden, laufen gleichzeitig (höchstens 3, helpers.rs)
-            if name == HELPER && !helper_runs.contains_key(&id) {
+            if name == HELPER && !free && !helper_runs.contains_key(&id) {
                 let batch: Vec<&Value> = tool_calls[ci..].iter().take_while(|c| c["function"]["name"] == HELPER).collect();
                 for b in &batch {
                     let mut ev = json!({ "type": "tool-start", "id": b["id"], "name": HELPER });
@@ -1528,10 +1561,18 @@ impl Agent {
             }
             // Ein Fehler in der App darf den Verlauf nicht kaputt machen: Jeder Aufruf bekommt ein Ergebnis,
             // sonst lehnt ASK jede weitere Anfrage dieses Chats ab (tool_calls ohne Antwort)
-            let verdict = if plan && !PLAN_ALLOWED.contains(&name.as_str()) { "plan".to_string() } else { self.approve(call, signal).await };
+            let verdict = if plan && !PLAN_ALLOWED.contains(&name.as_str()) {
+                "plan".to_string()
+            } else if free && !FREE_ALLOWED.contains(&name.as_str()) {
+                "frei".to_string()
+            } else {
+                self.approve(call, signal).await
+            };
             let arguments = js_string(&call["function"]["arguments"]);
             let result = if verdict == "plan" {
                 ToolResult::new(false, "Im Planmodus änderst du nichts. Lege mit plan_vorlegen einen Plan vor.", "im Planmodus nicht erlaubt")
+            } else if verdict == "frei" {
+                ToolResult::new(false, "Das geht in einem Chat ohne Projekt nicht: Hier kannst du keine Dateien ändern und keine Befehle ausführen. Sag der Person, dass sie dafür links bei «Projekte» ein Projekt anlegt oder öffnet.", "ohne Projekt nicht möglich")
             } else if name == "plan_vorlegen" {
                 propose_plan(&arguments)
             } else if verdict != "yes" {
@@ -1625,6 +1666,7 @@ impl Agent {
         let system = (self.o.get_system_prompt)(&chat_id)
             + &goal.map(goal_prompt).unwrap_or_default()
             + if plan { PLAN_PROMPT } else { "" }
+            + if self.o.free { FREE_PROMPT } else { "" }
             + &if text_mode { text_mode_prompt(specs) } else { String::new() };
         let image_url = if self.can_see() { self.o.get_image_url.clone() } else { None };
         let budget = if self.inner.lock().tight_for.contains(&chat_id) { TIGHT } else { NORMAL };
@@ -1760,8 +1802,12 @@ impl Agent {
             self.approvals.lock().insert(id.clone(), tx);
             self.approval_text.lock().insert(id.clone(), (asked.risk.title.clone(), asked.risk.detail.clone()));
         }
-        self.event(json!({ "type": "approval", "id": id, "kind": asked.risk.kind, "title": asked.risk.title, "detail": asked.risk.detail,
-            "reason": asked.risk.reason, "reviewed": asked.reviewed }));
+        let ev = json!({ "type": "approval", "id": id, "kind": asked.risk.kind, "title": asked.risk.title, "detail": asked.risk.detail,
+            "reason": asked.risk.reason, "reviewed": asked.reviewed });
+        if self.o.auto_approve.is_none() {
+            self.open_event(&id, &ev);
+        }
+        self.event(ev);
         let answer = if let Some(auto) = &self.o.auto_approve {
             auto(asked.risk.clone()).await
         } else {
@@ -1772,6 +1818,7 @@ impl Agent {
         };
         self.approvals.lock().remove(&id);
         self.approval_text.lock().remove(&id);
+        self.close_event(&id);
         if answer == "always" {
             self.inner.lock().allowed.insert(asked.risk.kind.clone());
         }
@@ -1869,7 +1916,11 @@ impl Agent {
         if self.o.auto_answer.is_none() {
             self.questions.lock().insert(id.clone(), tx);
         }
-        self.event(json!({ "type": "question", "id": id, "frage": frage, "optionen": optionen, "mehrfach": truthy(&args["mehrfach"]) }));
+        let ev = json!({ "type": "question", "id": id, "frage": frage, "optionen": optionen, "mehrfach": truthy(&args["mehrfach"]) });
+        if self.o.auto_answer.is_none() {
+            self.open_event(&id, &ev);
+        }
+        self.event(ev);
         let answer: Option<String> = if let Some(auto) = &self.o.auto_answer {
             auto(frage.clone(), optionen.clone()).await
         } else {
@@ -1879,6 +1930,7 @@ impl Agent {
             }
         };
         self.questions.lock().remove(&id);
+        self.close_event(&id);
         let Some(answer) = answer else {
             self.event(json!({ "type": "question-end", "id": id, "answer": "" }));
             return ToolResult::new(false, "Die Person hat nicht geantwortet (gestoppt).", "nicht beantwortet");
@@ -2619,6 +2671,57 @@ mod tests {
         assert_eq!(requests.len(), 2, "nach dem Plan keine weitere Anfrage");
         let items = t.agent.transcript();
         assert!(items.as_array().unwrap().iter().any(|i| i["role"] == "tool" && truthy(&i["plan"])), "Plan bleibt im gespeicherten Chat");
+    }
+
+    #[tokio::test]
+    async fn chat_ohne_projekt_nur_gespraech_web_bilder_und_lesen_schreiben_wird_abgewiesen() {
+        let ask = Fake::new(vec![
+            calls(vec![call("a", "write_file", json!({ "path": "x.txt", "content": "hallo" })), call("b", "run_command", json!({ "command": "del x.txt" }))]),
+            text("Das geht nur in einem Projekt."),
+        ]);
+        // Auch im Planmodus: ohne Projekt gibt es keinen Plan, der Modus zählt dort nicht
+        let t = make(ask, |o| { o.free = true; o.get_mode = Arc::new(|| "plan".into()); });
+        t.send("Schreib mir eine Datei").await;
+        let requests = t.ask.requests();
+        let names = tool_names(&requests[0]);
+        for allowed in ["read_file", "web_search", "web_fetch", "frage_stellen"] {
+            assert!(names.contains(&allowed.to_string()), "{allowed} fehlt");
+        }
+        for denied in ["write_file", "edit_file", "run_command", "server_starten", "github_push", "browser", "hilfsagent", "plan_vorlegen", "skill_erstellen", "mod_erstellen"] {
+            assert!(!names.contains(&denied.to_string()), "{denied} darf ohne Projekt nicht angeboten werden");
+        }
+        assert!(names.iter().all(|n| FREE_ALLOWED.contains(&n.as_str())), "nur Werkzeuge aus FREE_ALLOWED: {names:?}");
+        let system = js_string(&requests[0].messages[0]["content"]);
+        assert!(system.contains("Chat ohne Projekt") && !system.contains("Planmodus"));
+        let ends = t.events_of("tool-end");
+        assert_eq!(ends.len(), 2);
+        assert!(ends.iter().all(|e| e["ok"] == false && js_string(&e["summary"]).contains("ohne Projekt")), "beide Aufrufe abgewiesen: {ends:?}");
+        assert!(!t.folder.path().join("x.txt").exists());
+        assert_eq!(t.agent.messages().last().unwrap()["content"], "Das geht nur in einem Projekt.");
+    }
+
+    #[tokio::test]
+    async fn offene_frage_steht_bei_den_offenen_ereignissen_bis_sie_beantwortet_ist() {
+        let ask = Fake::new(vec![calls(vec![call("q1", "frage_stellen", json!({ "frage": "Welche Farbe?", "optionen": ["Rot", "Blau"] }))]), text("Blau also.")]);
+        let t = make(ask, |_| {});
+        t.agent.send("Mal etwas", vec![], json!({}));
+        for _ in 0..400 {
+            if t.agent.pending_questions() > 0 { break; }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        // Wer jetzt erst in den Chat wechselt, bekommt die Frage mit dem Verlauf
+        let open = t.agent.pending_events();
+        assert_eq!(open.as_array().unwrap().len(), 1);
+        assert_eq!(open[0]["type"], "question");
+        assert_eq!(open[0]["id"], "q1");
+        assert_eq!(open[0]["frage"], "Welche Farbe?");
+        assert!(t.agent.answer_question("q1", "Blau"));
+        for _ in 0..400 {
+            if !t.agent.running() { break; }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(!t.agent.running());
+        assert!(t.agent.pending_events().as_array().unwrap().is_empty(), "nach der Antwort ist nichts mehr offen");
     }
 
     #[tokio::test]

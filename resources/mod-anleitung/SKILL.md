@@ -84,7 +84,7 @@ CSS wirkt nur, wenn der Selektor ein Element trifft. Erfinde keine Klassen, nimm
 |---|---|
 | ganzes Fenster | `.app` |
 | Kopfzeile | `.topbar`; Logo `.brand`; Tabs `.tabs`, ein Tab `.tab`, der aktive `.tab.on`; Fensterknöpfe `.win-ctl` |
-| linke Leiste (Projekte, Chats) | `.chatbar`; Knopf «Neuer Chat» `.new-chat`; Kopf eines Projekts `.group-head`; Chat in der Liste `.chat-item`, der offene `.chat-item.active`; Profil unten `.account` |
+| linke Leiste (Chats, Projekte) | `.chatbar`; Knopf «Neuer Chat» `.new-chat`; Chats ohne Projekt `.chat-group.free`; Kopf eines Projekts `.group-head`; Chat in der Liste `.chat-item`, der offene `.chat-item.active`; Profil unten `.account` |
 | Chat | `.chat-area`; Verlauf `.transcript` |
 | Eingabe der Person | `.msg.user .bubble` |
 | Antwort von ASK | `.msg.assistant`; Text darin `.md` (Überschriften, Listen, `code`, `pre`, `table`) |
