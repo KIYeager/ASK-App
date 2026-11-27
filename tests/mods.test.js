@@ -15,18 +15,9 @@ test('Vorlagen und Zuordnung der Befehle von Mods', async () => {
   assert.strictEqual(modCommandFor('/unbekannt', cmds), null);
 });
 
-test('Beispiel-Mods und mitgelieferte Skills sind gültig', () => {
+test('Mitgelieferte Skills sind gültig', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  for (const base of ['resources/mods-beispiele']) {
-    for (const id of fs.readdirSync(base)) {
-      const dir = path.join(base, id);
-      const m = JSON.parse(fs.readFileSync(path.join(dir, 'mod.json'), 'utf8'));
-      assert.strictEqual(m.id, id, `${dir}: id passt zum Ordner`);
-      for (const f of [m.style, m.script].filter(Boolean)) assert.ok(fs.existsSync(path.join(dir, f)), `${dir}/${f} fehlt`);
-      if (m.script) assert.match(fs.readFileSync(path.join(dir, m.script), 'utf8'), /\(function \(ASK\) \{[\s\S]*\}\)\(ASK\);\s*$/, `${dir}: hält ASK fest`);
-    }
-  }
   for (const name of fs.readdirSync('resources/standard-skills')) {
     const text = fs.readFileSync(path.join('resources/standard-skills', name, 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n'); // Windows checkt mit CRLF aus
     assert.match(text, new RegExp(`^---\\nname: ${name}\\ndescription: .{10,300}\\n`), `${name}: Kopf`);

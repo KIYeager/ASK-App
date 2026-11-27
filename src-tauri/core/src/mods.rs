@@ -9,8 +9,8 @@
 //! Schritte in einem Dialog von Windows statt in der Oberfläche (app.rs, `secure`), weil Code in der Oberfläche
 //! dort jeden Knopf drücken könnte.
 //!
-//! Öffentliche Schnittstelle: `Mods::new(dir, examples)`, `list`, `get`, `save`, `remove`, `enable`, `active`,
-//! `code_active`, `file`, `prompt`, `ask_before`, `examples`, `example_files`; freie Funktionen `parse_manifest`,
+//! Öffentliche Schnittstelle: `Mods::new(dir)`, `list`, `get`, `save`, `remove`, `enable`, `active`,
+//! `code_active`, `file`, `test_file`, `prompt`, `ask_before`; freie Funktionen `parse_manifest`,
 //! `check_id`, `check_path`.
 
 use anyhow::{bail, Result};
@@ -173,13 +173,11 @@ pub struct ModFile {
 
 pub struct Mods {
     dir: PathBuf,
-    /// Mitgelieferte Beispiele (resources/mods-beispiele), nur lesen
-    examples: Option<PathBuf>,
 }
 
 impl Mods {
-    pub fn new(dir: impl Into<PathBuf>, examples: Option<PathBuf>) -> Self {
-        Mods { dir: dir.into(), examples }
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Mods { dir: dir.into() }
     }
 
     pub fn dir(&self) -> &Path {
@@ -448,31 +446,6 @@ impl Mods {
         out.dedup();
         out
     }
-
-    /// Mitgelieferte Beispiele (nicht installiert)
-    pub fn examples(&self) -> Vec<Value> {
-        let Some(dir) = &self.examples else { return Vec::new() };
-        let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
-        let mut out: Vec<Value> = rd.filter_map(Result::ok)
-            .filter(|d| d.file_type().is_ok_and(|t| t.is_dir()))
-            .filter_map(|d| {
-                let text = std::fs::read_to_string(d.path().join("mod.json")).ok()?;
-                let m = parse_manifest(&text).ok()?;
-                let mut v = serde_json::to_value(&m).ok()?;
-                v["installiert"] = json!(self.dir.join(&m.id).join("mod.json").exists());
-                Some(v)
-            })
-            .collect();
-        out.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
-        out
-    }
-
-    /// Dateien eines mitgelieferten Beispiels
-    pub fn example_files(&self, id: &str) -> Result<Vec<(String, Vec<u8>)>> {
-        check_id(id)?;
-        let Some(dir) = &self.examples else { bail!("Keine Beispiele vorhanden.") };
-        Self::read_folder(&dir.join(id))
-    }
 }
 
 /// Dateien aus JSON `{ "pfad": "inhalt" }` (Werkzeug mod_erstellen)
@@ -518,7 +491,7 @@ mod tests {
     #[test]
     fn neu_ist_aus_einschalten_und_aenderung_schaltet_ab() {
         let t = tempfile::tempdir().unwrap();
-        let mods = Mods::new(t.path().join("mods"), None);
+        let mods = Mods::new(t.path().join("mods"));
         let files = vec![("mod.json".to_string(), manifest("robo", ",\"script\":\"mod.js\",\"anweisungen\":\"Sag hallo.\",\"nachfragen\":[\"web\"]")), ("mod.js".to_string(), b"console.log(1)".to_vec())];
         let info = mods.save(&files, false).unwrap();
         assert!(!info.aktiv);

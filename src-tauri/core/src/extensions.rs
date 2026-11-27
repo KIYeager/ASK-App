@@ -73,7 +73,7 @@ impl App {
     pub(crate) async fn handle_extensions(self: &Arc<Self>, channel: &str, a: &[Value]) -> Option<Result<Value, String>> {
         let mods = self.knowledge.mods.clone();
         Some(Ok(match channel {
-            "mods:list" => json!({ "mods": mods.list(), "examples": mods.examples(), "code": mods.code_active(), "folder": mods.dir().to_string_lossy() }),
+            "mods:list" => json!({ "mods": mods.list(), "code": mods.code_active(), "folder": mods.dir().to_string_lossy() }),
             "mods:get" => mods.get(&s(a, 0)).unwrap_or(Value::Null),
             // Für die Oberfläche beim Start: aktive Mods mit Dateien zum Laden
             "mods:active" => {
@@ -110,10 +110,6 @@ impl App {
                     Err(e) => fail(e.to_string()),
                 }
             }
-            "mods:example" => match mods.example_files(&s(a, 0)) {
-                Ok(files) => self.install_mod(files).await.unwrap_or_else(fail),
-                Err(e) => fail(e.to_string()),
-            },
             // Anleitung für andere KI (Claude, ChatGPT …): kopieren oder als SKILL.md speichern (E75)
             "mods:guide" => match std::fs::read_to_string(crate::paths::mod_guide_file()) {
                 Ok(text) => {

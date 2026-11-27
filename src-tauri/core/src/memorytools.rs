@@ -198,7 +198,7 @@ pub fn knowledge_tools() -> Vec<KnowledgeTool> {
         KnowledgeTool {
             name: "mod_liste",
             label: "Mods",
-            description: "Listet die Mods der Person (Name, Kennung, an oder aus, was sie ändern) und die mitgelieferten Beispiele. Benutze es, bevor du einen Mod änderst oder wenn die Person nach ihren Mods fragt.",
+            description: "Listet die Mods der Person (Name, Kennung, an oder aus, was sie ändern). Fertige Mods anderer findest du mit katalog_suchen. Benutze es, bevor du einen Mod änderst oder wenn die Person nach ihren Mods fragt.",
             parameters: json!({ "type": "object", "properties": {} }),
         },
         KnowledgeTool {
@@ -563,11 +563,6 @@ fn mod_liste(ctx: &MemoryToolCtx) -> Result<ToolOutput> {
                 if m.manifest.version.is_empty() { "–" } else { &m.manifest.version }, m.manifest.beschreibung, mod_parts(&m.manifest), m.dateien));
         }
     }
-    let examples: Vec<String> = mods.examples().iter().filter(|e| e["installiert"] != true)
-        .map(|e| format!("{} (id {})", js_string(&e["name"]), js_string(&e["id"]))).collect();
-    if !examples.is_empty() {
-        out.push_str(&format!("\nNicht hinzugefügte Beispiele (Einstellungen → Mods → Beispiele): {}", examples.join(", ")));
-    }
     Ok(ToolOutput::new(true, out, format!("{} Mods", list.len())))
 }
 
@@ -838,7 +833,7 @@ mod tests {
     #[tokio::test]
     async fn werkzeug_mod_erstellen_fragt_und_speichert_aus() {
         let t = tempfile::tempdir().unwrap();
-        let mods = Arc::new(crate::mods::Mods::new(t.path().join("mods"), None));
+        let mods = Arc::new(crate::mods::Mods::new(t.path().join("mods")));
         let answer = Arc::new(AtomicBool::new(false));
         let answer2 = answer.clone();
         let confirm: ConfirmFn = Arc::new(move |_m, _d, _o| {

@@ -38,7 +38,6 @@
     "resources": {
       "../resources/skills/": "skills/",
       "../resources/standard-skills/": "standard-skills/",
-      "../resources/mods-beispiele/": "mods-beispiele/",
       "../resources/mod-anleitung/": "mod-anleitung/",
       "../resources/anweisungen/": "anweisungen/",
       "../resources/app-config.json": "app-config.json",

@@ -2474,7 +2474,7 @@ mod tests {
     #[tokio::test]
     async fn mod_testen_braucht_einen_vorhandenen_mod() {
         let t = tempfile::tempdir().unwrap();
-        let mods = Arc::new(crate::mods::Mods::new(t.path().join("mods"), None));
+        let mods = Arc::new(crate::mods::Mods::new(t.path().join("mods")));
         let v = Arc::new(FakeVisual { seen: Mutex::new(Vec::new()) });
         let ctx = ToolCtx { visual: Some(v), folder: "C:\\x".into(), chat: "c1".into(),
             knowledge: Some(KnowledgeCtx { mods: Some(mods.clone()), ..Default::default() }), ..Default::default() };

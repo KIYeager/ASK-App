@@ -189,7 +189,7 @@ Voller Zugriff auf das DOM ist erlaubt (z. B. `document.body.appendChild` für e
 })(ASK);
 ```
 
-Weitere vollständige Beispiele (Neon, Robo-Helfer, Pomodoro, Vokabeln) liegen in ASK unter Einstellungen → Mods → Beispiele und im Repository `KIYeager/ASK-Erweiterungen` im Ordner `mods/`.
+Weitere vollständige Beispiele (Neon, Robo-Helfer, Pomodoro, Vokabeln und mehr) liegen im Repository `KIYeager/ASK-Erweiterungen` im Ordner `mods/`; in ASK unter Einstellungen → Mods → Kataloge → «Durchsuchen».
 
 ## Checkliste
 
