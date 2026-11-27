@@ -27,8 +27,9 @@ const when = (ms) => {
 
 // ---------- Liste ----------
 
-function DocList({ docs, free, onOpen, onCompose }) {
+function DocList({ docs, free, onOpen, onCompose, notice }) {
   const [naming, setNaming] = useState(false);
+  const [joining, setJoining] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const create = async (e) => {
@@ -45,10 +46,11 @@ function DocList({ docs, free, onOpen, onCompose }) {
       <div className="docs-head">
         <b>Docs</b><span className="muted small">{free ? 'Chats ohne Projekt' : 'in diesem Projekt'}</span>
         <span className="spacer" />
-        <button type="button" className="icon-btn" title="Geteiltes Doc öffnen (Ordner von OneDrive, Teams oder der Schule)" aria-label="Geteiltes Doc öffnen"
-          onClick={async () => { const r = await api().docsJoin(); if (r?.ok) onOpen(r.path); else if (!r?.canceled) setError(r?.reason || 'Nicht geöffnet.'); }}><Icon name="user" size={15} /></button>
+        <button type="button" className="icon-btn" title="Geteiltes Doc öffnen (Link aus Teams)" aria-label="Geteiltes Doc öffnen"
+          onClick={() => setJoining(!joining)}><Icon name="user" size={15} /></button>
         <button type="button" className="btn small" onClick={() => setNaming(true)}><Icon name="plus" size={13} /> Neues Doc</button>
       </div>
+      {joining ? <JoinPanel onOpen={(p) => { setJoining(false); onOpen(p); }} onClose={() => setJoining(false)} notice={notice} /> : null}
       {naming ? (
         <form className="docs-new" onSubmit={create}>
           <input autoFocus value={name} placeholder="Titel, z. B. Lernzettel Chemie" maxLength={120} aria-label="Titel des neuen Docs"
@@ -91,30 +93,87 @@ const ago = (ms) => {
   return min < 1 ? 'gerade eben' : min < 60 ? `vor ${min} Min.` : min < 1440 ? `vor ${Math.round(min / 60)} Std.` : when(ms);
 };
 
-function SharePanel({ path, share, onChanged, onClose, notice }) {
+// Anmeldung bei Microsoft für das Teilen per Link (E83): Zustand und Knopf
+function useMicrosoft() {
+  const [ms, setMs] = useState(null);
+  const refresh = useCallback(async () => setMs(await api().docsMsStatus?.() || { eingerichtet: false }), []);
+  useEffect(() => { refresh(); }, [refresh]);
+  return [ms, refresh];
+}
+
+function MsLogin({ ms, onDone, notice }) {
   const [busy, setBusy] = useState(false);
-  const start = async () => {
+  if (!ms) return null;
+  if (!ms.eingerichtet) {
+    return <p className="muted small">Teilen per Link ist auf diesem ASK noch nicht eingerichtet (es braucht eine App-Registrierung bei Microsoft, siehe Hilfe). Bis dahin geht es über einen Ordner.</p>;
+  }
+  if (ms.angemeldet) {
+    return (
+      <p className="muted small docs-row">Bei Microsoft als <b>{ms.name || 'Schulkonto'}</b><span className="spacer" />
+        <button type="button" className="link-btn" onClick={async () => { await api().docsMsLogout(); onDone(); }}>Abmelden</button></p>
+    );
+  }
+  const login = async () => {
+    setBusy(true);
+    const r = await api().docsMsLogin();
+    setBusy(false);
+    if (r?.ok) onDone(); else notice?.(r?.reason || 'Anmeldung nicht geklappt.');
+  };
+  return (
+    <div className="docs-row">
+      <button type="button" className="btn small primary" disabled={busy} onClick={login}>{busy ? 'Warte auf die Anmeldung im Browser …' : 'Mit Microsoft anmelden'}</button>
+      <span className="muted small">einmal, mit dem Schulkonto (wie bei Teams)</span>
+    </div>
+  );
+}
+
+const teamsShare = (link, title) => `https://teams.microsoft.com/share?href=${encodeURIComponent(link)}&msgText=${encodeURIComponent(`Schreib mit mir in ASK am Doc «${title}»: In ASK rechts bei Docs auf den Personen-Knopf und diesen Link einfügen.`)}`;
+
+function LinkBox({ link, title, notice }) {
+  return (
+    <div className="docs-linkbox">
+      <input readOnly value={link} aria-label="Link zum Doc" onFocus={(e) => e.target.select()} />
+      <div className="docs-row">
+        <button type="button" className="btn small primary" onClick={() => { api().copy(link); notice?.('Link kopiert. Füge ihn in Teams ein.'); }}><Icon name="copy" size={13} /> Link kopieren</button>
+        <button type="button" className="btn small" onClick={() => api().openLink(teamsShare(link, title))}>In Teams teilen</button>
+      </div>
+    </div>
+  );
+}
+
+function SharePanel({ path, title, share, onChanged, onClose, notice }) {
+  const [busy, setBusy] = useState(false);
+  const [folderWay, setFolderWay] = useState(false);
+  const [ms, refreshMs] = useMicrosoft();
+  const byFolder = async () => {
     setBusy(true);
     const r = await api().docsShare(path);
     setBusy(false);
     if (r?.ok) { onChanged(); notice?.('Geteilt. Gib den Ordner jetzt in OneDrive oder Teams frei.'); } else if (!r?.canceled) notice?.(r?.reason || 'Nicht geteilt.');
   };
+  const byLink = async () => {
+    setBusy(true);
+    const r = await api().docsShareLink(path);
+    setBusy(false);
+    if (r?.ok) { onChanged(); if (r.link) { api().copy(r.link); notice?.('Link erstellt und kopiert. Füge ihn in Teams ein.'); } } else notice?.(r?.reason || 'Nicht geteilt.');
+  };
   const stop = async () => { const r = await api().docsUnshare(path); if (r?.ok) { onChanged(); onClose(); } };
   if (!share?.geteilt) {
     return (
       <div className="docs-share">
-        <b>Doc live teilen</b>
-        <p>Andere schreiben auf ihrem Laptop mit, und ihr seht die Änderungen gegenseitig. Dafür braucht ihr einen Ordner, den alle haben:</p>
-        <ul>
-          <li>einen Ordner in <b>OneDrive</b>, den du für die anderen freigibst,</li>
-          <li>die Dateien eines <b>Teams</b>-Kanals (in OneDrive synchronisiert) oder</li>
-          <li>ein <b>Laufwerk der Schule</b> (am schnellsten).</li>
-        </ul>
-        <p className="muted small">ASK legt dort einen Ordner «….askdoc» an. Die anderen öffnen ihn in ASK mit dem Personen-Knopf in der Liste der Docs. Mit OneDrive kommen Änderungen nach ein paar Sekunden an.</p>
-        <div className="docs-row">
-          <button type="button" className="btn small primary" disabled={busy} onClick={start}>{busy ? 'Teilt …' : 'Ordner wählen …'}</button>
-          <button type="button" className="btn small" onClick={onClose}>Abbrechen</button>
-        </div>
+        <div className="docs-row"><b>Doc live teilen</b><span className="spacer" /><button type="button" className="icon-btn" aria-label="Schliessen" onClick={onClose}><Icon name="close" size={13} /></button></div>
+        <p>Andere schreiben auf ihrem Laptop mit, und ihr seht die Änderungen gegenseitig. Du bekommst einen <b>Link</b>, den du in <b>Teams</b> schickst; wer ihn in ASK einfügt, schreibt mit.</p>
+        <MsLogin ms={ms} onDone={refreshMs} notice={notice} />
+        {ms?.eingerichtet && ms?.angemeldet ? (
+          <div className="docs-row"><button type="button" className="btn small primary" disabled={busy} onClick={byLink}>{busy ? 'Erstellt den Link …' : 'Link erstellen'}</button>
+            <span className="muted small">legt das Doc in deinem OneDrive unter «ASK Docs» ab</span></div>
+        ) : null}
+        {folderWay || !ms?.eingerichtet ? (
+          <>
+            <p className="muted small">Über einen Ordner, den alle haben (OneDrive freigegeben, Teams-Kanal, Laufwerk der Schule): ASK legt dort «….askdoc» an, die anderen wählen ihn in der Liste der Docs mit dem Personen-Knopf.</p>
+            <div className="docs-row"><button type="button" className="btn small" disabled={busy} onClick={byFolder}>Ordner wählen …</button></div>
+          </>
+        ) : <button type="button" className="link-btn" onClick={() => setFolderWay(true)}>Lieber über einen Ordner teilen …</button>}
       </div>
     );
   }
@@ -122,6 +181,7 @@ function SharePanel({ path, share, onChanged, onClose, notice }) {
     <div className="docs-share">
       <div className="docs-row"><b>Geteilt</b><span className="spacer" /><button type="button" className="icon-btn" aria-label="Schliessen" onClick={onClose}><Icon name="close" size={13} /></button></div>
       {share.fehler ? <p className="docs-error">{share.fehler}</p> : null}
+      {share.link ? <LinkBox link={share.link} title={title} notice={notice} /> : null}
       <ul className="docs-people">
         {(share.personen || []).map((p, i) => (
           <li key={i}><Icon name="user" size={13} /> <b>{p.name}</b>{p.ich ? ' (du)' : ''}<span className="spacer" /><span className="muted small">{ago(p.zuletzt)}</span></li>
@@ -133,11 +193,42 @@ function SharePanel({ path, share, onChanged, onClose, notice }) {
           <ul className="docs-recent">{share.anderen.map((c, i) => <li key={i}><b>{c.name}</b> {ago(c.zeit)}: «{c.text}»</li>)}</ul>
         </>
       ) : null}
-      <p className="muted small ell" title={share.ordner}>Ordner: {share.ordner}</p>
+      {share.link ? null : <p className="muted small ell" title={share.ordner}>Ordner: {share.ordner}</p>}
       <div className="docs-row">
-        <button type="button" className="btn small" onClick={() => api().docsShowFolder(path)}>Ordner öffnen</button>
+        <button type="button" className="btn small" onClick={() => api().docsShowFolder(path)}>{share.link ? 'In OneDrive öffnen' : 'Ordner öffnen'}</button>
         <button type="button" className="btn small" onClick={stop}>Nicht mehr teilen</button>
       </div>
+    </div>
+  );
+}
+
+// Geteiltes Doc öffnen: Link aus Teams einfügen, oder einen Ordner wählen
+function JoinPanel({ onOpen, onClose, notice }) {
+  const [link, setLink] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [ms, refreshMs] = useMicrosoft();
+  const open = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    const r = await api().docsJoinLink(link.trim());
+    setBusy(false);
+    if (r?.ok) onOpen(r.path); else notice?.(r?.reason || 'Nicht geöffnet.');
+  };
+  const folder = async () => { const r = await api().docsJoin(); if (r?.ok) onOpen(r.path); else if (!r?.canceled) notice?.(r?.reason || 'Nicht geöffnet.'); };
+  return (
+    <div className="docs-share">
+      <div className="docs-row"><b>Geteiltes Doc öffnen</b><span className="spacer" /><button type="button" className="icon-btn" aria-label="Schliessen" onClick={onClose}><Icon name="close" size={13} /></button></div>
+      {ms?.eingerichtet ? (
+        <>
+          <MsLogin ms={ms} onDone={refreshMs} notice={notice} />
+          <form className="docs-link" onSubmit={open}>
+            <input autoFocus value={link} placeholder="Link aus Teams einfügen (https://…)" aria-label="Link zum geteilten Doc" onChange={(e) => setLink(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }} />
+            <button type="submit" className="btn small primary" disabled={busy || !link.trim().startsWith('https://') || !ms?.angemeldet}>{busy ? 'Öffnet …' : 'Öffnen'}</button>
+          </form>
+        </>
+      ) : <p className="muted small">Teilen per Link ist auf diesem ASK noch nicht eingerichtet.</p>}
+      <button type="button" className="link-btn" onClick={folder}>Oder einen geteilten Ordner «….askdoc» wählen …</button>
     </div>
   );
 }
@@ -549,7 +640,7 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
         { label: 'PDF (mit Word)', icon: 'file', run: () => exportAs('pdf') },
         { label: 'Markdown (.md)', icon: 'file', run: () => exportAs('md') },
       ]} /> : null}
-      {sharing ? <SharePanel path={path} share={share} notice={notice} onClose={() => setSharing(false)} onChanged={() => load(true)} /> : null}
+      {sharing ? <SharePanel path={path} title={title} share={share} notice={notice} onClose={() => setSharing(false)} onChanged={() => load(true)} /> : null}
       <div className="docs-tools" role="toolbar" aria-label="Formatierung">
         <select value={block} aria-label="Absatzart" onChange={(e) => { exec('formatBlock', e.target.value); setBlock(e.target.value); }}>
           {BLOCKS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -655,7 +746,7 @@ export default function DocsPane({ root, free, files, live, path, setPath, runni
     <div className="docs-pane">
       {path ? <DocEditor key={`${root}|${path}`} path={path} live={live} files={files} synced={synced} running={running} onBack={() => setPath('')}
         onAsk={onAsk} onDirty={(on) => { dirty.current = on; }} notice={notice} />
-        : <DocList docs={docs} free={free} onOpen={setPath} onCompose={onCompose} />}
+        : <DocList docs={docs} free={free} onOpen={setPath} onCompose={onCompose} notice={notice} />}
     </div>
   );
 }

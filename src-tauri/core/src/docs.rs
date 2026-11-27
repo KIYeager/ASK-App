@@ -721,6 +721,34 @@ impl App {
                     Some(dir) => or_fail(crate::docsync::join(f, &dir, &self.share_name()).map(|p| json!({ "ok": true, "path": p }))),
                 }
             }
+            // Teilen per Link über Microsoft (E83)
+            "docs:ms-status" => crate::msgraph::status(),
+            "docs:ms-login" => {
+                let host = self.host.clone();
+                match crate::msgraph::login(move |url| host.open_external(url)).await {
+                    Ok(v) => { let mut v = v; v["ok"] = json!(true); v }
+                    Err(e) => fail(e.to_string()),
+                }
+            }
+            "docs:ms-logout" => { crate::msgraph::logout(); json!({ "ok": true }) }
+            "docs:share-link" => {
+                let (rel, project, name) = (doc_rel(&s(a, 0)).unwrap_or_default(), f.to_string(), self.share_name());
+                let rt = tokio::runtime::Handle::current();
+                let r = tokio::task::spawn_blocking(move || {
+                    let token = crate::msgraph::app_token(rt.clone());
+                    crate::docsync::share_link(&project, &rel, &name, rt, token)
+                }).await.unwrap_or_else(|e| Err(anyhow::anyhow!("{e}")));
+                or_fail(r.map(|mut i| { i["ok"] = json!(true); i }))
+            }
+            "docs:join-link" => {
+                let (link, project, name) = (s(a, 0), f.to_string(), self.share_name());
+                let rt = tokio::runtime::Handle::current();
+                let r = tokio::task::spawn_blocking(move || {
+                    let token = crate::msgraph::app_token(rt.clone());
+                    crate::docsync::join_link(&project, &link, &name, rt, token)
+                }).await.unwrap_or_else(|e| Err(anyhow::anyhow!("{e}")));
+                or_fail(r.map(|p| json!({ "ok": true, "path": p })))
+            }
             "docs:unshare" => {
                 let rel = doc_rel(&s(a, 0)).unwrap_or_default();
                 let ok = self.confirm("Nicht mehr teilen?", "Das Doc bleibt bei dir, bekommt aber keine Änderungen der anderen mehr, und sie keine von dir. Der geteilte Ordner bleibt für die anderen.",
@@ -729,7 +757,9 @@ impl App {
             }
             "docs:show-folder" => {
                 let i = crate::docsync::info(f, &doc_rel(&s(a, 0)).unwrap_or_default());
-                if truthy(&i["geteilt"]) { self.host.open_path(&str_of(&i, "ordner")).await; }
+                if truthy(&i["geteilt"]) {
+                    if i["link"].is_string() { self.host.open_external(&str_of(&i, "link")); } else { self.host.open_path(&str_of(&i, "ordner")).await; }
+                }
                 Value::Null
             }
             "docs:save" => {

@@ -1416,3 +1416,5 @@ button.docs-quote:hover { filter: brightness(.97); }
 .docs-people, .docs-recent { list-style: none; padding: 0 !important; display: flex; flex-direction: column; gap: 3px; }
 .docs-people li { display: flex; align-items: center; gap: 6px; }
 .docs-recent li { font-size: 12px; overflow-wrap: anywhere; }
+.docs-linkbox { display: flex; flex-direction: column; gap: 6px; }
+.docs-linkbox input { width: 100%; padding: 5px 9px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--pane); color: var(--text); font: 12px var(--mono); }

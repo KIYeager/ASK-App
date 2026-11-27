@@ -26,7 +26,7 @@
 
 use crate::safe::{safe_join, safe_rel};
 use crate::settings;
-use crate::util::{now_ms, path_key, same_path, str_of, take_chars};
+use crate::util::{now_ms, same_path, str_of, take_chars};
 use anyhow::{bail, Result};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -274,6 +274,96 @@ pub fn diff_ops(base: &[(Id, String)], new: &[String], me: &str, clock: &mut u64
     ops
 }
 
+// ---------- Ablage: Ordner oder OneDrive ----------
+
+/// Wo die Protokolle liegen: ein Ordner auf dem Laptop (`FolderStore`, E82) oder ein Ordner in OneDrive, geöffnet über
+/// einen Link (`msgraph::GraphStore`, E83). Jede Person schreibt nur ihre eigene Datei und nur ans Ende.
+pub trait Store: Send {
+    /// Kurz für die Anzeige: Ordner oder «OneDrive (Link)»
+    fn describe(&self) -> String;
+    /// Link zum Weitergeben (nur OneDrive)
+    fn link(&self) -> Option<String> {
+        None
+    }
+    /// Gibt es dort ein geteiltes Doc?
+    fn check(&mut self) -> Result<()>;
+    /// Protokolle: (Kennung der Person, Grösse in Bytes)
+    fn logs(&mut self) -> Result<Vec<(String, u64)>>;
+    /// Protokoll einer Person ab Byte `from`
+    fn read_log(&mut self, who: &str, from: u64) -> Result<Vec<u8>>;
+    /// Ans eigene Protokoll anhängen
+    fn append(&mut self, text: &str) -> Result<()>;
+    /// Gesammeltes hochladen (OneDrive); im Ordner ist schon alles geschrieben
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn images(&mut self) -> Result<Vec<String>>;
+    fn get_image(&mut self, name: &str) -> Result<Vec<u8>>;
+    fn put_image(&mut self, name: &str, bytes: Vec<u8>) -> Result<()>;
+}
+
+/// Ablage in einem Ordner, den alle haben (OneDrive synchronisiert, Teams, Laufwerk der Schule)
+pub struct FolderStore {
+    pub dir: PathBuf,
+    me: String,
+}
+
+impl FolderStore {
+    pub fn new(dir: &Path, me: &str) -> FolderStore {
+        FolderStore { dir: dir.into(), me: me.into() }
+    }
+
+    /// Ordner für ein neues geteiltes Doc anlegen
+    pub fn create(dir: &Path, me: &str, title: &str) -> Result<FolderStore> {
+        std::fs::create_dir_all(dir.join(LOGS))?;
+        std::fs::create_dir_all(dir.join(IMAGES))?;
+        std::fs::write(dir.join("doc.json"), serde_json::to_string_pretty(&json!({ "format": 1, "titel": title, "erstellt": now_ms(), "app": "ASK" }))?)?;
+        Ok(FolderStore::new(dir, me))
+    }
+}
+
+impl Store for FolderStore {
+    fn describe(&self) -> String {
+        self.dir.to_string_lossy().to_string()
+    }
+    fn check(&mut self) -> Result<()> {
+        if !self.dir.join("doc.json").is_file() || !self.dir.join(LOGS).is_dir() {
+            bail!("In diesem Ordner liegt kein geteiltes Doc (doc.json und teilnehmer/ fehlen).");
+        }
+        Ok(())
+    }
+    fn logs(&mut self) -> Result<Vec<(String, u64)>> {
+        let Ok(entries) = std::fs::read_dir(self.dir.join(LOGS)) else { bail!("Der geteilte Ordner ist nicht erreichbar: {}", self.dir.display()) };
+        Ok(entries.flatten().filter_map(|e| {
+            let file = e.file_name().to_string_lossy().to_string();
+            let who = file.strip_suffix(".jsonl")?.to_string();
+            Some((who, e.metadata().ok()?.len()))
+        }).collect())
+    }
+    fn read_log(&mut self, who: &str, from: u64) -> Result<Vec<u8>> {
+        let mut f = std::fs::File::open(self.dir.join(LOGS).join(format!("{who}.jsonl")))?;
+        f.seek(SeekFrom::Start(from))?;
+        let mut buf = Vec::new();
+        f.take(MAX_LOG).read_to_end(&mut buf)?;
+        Ok(buf)
+    }
+    fn append(&mut self, text: &str) -> Result<()> {
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(self.dir.join(LOGS).join(format!("{}.jsonl", self.me)))?;
+        f.write_all(text.as_bytes())?; // ein Schreiben pro Änderung: nie eine halbe Zeile von uns
+        Ok(())
+    }
+    fn images(&mut self) -> Result<Vec<String>> {
+        Ok(std::fs::read_dir(self.dir.join(IMAGES)).map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default())
+    }
+    fn get_image(&mut self, name: &str) -> Result<Vec<u8>> {
+        Ok(std::fs::read(self.dir.join(IMAGES).join(name))?)
+    }
+    fn put_image(&mut self, name: &str, bytes: Vec<u8>) -> Result<()> {
+        std::fs::create_dir_all(self.dir.join(IMAGES))?;
+        Ok(std::fs::write(self.dir.join(IMAGES).join(name), bytes)?)
+    }
+}
+
 // ---------- Ein geteiltes Doc ----------
 
 fn hash(s: &str) -> String {
@@ -295,8 +385,8 @@ pub struct Shared {
     /// Projekt (Ordner) und Pfad des Docs darin
     pub project: String,
     pub rel: String,
-    /// Der geteilte Ordner `….askdoc`
-    pub dir: PathBuf,
+    /// Wo die Protokolle liegen
+    pub store: Box<dyn Store>,
     /// Eigene Kennung und Name
     pub me: String,
     pub name: String,
@@ -310,17 +400,14 @@ pub struct Shared {
 }
 
 impl Shared {
-    fn new(project: &str, rel: &str, dir: &Path, me: &str, name: &str) -> Shared {
-        Shared { project: project.into(), rel: rel.into(), dir: dir.into(), me: me.into(), name: name.into(), crdt: Crdt::default(),
+    fn new(project: &str, rel: &str, store: Box<dyn Store>, me: &str, name: &str) -> Shared {
+        Shared { project: project.into(), rel: rel.into(), store, me: me.into(), name: name.into(), crdt: Crdt::default(),
             offsets: HashMap::new(), written: String::new(), versions: VecDeque::new(), error: String::new() }
     }
 
-    /// Neu teilen: Ordner anlegen und den jetzigen Inhalt als erste Einträge schreiben
-    pub fn create(project: &str, rel: &str, dir: &Path, me: &str, name: &str, title: &str, content: &str) -> Result<Shared> {
-        std::fs::create_dir_all(dir.join(LOGS))?;
-        std::fs::create_dir_all(dir.join(IMAGES))?;
-        std::fs::write(dir.join("doc.json"), serde_json::to_string_pretty(&json!({ "format": 1, "titel": title, "erstellt": now_ms(), "app": "ASK" }))?)?;
-        let mut s = Shared::new(project, rel, dir, me, name);
+    /// Neu teilen: den jetzigen Inhalt als erste Einträge in eine neue, leere Ablage schreiben
+    pub fn create(project: &str, rel: &str, store: Box<dyn Store>, me: &str, name: &str, content: &str) -> Result<Shared> {
+        let mut s = Shared::new(project, rel, store, me, name);
         let mut ops = vec![Op::Hallo { wer: me.into(), name: name.into(), zeit: now_ms() }];
         let mut clock = 0;
         ops.extend(diff_ops(&[], &split_blocks(content), me, &mut clock, now_ms()));
@@ -328,31 +415,34 @@ impl Shared {
         for op in &ops {
             s.crdt.apply(op);
         }
+        s.store.flush()?;
         s.written = hash(content);
         s.remember();
         Ok(s)
     }
 
     /// Vorhandenes geteiltes Doc öffnen und alle Protokolle lesen
-    pub fn open(project: &str, rel: &str, dir: &Path, me: &str, name: &str) -> Result<Shared> {
-        if !dir.join("doc.json").is_file() || !dir.join(LOGS).is_dir() {
-            bail!("In diesem Ordner liegt kein geteiltes Doc (doc.json und teilnehmer/ fehlen).");
-        }
-        let mut s = Shared::new(project, rel, dir, me, name);
+    pub fn open(project: &str, rel: &str, mut store: Box<dyn Store>, me: &str, name: &str) -> Result<Shared> {
+        store.check()?;
+        let mut s = Shared::new(project, rel, store, me, name);
         s.read_logs()?;
         if s.crdt.names.get(me).map(String::as_str) != Some(name) {
             let hallo = Op::Hallo { wer: me.into(), name: name.into(), zeit: now_ms() };
             s.append(std::slice::from_ref(&hallo))?;
             s.crdt.apply(&hallo);
+            s.store.flush()?;
         }
         Ok(s)
     }
 
-    fn log_path(&self, who: &str) -> PathBuf {
-        self.dir.join(LOGS).join(format!("{who}.jsonl"))
+    /// Nur für die Anzeige, wenn sich die Ablage gerade nicht öffnen lässt
+    fn broken(project: &str, rel: &str, store: Box<dyn Store>, me: &str, name: &str, error: String) -> Shared {
+        let mut s = Shared::new(project, rel, store, me, name);
+        s.error = error;
+        s
     }
 
-    fn append(&self, ops: &[Op]) -> Result<()> {
+    fn append(&mut self, ops: &[Op]) -> Result<()> {
         if ops.is_empty() {
             return Ok(());
         }
@@ -361,20 +451,16 @@ impl Shared {
             text.push_str(&serde_json::to_string(op)?);
             text.push('\n');
         }
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(self.log_path(&self.me))?;
-        f.write_all(text.as_bytes())?; // ein Schreiben pro Änderung: nie eine halbe Zeile von uns
-        Ok(())
+        self.store.append(&text)
     }
 
     /// Neue Zeilen aus allen Protokollen; true, wenn sich etwas geändert hat
     fn read_logs(&mut self) -> Result<bool> {
         let mut changed = false;
-        let Ok(entries) = std::fs::read_dir(self.dir.join(LOGS)) else { bail!("Der geteilte Ordner ist nicht erreichbar: {}", self.dir.display()) };
-        for e in entries.flatten() {
-            let file = e.file_name().to_string_lossy().to_string();
-            let Some(who) = file.strip_suffix(".jsonl").filter(|w| valid_writer(w)).map(str::to_string) else { continue };
-            let Ok(meta) = e.metadata() else { continue };
-            let len = meta.len();
+        for (who, len) in self.store.logs()? {
+            if !valid_writer(&who) {
+                continue;
+            }
             let mut from = self.offsets.get(&who).copied().unwrap_or(0);
             if len < from {
                 from = 0; // Datei ersetzt (z. B. von OneDrive): alles nochmals, Einträge doppelt anwenden schadet nicht
@@ -382,10 +468,7 @@ impl Shared {
             if len == from || len > MAX_LOG {
                 continue;
             }
-            let mut f = std::fs::File::open(e.path())?;
-            f.seek(SeekFrom::Start(from))?;
-            let mut buf = Vec::new();
-            f.take(len - from).read_to_end(&mut buf)?;
+            let buf = self.store.read_log(&who, from)?;
             // Nur ganze Zeilen; der Rest kommt beim nächsten Mal
             let Some(end) = buf.iter().rposition(|b| *b == b'\n') else { continue };
             for line in String::from_utf8_lossy(&buf[..=end]).lines() {
@@ -478,6 +561,7 @@ impl Shared {
                 self.remember();
             }
         }
+        self.store.flush()?;
         self.read_logs()?;
         let wrote = self.write_local(seen.as_deref())?;
         self.sync_images();
@@ -486,31 +570,34 @@ impl Shared {
     }
 
     /// Bilder, auf die das Doc mit bilder/… zeigt, in beide Richtungen kopieren (nie überschreiben, nie löschen)
-    fn sync_images(&self) {
+    fn sync_images(&mut self) {
         let Ok(local_doc) = self.local_path() else { return };
         let Some(local_dir) = local_doc.parent().map(|d| d.join(IMAGES)) else { return };
-        let shared_dir = self.dir.join(IMAGES);
         let text = self.crdt.render();
         let re = regex::Regex::new(r"!\[[^\]]*\]\(bilder/([^)\s/\\]+)\)").expect("regex");
-        for cap in re.captures_iter(&text) {
-            let name = cap[1].to_string();
-            if !image_name_ok(&name) {
-                continue;
-            }
-            let (a, b) = (local_dir.join(&name), shared_dir.join(&name));
-            let copy = |from: &Path, to: &Path| {
-                if from.is_file() && !to.exists() && std::fs::metadata(from).map(|m| m.len() <= MAX_IMAGE).unwrap_or(false) {
-                    if let Some(d) = to.parent() {
-                        let _ = std::fs::create_dir_all(d);
+        let wanted: Vec<String> = re.captures_iter(&text).map(|c| c[1].to_string()).filter(|n| image_name_ok(n)).collect();
+        if wanted.is_empty() {
+            return;
+        }
+        let Ok(there) = self.store.images() else { return };
+        let doc_dir = self.rel.rsplit_once('/').map(|x| x.0.to_string()).unwrap_or_else(|| "docs".into());
+        for name in wanted {
+            let local = local_dir.join(&name);
+            if local.is_file() {
+                if !there.contains(&name) && std::fs::metadata(&local).map(|m| m.len() <= MAX_IMAGE).unwrap_or(false) {
+                    if let Ok(bytes) = std::fs::read(&local) {
+                        let _ = self.store.put_image(&name, bytes);
                     }
-                    let _ = std::fs::copy(from, to);
                 }
-            };
-            // Im Projekt nur über einen sicheren Pfad schreiben (keine Verknüpfung hinaus)
-            if !a.exists() && safe_join(Path::new(&self.project), &format!("{}/{IMAGES}/{name}", self.rel.rsplit_once('/').map(|x| x.0).unwrap_or("docs"))).is_ok() {
-                copy(&b, &a);
+            } else if there.contains(&name) && safe_join(Path::new(&self.project), &format!("{doc_dir}/{IMAGES}/{name}")).is_ok() {
+                // Im Projekt nur über einen sicheren Pfad schreiben (keine Verknüpfung hinaus)
+                if let Ok(bytes) = self.store.get_image(&name) {
+                    if bytes.len() as u64 <= MAX_IMAGE {
+                        let _ = std::fs::create_dir_all(&local_dir);
+                        let _ = std::fs::write(&local, bytes);
+                    }
+                }
             }
-            copy(&a, &b);
         }
     }
 
@@ -531,7 +618,7 @@ impl Shared {
     }
 
     pub fn info(&self) -> Value {
-        json!({ "geteilt": true, "ordner": self.dir.to_string_lossy(), "personen": self.people(), "anderen": self.recent_by_others(5), "fehler": self.error })
+        json!({ "geteilt": true, "ordner": self.store.describe(), "link": self.store.link(), "personen": self.people(), "anderen": self.recent_by_others(5), "fehler": self.error })
     }
 }
 
@@ -566,9 +653,13 @@ fn save_links(list: Vec<Value>) {
     settings::set(json!({ SETTING: list }));
 }
 
+fn same_doc(a_project: &str, a_rel: &str, b_project: &str, b_rel: &str) -> bool {
+    same_path(a_project, b_project) && a_rel.eq_ignore_ascii_case(b_rel)
+}
+
 /// Das geteilte Doc zu Projekt und Pfad, falls es eines ist
 pub fn find(project: &str, rel: &str) -> Option<Arc<Mutex<Shared>>> {
-    manager().docs.lock().iter().find(|d| { let d = d.lock(); same_path(&d.project, project) && d.rel.eq_ignore_ascii_case(rel) }).cloned()
+    manager().docs.lock().iter().find(|d| { let d = d.lock(); same_doc(&d.project, &d.rel, project, rel) }).cloned()
 }
 
 /// Darf dieser Ordner der geteilte Ordner sein? Nicht in einem Projekt, nicht bei den Chats ohne Projekt, nicht in den
@@ -588,18 +679,26 @@ pub fn check_place(dir: &str) -> Result<()> {
     Ok(())
 }
 
-fn add(shared: Shared) {
-    let link = json!({ "projekt": shared.project, "pfad": shared.rel, "ordner": shared.dir.to_string_lossy(), "ich": shared.me, "name": shared.name });
+/// Geteiltes Doc merken: `place` ist { ordner } oder { art: "link", link, laufwerk, kennung }
+fn add(shared: Shared, place: Value) {
+    let mut link = json!({ "projekt": shared.project, "pfad": shared.rel, "ich": shared.me, "name": shared.name });
+    if let (Some(l), Some(p)) = (link.as_object_mut(), place.as_object()) {
+        l.extend(p.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
     let mut list = links();
-    list.retain(|l| !(same_path(&str_of(l, "projekt"), &shared.project) && str_of(l, "pfad").eq_ignore_ascii_case(&shared.rel)));
+    list.retain(|l| !same_doc(&str_of(l, "projekt"), &str_of(l, "pfad"), &shared.project, &shared.rel));
     list.push(link);
     save_links(list);
     let mut docs = manager().docs.lock();
-    docs.retain(|d| { let d = d.lock(); !(same_path(&d.project, &shared.project) && d.rel.eq_ignore_ascii_case(&shared.rel)) });
+    docs.retain(|d| { let d = d.lock(); !same_doc(&d.project, &d.rel, &shared.project, &shared.rel) });
     docs.push(Arc::new(Mutex::new(shared)));
 }
 
-/// Doc teilen: in `parent` einen Ordner `<name>.askdoc` anlegen
+fn new_writer() -> String {
+    hex::encode(rand::random::<[u8; 5]>())
+}
+
+/// Doc über einen Ordner teilen: in `parent` einen Ordner `<name>.askdoc` anlegen (E82)
 pub fn share(project: &str, rel: &str, parent: &str, name: &str) -> Result<Value> {
     if find(project, rel).is_some() {
         bail!("Dieses Doc ist schon geteilt.");
@@ -610,14 +709,39 @@ pub fn share(project: &str, rel: &str, parent: &str, name: &str) -> Result<Value
     let base = crate::docs::slug(&title);
     let dir = (1..100).map(|n| Path::new(parent).join(if n == 1 { format!("{base}.{EXT}") } else { format!("{base}-{n}.{EXT}") })).find(|d| !d.exists())
         .ok_or_else(|| anyhow::anyhow!("Kein freier Name im Ordner."))?;
-    let me = hex::encode(rand::random::<[u8; 5]>());
-    let shared = Shared::create(project, &str_of(&doc, "path"), &dir, &me, name, &title, &str_of(&doc, "content"))?;
+    let me = new_writer();
+    let store = FolderStore::create(&dir, &me, &title)?;
+    let shared = Shared::create(project, &str_of(&doc, "path"), Box::new(store), &me, name, &str_of(&doc, "content"))?;
     let info = shared.info();
-    add(shared);
+    add(shared, json!({ "ordner": dir.to_string_lossy() }));
     Ok(info)
 }
 
-/// Geteiltes Doc öffnen (Ordner `….askdoc` oder ein Ordner, der genau eines enthält); legt es im Projekt unter docs/ an
+/// Doc per Link teilen (E83): Ordner in OneDrive anlegen, Link zum Bearbeiten für die Schule. Blockiert.
+pub fn share_link(project: &str, rel: &str, name: &str, rt: tokio::runtime::Handle, token: crate::msgraph::TokenFn) -> Result<Value> {
+    if find(project, rel).is_some() {
+        bail!("Dieses Doc ist schon geteilt.");
+    }
+    let doc = crate::docs::read(project, rel)?;
+    let title = str_of(&doc, "title");
+    let me = new_writer();
+    let store = crate::msgraph::create_shared(rt, token, &crate::docs::slug(&title), &title, &me)?;
+    let place = json!({ "art": "link", "link": store.link, "laufwerk": store.drive, "kennung": store.folder });
+    let shared = Shared::create(project, &str_of(&doc, "path"), Box::new(store), &me, name, &str_of(&doc, "content"))?;
+    let info = shared.info();
+    add(shared, place);
+    Ok(info)
+}
+
+/// Freier Pfad unter docs/ für ein geöffnetes geteiltes Doc
+fn free_rel(project: &str, title: &str) -> Result<String> {
+    let base = crate::docs::slug(title);
+    (1..1000).map(|n| if n == 1 { format!("docs/{base}.md") } else { format!("docs/{base}-{n}.md") })
+        .find(|r| safe_join(Path::new(project), r).map(|p| !p.exists()).unwrap_or(false))
+        .ok_or_else(|| anyhow::anyhow!("Kein freier Name unter docs/."))
+}
+
+/// Geteiltes Doc aus einem Ordner öffnen (`….askdoc` oder ein Ordner, der genau eines enthält); legt es im Projekt an
 pub fn join(project: &str, picked: &str, name: &str) -> Result<String> {
     let mut dir = PathBuf::from(picked);
     if !dir.join("doc.json").is_file() {
@@ -634,32 +758,48 @@ pub fn join(project: &str, picked: &str, name: &str) -> Result<String> {
     }
     let meta: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("doc.json"))?).unwrap_or(Value::Null);
     let title = { let t = str_of(&meta, "titel"); if t.trim().is_empty() { "Geteiltes Doc".to_string() } else { take_chars(&t, 120) } };
-    let base = crate::docs::slug(&title);
-    let rel = (1..1000).map(|n| if n == 1 { format!("docs/{base}.md") } else { format!("docs/{base}-{n}.md") })
-        .find(|r| safe_join(Path::new(project), r).map(|p| !p.exists()).unwrap_or(false))
-        .ok_or_else(|| anyhow::anyhow!("Kein freier Name unter docs/."))?;
-    let me = hex::encode(rand::random::<[u8; 5]>());
-    let mut shared = Shared::open(project, &rel, &dir, &me, name)?;
+    let rel = free_rel(project, &title)?;
+    let me = new_writer();
+    let mut shared = Shared::open(project, &rel, Box::new(FolderStore::new(&dir, &me)), &me, name)?;
     shared.write_local(None)?;
-    add(shared);
+    add(shared, json!({ "ordner": dir.to_string_lossy() }));
+    Ok(rel)
+}
+
+/// Geteiltes Doc über einen Link öffnen (aus Teams, OneDrive oder SharePoint); legt es im Projekt an. Blockiert.
+pub fn join_link(project: &str, link: &str, name: &str, rt: tokio::runtime::Handle, token: crate::msgraph::TokenFn) -> Result<String> {
+    if let Some(l) = links().iter().find(|l| str_of(l, "link") == link.trim() && same_path(&str_of(l, "projekt"), project)) {
+        return Ok(str_of(l, "pfad")); // schon da
+    }
+    let me = new_writer();
+    let store = crate::msgraph::open_link(rt, token, link, &me)?;
+    let title = { let t = store.title()?; if t.trim().is_empty() { "Geteiltes Doc".to_string() } else { take_chars(&t, 120) } };
+    let rel = free_rel(project, &title)?;
+    let place = json!({ "art": "link", "link": store.link, "laufwerk": store.drive, "kennung": store.folder });
+    let mut shared = Shared::open(project, &rel, Box::new(store), &me, name)?;
+    shared.write_local(None)?;
+    add(shared, place);
     Ok(rel)
 }
 
 /// Nicht mehr teilen: Das Doc bleibt im Projekt, der geteilte Ordner bleibt für die anderen
 pub fn unshare(project: &str, rel: &str) {
     let mut list = links();
-    list.retain(|l| !(same_path(&str_of(l, "projekt"), project) && str_of(l, "pfad").eq_ignore_ascii_case(rel)));
+    list.retain(|l| !same_doc(&str_of(l, "projekt"), &str_of(l, "pfad"), project, rel));
     save_links(list);
-    manager().docs.lock().retain(|d| { let d = d.lock(); !(same_path(&d.project, project) && d.rel.eq_ignore_ascii_case(rel)) });
+    manager().docs.lock().retain(|d| { let d = d.lock(); !same_doc(&d.project, &d.rel, project, rel) });
 }
 
 /// Speichern aus dem Editor oder von ASK: `None`, wenn das Doc nicht geteilt ist. Sonst wird die Änderung gegen den
-/// Stand `base` verglichen, mit dem Neuen der anderen zusammengeführt und geschrieben.
+/// Stand `base` verglichen, mit dem Neuen der anderen zusammengeführt und geschrieben. Die Protokolle der anderen liest
+/// hier nur die Ablage im Ordner; OneDrive liest der nächste Abgleich (keine Netzanfrage, während die Oberfläche wartet).
 pub fn save(project: &str, rel: &str, content: &str, base: Option<&str>) -> Option<Result<Value>> {
     let shared = find(project, rel)?;
     let mut s = shared.lock();
     let r = (|| {
-        s.read_logs()?;
+        if s.store.link().is_none() {
+            s.read_logs()?;
+        }
         s.edit(content, base)?;
         let render = s.crdt.render();
         s.write_local(None)?;
@@ -681,7 +821,8 @@ pub fn prompt_note(project: &str, rel: &str) -> String {
     let Some(s) = find(project, rel) else { return String::new() };
     let s = s.lock();
     let others: Vec<String> = s.people().iter().filter(|p| p["ich"] != true).map(|p| str_of(p, "name")).collect();
-    let mut out = format!("Geteiltes Doc (live, über den Ordner {}), schreiben mit: {}.", s.dir.display(), if others.is_empty() { "noch niemand".into() } else { others.join(", ") });
+    let via = if s.store.link().is_some() { "per Link über OneDrive".to_string() } else { format!("über den Ordner {}", s.store.describe()) };
+    let mut out = format!("Geteiltes Doc (live, {via}), schreiben mit: {}.", if others.is_empty() { "noch niemand".into() } else { others.join(", ") });
     let recent = s.recent_by_others(5);
     if !recent.is_empty() {
         let now = now_ms();
@@ -691,6 +832,36 @@ pub fn prompt_note(project: &str, rel: &str) -> String {
     out
 }
 
+/// Gemerkte geteilte Docs öffnen (blockiert: OneDrive braucht das Netz). Eine Ablage, die sich gerade nicht öffnen
+/// lässt, bleibt mit Fehler in der Liste und wird beim nächsten Start wieder versucht.
+fn load_all(rt: tokio::runtime::Handle) {
+    for l in links() {
+        let (project, rel, me) = (str_of(&l, "projekt"), str_of(&l, "pfad"), str_of(&l, "ich"));
+        let name = display_name(Some(str_of(&l, "name")));
+        if !valid_writer(&me) || !safe_rel(&rel) || find(&project, &rel).is_some() {
+            continue;
+        }
+        let store: Box<dyn Store> = if str_of(&l, "art") == "link" {
+            Box::new(crate::msgraph::GraphStore::new(rt.clone(), crate::msgraph::app_token(rt.clone()), &str_of(&l, "laufwerk"), &str_of(&l, "kennung"), &str_of(&l, "link"), &me))
+        } else {
+            Box::new(FolderStore::new(Path::new(&str_of(&l, "ordner")), &me))
+        };
+        // Beim Start ist der letzte Stand unbekannt: die Datei im Projekt gilt als Änderung gegen den Stand der Ablage
+        let shared = match Shared::open(&project, &rel, store, &me, &name) {
+            Ok(s) => s,
+            Err(e) => {
+                let store: Box<dyn Store> = Box::new(FolderStore::new(Path::new(&str_of(&l, "ordner")), &me));
+                let mut s = Shared::broken(&project, &rel, store, &me, &name, e.to_string());
+                if str_of(&l, "art") == "link" {
+                    s.store = Box::new(crate::msgraph::GraphStore::new(rt.clone(), crate::msgraph::app_token(rt.clone()), &str_of(&l, "laufwerk"), &str_of(&l, "kennung"), &str_of(&l, "link"), &me));
+                }
+                s
+            }
+        };
+        manager().docs.lock().push(Arc::new(Mutex::new(shared)));
+    }
+}
+
 /// Geteilte Docs laden und regelmässig abgleichen. `notify(projekt, pfad)` meldet geänderte Docs. Nur einmal.
 pub fn start(notify: impl Fn(&str, &str) + Send + Sync + 'static) {
     let m = manager();
@@ -698,21 +869,10 @@ pub fn start(notify: impl Fn(&str, &str) + Send + Sync + 'static) {
     if m.started.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
-    for l in links() {
-        let (project, rel, dir, me) = (str_of(&l, "projekt"), str_of(&l, "pfad"), str_of(&l, "ordner"), str_of(&l, "ich"));
-        let name = display_name(Some(str_of(&l, "name")));
-        if !valid_writer(&me) || !safe_rel(&rel) {
-            continue;
-        }
-        let shared = match Shared::open(&project, &rel, Path::new(&dir), &me, &name) {
-            Ok(s) => s,
-            Err(e) => { let mut s = Shared::new(&project, &rel, Path::new(&dir), &me, &name); s.error = e.to_string(); s }
-        };
-        // Beim Start ist der letzte Stand unbekannt: die Datei im Projekt gilt als Änderung gegen den Stand im Ordner
-        m.docs.lock().push(Arc::new(Mutex::new(shared)));
-    }
     let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
     rt.spawn(async move {
+        let h = tokio::runtime::Handle::current();
+        let _ = tokio::task::spawn_blocking(move || load_all(h)).await;
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(TICK_MS)).await;
             let docs: Vec<Arc<Mutex<Shared>>> = manager().docs.lock().clone();
@@ -744,8 +904,7 @@ pub fn display_name(ask_name: Option<String>) -> String {
 
 /// Ist dieses Doc geteilt? (für Liste und Systemprompt)
 pub fn is_shared(project: &str, rel: &str) -> bool {
-    let k = format!("{}|{}", path_key(project), rel.to_lowercase());
-    links().iter().any(|l| format!("{}|{}", path_key(&str_of(l, "projekt")), str_of(l, "pfad").to_lowercase()) == k)
+    links().iter().any(|l| same_doc(&str_of(l, "projekt"), &str_of(l, "pfad"), project, rel))
 }
 
 #[cfg(test)]
@@ -815,8 +974,8 @@ mod tests {
         let rel = crate::docs::create(&f1, "Gruppenarbeit", "## Einleitung\n\n…\n\n## Schluss\n\n…").unwrap();
         let content = str_of(&crate::docs::read(&f1, &rel).unwrap(), "content");
         let dir = shared.join("gruppenarbeit.askdoc");
-        let mut lea = Shared::create(&f1, &rel, &dir, "aaaa1111", "Lea", "Gruppenarbeit", &content).unwrap();
-        let mut tim = Shared::open(&f2, "docs/gruppenarbeit.md", &dir, "bbbb2222", "Tim").unwrap();
+        let mut lea = Shared::create(&f1, &rel, Box::new(FolderStore::create(&dir, "aaaa1111", "Gruppenarbeit").unwrap()), "aaaa1111", "Lea", &content).unwrap();
+        let mut tim = Shared::open(&f2, "docs/gruppenarbeit.md", Box::new(FolderStore::new(&dir, "bbbb2222")), "bbbb2222", "Tim").unwrap();
         assert!(tim.write_local(None).unwrap());
         assert_eq!(str_of(&crate::docs::read(&f2, "docs/gruppenarbeit.md").unwrap(), "content"), content);
         // Tim schreibt in der Datei (wie der Editor oder ASK), Lea gleichzeitig mit dem Editor auf einem älteren Stand
@@ -850,7 +1009,7 @@ mod tests {
         let f = p.to_string_lossy().to_string();
         let rel = crate::docs::create(&f, "X", "A").unwrap();
         let dir = tmp.path().join("x.askdoc");
-        let mut s = Shared::create(&f, &rel, &dir, "aaaa1111", "Lea", "X", &str_of(&crate::docs::read(&f, &rel).unwrap(), "content")).unwrap();
+        let mut s = Shared::create(&f, &rel, Box::new(FolderStore::create(&dir, "aaaa1111", "X").unwrap()), "aaaa1111", "Lea", &str_of(&crate::docs::read(&f, &rel).unwrap(), "content")).unwrap();
         // Ein Eintrag, der vorgibt, von Lea zu sein, in Tims Datei: zählt nicht. Eine halbe Zeile wartet.
         let fake = serde_json::to_string(&Op::Neu { id: (99, "aaaa1111".into()), nach: None, text: "gefälscht".into(), zeit: 1 }).unwrap();
         let ok = serde_json::to_string(&Op::Neu { id: (98, "cccc3333".into()), nach: None, text: "von Tim".into(), zeit: 1 }).unwrap();
@@ -859,5 +1018,104 @@ mod tests {
         s.tick().unwrap();
         let text = str_of(&crate::docs::read(&f, &rel).unwrap(), "content");
         assert!(text.contains("von Tim") && !text.contains("gefälscht"), "{text}");
+    }
+
+    /// Nachbau von Microsoft Graph: Dateien im Speicher, Ordnerkennung = Name des Ordners `….askdoc`
+    fn graph_mock(files: &parking_lot::Mutex<HashMap<String, Vec<u8>>>, req: &crate::askapi::test_http::Req) -> crate::askapi::test_http::Resp {
+        use crate::askapi::test_http::Resp;
+        let raw = req.path.split('?').next().unwrap_or("");
+        let path = percent_encoding::percent_decode_str(raw).decode_utf8_lossy().to_string();
+        let mut f = files.lock();
+        if req.headers.get("authorization").or(req.headers.get("Authorization")).map(String::as_str) != Some("Bearer t") {
+            return Resp::json(401, &json!({}));
+        }
+        if let Some(rest) = path.strip_prefix("/me/drive/root:/ASK Docs/") {
+            if let Some(name) = rest.strip_suffix("/doc.json:/content") {
+                f.insert(format!("{name}/doc.json"), req.body.clone().into_bytes());
+                return Resp::json(201, &json!({ "id": "x", "parentReference": { "driveId": "d1", "id": name } }));
+            }
+            let exists = f.keys().any(|k| k.starts_with(&format!("{rest}/")));
+            return if exists { Resp::json(200, &json!({ "id": rest })) } else { Resp::json(404, &json!({})) };
+        }
+        if let Some(rest) = path.strip_prefix("/drives/d1/items/") {
+            if let Some(folder) = rest.strip_suffix("/createLink") {
+                return Resp::json(200, &json!({ "link": { "webUrl": format!("https://tfbern.sharepoint.com/:f:/g/{folder}") } }));
+            }
+            let (folder, rel) = rest.split_once(":/").unwrap_or((rest, ""));
+            if let Some(dir) = rel.strip_suffix(":/children") {
+                let prefix = format!("{folder}/{dir}/");
+                let list: Vec<Value> = f.iter().filter(|(k, _)| k.starts_with(&prefix)).map(|(k, v)| json!({ "name": &k[prefix.len()..], "size": v.len() })).collect();
+                return if list.is_empty() { Resp::json(404, &json!({})) } else { Resp::json(200, &json!({ "value": list })) };
+            }
+            if let Some(file) = rel.strip_suffix(":/content") {
+                let key = format!("{folder}/{file}");
+                if req.method == "PUT" {
+                    f.insert(key, req.body.clone().into_bytes());
+                    return Resp::json(201, &json!({}));
+                }
+                let Some(data) = f.get(&key) else { return Resp::json(404, &json!({})) };
+                let range = req.headers.get("range").or(req.headers.get("Range")).and_then(|r| r.strip_prefix("bytes=")).and_then(|r| r.trim_end_matches('-').parse::<usize>().ok());
+                return match range {
+                    Some(from) if from >= data.len() => Resp::text(416, "text/plain", ""),
+                    Some(from) => Resp::text(206, "application/octet-stream", data[from..].to_vec()),
+                    None => Resp::text(200, "application/octet-stream", data.clone()),
+                };
+            }
+        }
+        if let Some(id) = path.strip_prefix("/shares/").and_then(|p| p.strip_suffix("/driveItem")) {
+            let link = String::from_utf8(base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, id.trim_start_matches("u!")).unwrap_or_default()).unwrap_or_default();
+            let folder = link.rsplit('/').next().unwrap_or("").to_string();
+            if !f.keys().any(|k| k.starts_with(&format!("{folder}/"))) {
+                return Resp::json(404, &json!({}));
+            }
+            return Resp::json(200, &json!({ "id": folder, "name": folder, "folder": {}, "parentReference": { "driveId": "d1" } }));
+        }
+        Resp::json(404, &json!({ "error": path }))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn zwei_laptops_per_link_ueber_onedrive() {
+        let files = Arc::new(parking_lot::Mutex::new(HashMap::<String, Vec<u8>>::new()));
+        let f = files.clone();
+        let server = crate::askapi::test_http::serve(move |req| graph_mock(&f, req)).await;
+        std::env::set_var("ASK_TEST_GRAPH", &server.url);
+        let tmp = tempfile::tempdir().unwrap();
+        let (p1, p2) = (tmp.path().join("lea"), tmp.path().join("tim"));
+        for d in [&p1, &p2] { std::fs::create_dir_all(d).unwrap(); }
+        let (f1, f2) = (p1.to_string_lossy().to_string(), p2.to_string_lossy().to_string());
+        let rt = tokio::runtime::Handle::current();
+        let out = tokio::task::spawn_blocking(move || {
+            let token: crate::msgraph::TokenFn = Arc::new(|| Ok("t".to_string()));
+            let rel = crate::docs::create(&f1, "Gruppenarbeit", "## Einleitung\n\n…\n\n## Schluss\n\n…").unwrap();
+            let content = str_of(&crate::docs::read(&f1, &rel).unwrap(), "content");
+            // Lea teilt: Ordner in OneDrive, Link für die Schule
+            let store = crate::msgraph::create_shared(rt.clone(), token.clone(), "gruppenarbeit", "Gruppenarbeit", "aaaa1111").unwrap();
+            let link = store.link.clone();
+            assert!(link.starts_with("https://tfbern.sharepoint.com/"), "{link}");
+            assert!(crate::msgraph::create_shared(rt.clone(), token.clone(), "gruppenarbeit", "Gruppenarbeit", "aaaa1111").unwrap().folder.ends_with("-2.askdoc"), "nie über ein vorhandenes");
+            let mut lea = Shared::create(&f1, &rel, Box::new(store), "aaaa1111", "Lea", &content).unwrap();
+            // Tim öffnet den Link aus Teams
+            let store2 = crate::msgraph::open_link(rt.clone(), token.clone(), &link, "bbbb2222").unwrap();
+            assert_eq!(store2.title().unwrap(), "Gruppenarbeit");
+            let mut tim = Shared::open(&f2, "docs/gruppenarbeit.md", Box::new(store2), "bbbb2222", "Tim").unwrap();
+            tim.write_local(None).unwrap();
+            assert_eq!(str_of(&crate::docs::read(&f2, "docs/gruppenarbeit.md").unwrap(), "content"), content);
+            // Beide schreiben gleichzeitig an verschiedenen Stellen
+            std::fs::write(p2.join("docs/gruppenarbeit.md"), content.replace("## Einleitung\n\n…", "## Einleitung\n\nText von Tim.")).unwrap();
+            std::fs::write(p1.join("docs/gruppenarbeit.md"), content.replace("## Schluss\n\n…", "## Schluss\n\nText von Lea.")).unwrap();
+            for _ in 0..2 { tim.tick().unwrap(); lea.tick().unwrap(); }
+            let a = str_of(&crate::docs::read(&f1, &rel).unwrap(), "content");
+            let b = str_of(&crate::docs::read(&f2, "docs/gruppenarbeit.md").unwrap(), "content");
+            assert_eq!(a, b);
+            assert!(a.contains("Text von Tim.") && a.contains("Text von Lea."), "{a}");
+            assert_eq!(lea.people().len(), 2);
+            assert_eq!(lea.info()["link"], json!(link));
+            // Ein falscher Link
+            assert!(crate::msgraph::open_link(rt.clone(), token.clone(), "https://tfbern.sharepoint.com/:f:/g/gibt-es-nicht", "cccc3333").is_err());
+            assert!(crate::msgraph::open_link(rt, token, "kein link", "cccc3333").is_err());
+            files.lock().keys().cloned().collect::<Vec<_>>()
+        }).await.unwrap();
+        assert!(out.iter().any(|k| k == "gruppenarbeit.askdoc/teilnehmer/aaaa1111.jsonl"));
+        assert!(out.iter().any(|k| k == "gruppenarbeit.askdoc/teilnehmer/bbbb2222.jsonl"));
     }
 }
