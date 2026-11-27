@@ -586,7 +586,9 @@ pub fn clean_title(text: &str) -> String {
     let line = re!(r"^(?i)(titel|title)\s*:\s*").replace(line, "");
     let line = line.trim_matches(|c: char| "«»\"'„“”*#`.!:".contains(c) || c.is_whitespace());
     let clean = re!(r"\s+").replace_all(line, " ").to_string();
-    if clean.chars().count() < 2 { String::new() } else { take_chars(&clean, 60) }
+    // Eine Frage oder ein ganzer Satz ist kein Titel (das Modell hat dann die Rückfrage von ASK übernommen):
+    // lieber den vorläufigen Titel behalten und nach dem nächsten Auftrag nochmals versuchen
+    if clean.chars().count() < 2 || clean.contains('?') || clean.split_whitespace().count() > 8 { String::new() } else { take_chars(&clean, 60) }
 }
 
 /// Rückfrage aus einer Regel eines Mods («nachfragen»): Mods können ASK nur strenger machen
@@ -1290,7 +1292,13 @@ impl Agent {
         self.save();
         self.event(json!({ "type": "done", "stopped": signal.is_cancelled(), "failed": failed })); // main.js: danach im Hintergrund merken (memory.rs)
         self.emit_changed();
-        if self.o.auto_title && self.inner.lock().chat["titleAuto"] == true && !signal.is_cancelled() {
+        let (title_auto, turns) = {
+            let g = self.inner.lock();
+            let n = g.chat["messages"].as_array().map(|m| m.iter().filter(|x| x["role"] == "user" && !truthy(&x["auto"])).count()).unwrap_or(0);
+            (g.chat["titleAuto"] == true, n)
+        };
+        // Höchstens in den ersten drei Aufträgen; danach bleibt der vorläufige Titel, falls keiner gepasst hat
+        if self.o.auto_title && title_auto && turns <= 3 && !signal.is_cancelled() {
             let me = self.clone();
             tokio::spawn(async move { me.auto_title().await });
         }
@@ -1302,7 +1310,9 @@ impl Agent {
         let (id, folder, request, answer) = {
             let g = self.inner.lock();
             let msgs = g.chat["messages"].as_array().cloned().unwrap_or_default();
-            let request = msgs.iter().find(|m| m["role"] == "user").map(|m| js_string(&m["content"])).unwrap_or_default();
+            // Die ersten Eingaben (höchstens drei): Folgt auf eine Rückfrage von ASK die Antwort der Person, gehört sie dazu
+            let request = msgs.iter().filter(|m| m["role"] == "user" && !truthy(&m["auto"])).take(3)
+                .map(|m| js_string(&m["content"])).filter(|t| !t.trim().is_empty()).collect::<Vec<_>>().join("\n---\n");
             let answer = msgs.iter().rev().find(|m| m["role"] == "assistant" && truthy(&m["content"])).map(|m| js_string(&m["content"])).unwrap_or_default();
             (js_string(&g.chat["id"]), (self.o.get_folder)(), request, answer)
         };
@@ -1314,11 +1324,11 @@ impl Agent {
         if model.is_empty() {
             return;
         }
-        let prompt = format!("Auftrag:\n{}\n\nAntwort (Anfang):\n{}", take_chars(&request, 1500), take_chars(&answer, 800));
+        let prompt = format!("Eingaben der Person:\n{}\n\nAntwort von ASK (Anfang, nur als Hilfe):\n{}", take_chars(&request, 1500), take_chars(&answer, 600));
         let req = ChatRequest {
             model,
             messages: vec![
-                json!({ "role": "system", "content": "Du gibst Chats einen Titel. Antworte nur mit dem Titel: 2 bis 6 Wörter auf Deutsch (Schweizer Rechtschreibung, ss statt ß), ohne Anführungszeichen, ohne Punkt am Ende. Nenne das Thema, nicht «Frage zu …»." }),
+                json!({ "role": "system", "content": "Du gibst Chats einen Titel. Der Titel fasst zusammen, was die Person will, nicht die Antwort. Antworte nur mit dem Titel: 2 bis 6 Wörter auf Deutsch (Schweizer Rechtschreibung, ss statt ß), ohne Anführungszeichen, ohne Punkt am Ende. Nie eine Frage, nie eine Rückfrage, auch wenn der Auftrag unklar ist; dann nenne das Thema, so gut es geht (z. B. «App-Idee besprechen»)." }),
                 json!({ "role": "user", "content": prompt }),
             ],
             tools: None,
@@ -2133,6 +2143,9 @@ mod tests {
         assert_eq!(clean_title("**Excel-Auswertung der Ausgaben**"), "Excel-Auswertung der Ausgaben");
         assert_eq!(clean_title("  \n"), "");
         assert_eq!(clean_title(&"x".repeat(100)).chars().count(), 60);
+        assert_eq!(clean_title("Für welche App genau? Sag mir mehr."), "", "Rückfrage ist kein Titel");
+        assert_eq!(clean_title("«Welche App meinst du?»"), "");
+        assert_eq!(clean_title("Ich habe für dich einen schönen Titel gefunden der passt"), "", "ganzer Satz");
     }
 
     #[test]
