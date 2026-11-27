@@ -1389,21 +1389,18 @@ button.docs-quote:hover { filter: brightness(.97); }
 @container (max-width: 480px) {
   .rt:has(> :nth-child(5)) button .icon { display: none; }
 }
-/* Anstreichen (E82): Leiste an der Markierung, Farben */
-.docs-scroll { position: relative; }
-.docs-selbar { position: absolute; z-index: 5; display: flex; align-items: center; gap: 2px; padding: 4px; max-width: calc(100% - 8px); flex-wrap: wrap;
-  background: var(--pane); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: var(--shadow); }
-.docs-selbar button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; border: 0; border-radius: 6px; background: none; color: var(--text); font-size: 12px; white-space: nowrap; }
-.docs-selbar button:hover { background: var(--hover); }
-.docs-selbar-sep { width: 1px; height: 18px; background: var(--line); margin: 0 3px; }
-.docs-selbar .docs-swatch { width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .15); }
-.docs-swatch.gelb, .docs-quote.gelb { --mark: rgba(242, 184, 85, .55); }
-.docs-swatch.gruen, .docs-quote.gruen { --mark: rgba(78, 182, 142, .5); }
-.docs-swatch.blau, .docs-quote.blau { --mark: rgba(85, 170, 207, .5); }
-.docs-swatch.rot, .docs-quote.rot { --mark: rgba(238, 113, 109, .5); }
-.docs-selbar .docs-swatch { background: var(--mark); }
-.docs-selbar .docs-swatch:hover { background: var(--mark); transform: scale(1.15); }
-.docs-quote.gelb, .docs-quote.gruen, .docs-quote.blau, .docs-quote.rot { border-left-color: var(--mark); background: color-mix(in srgb, var(--mark) 35%, transparent); }
+/* Anstreichen (E82): Farben, Knopf oben, Rechtsklick */
+:root { --mark-gelb: rgba(242, 184, 85, .7); --mark-gruen: rgba(78, 182, 142, .65); --mark-blau: rgba(85, 170, 207, .65); --mark-rot: rgba(238, 113, 109, .65); }
+.docs-split { display: inline-flex; }
+.docs-split .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.docs-split .btn:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0; padding-left: 6px; padding-right: 6px; }
+.docs-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-left: -2px; }
+.docs-dot.gelb, .docs-quote.gelb { --mark: var(--mark-gelb); }
+.docs-dot.gruen, .docs-quote.gruen { --mark: var(--mark-gruen); }
+.docs-dot.blau, .docs-quote.blau { --mark: var(--mark-blau); }
+.docs-dot.rot, .docs-quote.rot { --mark: var(--mark-rot); }
+.docs-dot { background: var(--mark); }
+.docs-quote.gelb, .docs-quote.gruen, .docs-quote.blau, .docs-quote.rot { border-left-color: var(--mark); background: color-mix(in srgb, var(--mark) 30%, transparent); }
 ::highlight(doc-gelb) { background-color: rgba(242, 184, 85, .4); }
 ::highlight(doc-gruen) { background-color: rgba(78, 182, 142, .35); }
 ::highlight(doc-blau) { background-color: rgba(85, 170, 207, .35); }

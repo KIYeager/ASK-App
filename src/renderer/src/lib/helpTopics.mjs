@@ -84,7 +84,7 @@ export const HELP_TOPICS = [
         a: 'Markiere im Doc eine Stelle, klick auf «Kommentar» und schreib, was ASK tun soll («kürzer», «Quelle?»). «An ASK senden» schickt den Kommentar an ASK; ASK ändert die Stelle und antwortet im Kommentar. Mit dem Pfeil oben rechts speicherst du das Doc als Word, PDF oder Markdown.',
         keys: 'doc kommentar kommentieren export word docx pdf markdown abgeben speichern' },
       { q: 'Im Doc etwas anstreichen oder erklären lassen',
-        a: 'Markiere Text im Doc. Darüber erscheint eine Leiste: «Erklären», «Grafik dazu», «Einfacher», «Beispiel» oder «Bitte …» für einen eigenen Wunsch; das geht an ASK. Mit einer Farbe streichst du die Stelle nur an. Der Stern oben gibt dir Feedback von ASK als Kommentare.',
+        a: 'Markiere Text im Doc und klick mit der rechten Maustaste darauf: «Erklären», «Grafik dazu», «Einfacher», «Beispiel» oder «Bitte an ASK …» gehen an ASK, «Anstreichen» markiert die Stelle farbig. Oder oben im Doc auf «Anstreichen» (der Pfeil daneben wählt die Farbe) bzw. auf «ASK». Der Stern ganz oben gibt dir Feedback von ASK als Kommentare.',
         keys: 'anstreichen markieren leuchtstift farbe erklären grafik diagramm bild feedback vorschläge' },
       { q: 'Ein Doc mit anderen zusammen schreiben',
         a: 'Öffne das Doc und klick oben auf den Personen-Knopf. Wähle einen Ordner, den alle haben (OneDrive, Teams oder ein Laufwerk der Schule), und gib ihn frei. Die anderen klicken in der Liste der Docs auf den Personen-Knopf und wählen den Ordner «….askdoc». Danach schreibt ihr gleichzeitig; bei OneDrive kommen Änderungen nach ein paar Sekunden an.',

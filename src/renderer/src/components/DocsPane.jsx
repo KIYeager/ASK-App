@@ -12,7 +12,7 @@ import { fileUrl } from '../lib/format.js';
 const SAVE_MS = 800;
 // Farben zum Anstreichen (wie COLORS in docs.rs); ohne Farbe gilt Gelb
 const COLORS = [['gelb', 'Gelb'], ['gruen', 'Grün'], ['blau', 'Blau'], ['rot', 'Rot']];
-// Schnellaktionen der Leiste an der Markierung: Text für ASK
+// Bitten an ASK zum markierten Text (Rechtsklick und Menü «ASK» oben): Text für ASK
 const ACTIONS = [
   ['erklaeren', 'Erklären', 'help', 'Erkläre mir diese Stelle verständlich. Antworte im Kommentar, ändere das Doc nicht.'],
   ['grafik', 'Grafik dazu', 'chart', 'Mach eine Grafik dazu (Diagramm oder Bild) und füge sie im Doc direkt nach dieser Stelle ein.'],
@@ -148,29 +148,6 @@ function Entry({ e }) {
   return <p className={`docs-entry ${e.von === 'ask' ? 'ask' : ''}`}><b>{e.von === 'ask' ? 'ASK' : 'Du'}</b> {e.text}</p>;
 }
 
-// Leiste direkt an der markierten Stelle: Schnellaktionen für ASK und Anstreichen
-function SelectionBar({ at, onAction, onCustom, onMark }) {
-  // Über der Markierung, mit der echten Höhe der Leiste; reicht der Platz oben nicht, darunter
-  const ref = useRef(null);
-  const [top, setTop] = useState(at.bottom + 6);
-  useLayoutEffect(() => {
-    const h = ref.current?.offsetHeight || 40;
-    setTop(at.top - h - 6 >= at.scrollTop ? at.top - h - 6 : at.bottom + 6);
-  }, [at]);
-  return (
-    <div ref={ref} className="docs-selbar" style={{ left: at.x, top }} role="toolbar" aria-label="Markierte Stelle" onMouseDown={(e) => e.preventDefault()}>
-      {ACTIONS.map(([key, label, icon]) => (
-        <button key={key} type="button" title={`${label}: geht an ASK`} onClick={() => onAction(key)}><Icon name={icon} size={13} /> {label}</button>
-      ))}
-      <button type="button" title="Eigene Bitte an ASK oder Notiz zur Stelle" onClick={onCustom}><Icon name="chat" size={13} /> Bitte …</button>
-      <span className="docs-selbar-sep" aria-hidden="true" />
-      {COLORS.map(([c, label]) => (
-        <button key={c} type="button" className={`docs-swatch ${c}`} title={`${label} anstreichen`} aria-label={`${label} anstreichen`} onClick={() => onMark(c)} />
-      ))}
-    </div>
-  );
-}
-
 function Thread({ t, onReply, onDone, onDelete, onShow }) {
   const [reply, setReply] = useState('');
   const [open, setOpen] = useState(false);
@@ -265,7 +242,9 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
   const [share, setShare] = useState(null);
   const [sharing, setSharing] = useState(false);
   const shared = useRef(false);
-  const [selBar, setSelBar] = useState(null); // { x, y, quote }
+  const [ctxMenu, setCtxMenu] = useState(null); // Rechtsklick auf markierten Text: { x, y, quote, range }
+  const [toolMenu, setToolMenu] = useState(null); // Menüs «Anstreichen» und «ASK» oben: { kind, x, y, quote }
+  const [markColor, setMarkColor] = useState('gelb');
 
   const setDirty = (on) => { dirty.current = on; onDirty?.(on); };
 
@@ -360,27 +339,32 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
   useLayoutEffect(() => { paintMarks(); }, [paintMarks, title, status]);
   useEffect(() => () => { for (const [c] of COLORS) window.CSS?.highlights?.delete(`doc-${c}`); }, []);
 
-  // Leiste an der Markierung: erscheint, wenn im Doc Text markiert ist (nach Maus oder Tastatur)
-  const placeBar = () => {
+  // Markierter Text im Doc (für Anstreichen und die Bitten an ASK)
+  const selected = () => {
     const sel = window.getSelection();
-    const box = scroller.current;
-    if (!sel || sel.isCollapsed || !sel.rangeCount || !ed.current?.contains(sel.anchorNode) || !box) { setSelBar(null); return; }
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !ed.current?.contains(sel.anchorNode)) return null;
     const quote = String(sel).trim().slice(0, 500);
-    if (!quote) { setSelBar(null); return; }
-    const r = sel.getRangeAt(0).getBoundingClientRect();
-    const b = box.getBoundingClientRect();
-    const x = Math.max(4, Math.min(r.left - b.left + box.scrollLeft, b.width - 330));
-    setSelBar({ x, top: r.top - b.top + box.scrollTop, bottom: r.bottom - b.top + box.scrollTop, scrollTop: box.scrollTop, quote });
+    return quote ? { quote, range: sel.getRangeAt(0).cloneRange() } : null;
   };
-  useEffect(() => {
-    // Nur nach einer Markierung im Doc; ein Klick anderswo blendet die Leiste aus
-    const off = (e) => {
-      if (e.target.closest?.('.docs-selbar')) return;
-      if (ed.current?.contains(e.target)) setTimeout(placeBar, 0); else setSelBar(null);
-    };
-    document.addEventListener('mouseup', off);
-    return () => document.removeEventListener('mouseup', off);
-  });
+  // Rechtsklick auf markierten Text: Menü von ASK. Ohne Markierung bleibt das Menü von Windows (Einfügen, Rechtschreibung).
+  const onContextMenu = (e) => {
+    const s = selected();
+    if (!s) return;
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, ...s });
+  };
+  const restore = (range) => {
+    if (!range) return;
+    ed.current?.focus();
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+  const openTool = (kind) => (e) => {
+    const s = selected();
+    const r = e.currentTarget.getBoundingClientRect();
+    setToolMenu({ kind, x: r.left, y: r.bottom + 4, quote: s?.quote || '' });
+  };
 
   const exec = (cmd, value = null) => {
     ed.current?.focus();
@@ -434,10 +418,8 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
     changed();
   };
 
-  const startComment = () => {
-    const sel = window.getSelection();
-    const quote = selBar?.quote || (sel && ed.current?.contains(sel.anchorNode) ? String(sel).trim().slice(0, 500) : '');
-    setSelBar(null);
+  const startComment = (given) => {
+    const quote = typeof given === 'string' ? given : (selected()?.quote || '');
     setDraft({ quote, text: '', farbe: quote ? 'gelb' : '' });
   };
   const comment = async ({ quote, text, farbe = '', toAsk }) => {
@@ -453,19 +435,25 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
     if (!text) return;
     if (await comment({ quote: draft.quote, text, farbe: draft.farbe || '', toAsk })) setDraft(null);
   };
-  const quickAction = async (key) => {
-    const quote = selBar?.quote;
+  const needText = () => notice?.('Markiere zuerst Text im Doc, dann geht es mit Rechtsklick oder den Knöpfen oben.');
+  const quickAction = async (key, quote) => {
     const text = ACTIONS.find((a) => a[0] === key)?.[3];
-    setSelBar(null);
+    if (!quote) { needText(); return; }
     window.getSelection()?.removeAllRanges();
-    if (quote && text) await comment({ quote, text, farbe: 'gelb', toAsk: true });
+    if (text) await comment({ quote, text, farbe: 'gelb', toAsk: true });
   };
-  const markOnly = async (farbe) => {
-    const quote = selBar?.quote;
-    setSelBar(null);
+  const markOnly = async (farbe, quote) => {
+    if (!quote) { needText(); return; }
+    setMarkColor(farbe);
     window.getSelection()?.removeAllRanges();
-    if (quote) await comment({ quote, text: '', farbe });
+    await comment({ quote, text: '', farbe });
   };
+  // Einträge der Menüs: Bitten an ASK, Anstreichen
+  const askItems = (quote) => [
+    ...ACTIONS.map(([key, label, icon]) => ({ label, icon, run: () => quickAction(key, quote) })),
+    { label: 'Bitte an ASK …', icon: 'chat', run: () => startComment(quote) },
+  ];
+  const colorItems = (quote) => COLORS.map(([c, label]) => ({ label, swatch: `var(--mark-${c})`, type: 'radio', checked: c === markColor, run: () => markOnly(c, quote) }));
   const feedback = async () => {
     await save();
     onAsk(`Gib mir Feedback und Vorschläge zum Doc ${path}: Was ist gut, was fehlt, was ist unklar oder falsch? Lies es mit doc_lesen und setz deine Vorschläge als Kommentare an die passenden Stellen (doc_kommentieren ohne id, mit zitat). Ändere das Doc selbst nicht.`);
@@ -575,8 +563,26 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
         {tool('chart', 'Tabelle einfügen', () => exec('insertHTML', '<table><thead><tr><th>Spalte 1</th><th>Spalte 2</th></tr></thead><tbody><tr><td><br></td><td><br></td></tr></tbody></table><p><br></p>'))}
         {txt('Trennlinie', '—', () => exec('insertHorizontalRule'))}
         <span className="spacer" />
-        <button type="button" className="btn small" title="Markierte Stelle kommentieren" onMouseDown={keep} onClick={startComment}><Icon name="chat" size={13} /> Kommentar</button>
+        <span className="docs-split">
+          <button type="button" className="btn small" title="Markierten Text anstreichen (auch mit Rechtsklick)" onMouseDown={keep}
+            onClick={() => markOnly(markColor, selected()?.quote)}><Icon name="marker" size={13} /><span className={`docs-dot ${markColor}`} aria-hidden="true" /> Anstreichen</button>
+          <button type="button" className="btn small" title="Farbe wählen" aria-label="Farbe zum Anstreichen wählen" onMouseDown={keep} onClick={openTool('farbe')}><Icon name="chevDown" size={12} /></button>
+        </span>
+        <button type="button" className="btn small" title="Zum markierten Text: erklären, Grafik, einfacher, Beispiel, eigene Bitte (auch mit Rechtsklick)" onMouseDown={keep}
+          onClick={openTool('ask')}><Icon name="spark" size={13} /> ASK <Icon name="chevDown" size={12} /></button>
+        <button type="button" className="icon-btn" title="Kommentar schreiben (zur Markierung oder zum ganzen Doc)" aria-label="Kommentar" onMouseDown={keep} onClick={() => startComment()}><Icon name="chat" size={14} /></button>
       </div>
+      {toolMenu ? <PopMenu x={toolMenu.x} y={toolMenu.y} label={toolMenu.kind === 'ask' ? 'ASK' : 'Farbe'} onClose={() => setToolMenu(null)}
+        items={toolMenu.kind === 'ask' ? askItems(toolMenu.quote) : colorItems(toolMenu.quote)} /> : null}
+      {ctxMenu ? <PopMenu x={ctxMenu.x} y={ctxMenu.y} label="Markierter Text" onClose={() => setCtxMenu(null)} items={[
+        { heading: true, label: 'ASK fragen' },
+        ...askItems(ctxMenu.quote),
+        { separator: true },
+        { label: 'Anstreichen', icon: 'marker', submenu: colorItems(ctxMenu.quote) },
+        { separator: true },
+        { label: 'Ausschneiden', hint: 'Ctrl+X', run: () => { restore(ctxMenu.range); document.execCommand('cut'); changed(); } },
+        { label: 'Kopieren', hint: 'Ctrl+C', run: () => { restore(ctxMenu.range); document.execCommand('copy'); } },
+      ]} /> : null}
       {link ? (
         <form className="docs-link" onSubmit={applyLink}>
           <input autoFocus value={link.url} aria-label="Adresse des Links" onChange={(e) => setLink({ ...link, url: e.target.value })}
@@ -594,11 +600,9 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
           </div>
         </div>
       ) : null}
-      <div className="docs-scroll" ref={scroller} onScroll={() => setSelBar(null)}>
-        {selBar ? <SelectionBar at={selBar} onAction={quickAction} onCustom={startComment} onMark={markOnly} /> : null}
+      <div className="docs-scroll" ref={scroller}>
         <div ref={ed} className="docs-page md" contentEditable suppressContentEditableWarning spellCheck lang="de-CH" role="textbox" aria-multiline="true"
-          aria-label={`Doc ${title}`} onInput={() => { setSelBar(null); changed(); }} onPaste={onPaste} onKeyDown={onKey}
-          onKeyUp={(e) => { if (e.shiftKey || e.key === 'Escape') { if (e.key === 'Escape') setSelBar(null); else placeBar(); } }} onBlur={() => { if (dirty.current) save(); }} />
+          aria-label={`Doc ${title}`} onInput={changed} onPaste={onPaste} onKeyDown={onKey} onContextMenu={onContextMenu} onBlur={() => { if (dirty.current) save(); }} />
       </div>
       <div className="docs-comments">
         <div className="docs-row docs-comments-head">
