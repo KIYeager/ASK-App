@@ -29,6 +29,7 @@ fn defaults() -> Map<String, Value> {
         "mode": "auto",
         "theme": "system",
         "betaUpdates": false,
+        "interactiveUi": true, // interaktive Antworten (E80)
     });
     match v {
         Value::Object(m) => m,

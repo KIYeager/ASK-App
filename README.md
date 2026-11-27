@@ -214,6 +214,10 @@ Mit `/goal <Ziel>` setzt man ein Ziel für den Chat (Leiste «◎ Ziel» über d
 
 **Vorlagen der TF Bern.** Gibt es `C:\Vorlagen` (Laptops der Schule), kennt das Modell die Vorlagen darin, liest sie und arbeitet in einer Kopie im Projekt; in `C:\Vorlagen` schreibt es nie. Mit `@` lässt sich eine Vorlage direkt wählen (E66).
 
+**Hilfe.** F1, `/hilfe` oder Profil → Hilfe öffnet ein Fenster mit Suche und Fragen nach Themen; Antworten führen mit einem Knopf an die passende Stelle, «ASK fragen» schreibt die Frage ins Eingabefeld (E79).
+
+**Interaktive Antworten.** Wie «Intelligent UI» bei ChatGPT: ASK kann Antworten mit Bausteinen zeigen (Diagramm, Quiz, Karteikarten, Rechner, Auswahl, Formular, Schritte, Vergleich, Hinweis; Block ```ask-ui mit JSON) oder mit eigenem HTML und JavaScript in einem abgeschotteten Rahmen ohne Internet (```ask-html, Protokoll `askui:`). Die Anleitung für das Modell ist der mitgelieferte Skill `interaktive-antworten`. Schalter unter Einstellungen → Chat (E80). Im Browser zeigt `npm run dev:ui` mit `?frei=1&interaktiv=demo` alle Bausteine.
+
 **Hilfe bei Fehlern.** Fehler zeigen, was zu tun ist, und «Details kopieren» für die Lehrperson (E69).
 
 **Einführung.** Beim ersten Start, nach dem Hinweis und der Anmeldung, zeigt die App vier kurze Karten, die auf die Teile der Oberfläche zeigen: Chats und Projekte links, Eingabefeld mit Web, Denkaufwand und Modell, Arbeitsschritte, Fragen und Rückfragen im Chat, Dateien rechts mit «Rückgängig». «Weiter» (oder Pfeil nach rechts), «Überspringen» (oder Esc). Die App merkt sich, dass die Einführung gesehen ist; wer ASK schon vor dieser Version benutzt hat, bekommt sie nicht von selbst. «Einführung zeigen» in den Einstellungen zeigt sie wieder.

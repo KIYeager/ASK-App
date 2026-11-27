@@ -104,6 +104,9 @@ function rowsOf(state, go, onVerbose, close) {
       control: <Toggle id="pref-todo" label="Aufgabenliste einklappen" checked={state.prefs?.todoCollapsed ?? true} onChange={(v) => api().setPrefs({ todoCollapsed: v })} /> },
     { pane: 'chat', title: 'Frühere Chats', text: 'ASK darf frühere Chats im selben Projekt durchsuchen und lesen (/chats).', keywords: 'verlauf',
       control: <Toggle label="Frühere Chats" checked={!!state.chatMemory} onChange={(v) => api().setChatMemory(v)} /> },
+    { pane: 'chat', title: 'Interaktive Antworten', text: 'ASK darf Antworten mit Diagrammen, Quiz, Rechnern, Auswahlknöpfen und kleinen Programmen ohne Internet zeigen. Aus: nur Text.',
+      keywords: 'intelligent ui interaktiv diagramm quiz rechner widget bausteine html',
+      control: <Toggle id="pref-interactive" label="Interaktive Antworten" checked={!!state.interactiveUi} onChange={(v) => api().setInteractiveUi(v)} /> },
     { pane: 'modelle', title: 'Prüfung im Modus «Auto»', text: 'Ein Modell in ASK prüft jeden Befehl und fragt nur bei Gefährlichem. Ein schnelles Modell genügt.',
       control: <ModelSelect id="review-model" label="Modell für die Prüfung" value={state.reviewModel} models={state.models} onChange={(v) => api().setSettings({ reviewModel: v })} /> },
     { pane: 'modelle', title: 'Hilfsagenten', text: 'ASK kann Teilfragen an Hilfsagenten abgeben, die nur lesen und recherchieren (bis 3 gleichzeitig). Ein schnelles Modell spart Zeit.',
@@ -567,7 +570,7 @@ export const SHORTCUTS = [
   ['Chats', [['Ctrl+N', 'Neuer Chat'], ['Ctrl+W', 'Tab schliessen'], ['Ctrl+Tab', 'Nächster Tab'], ['Ctrl+Shift+Tab', 'Vorheriger Tab'], ['Ctrl+1 … 9', 'Zu Tab springen'], ['Ctrl+Shift+T', 'Geschlossenen Tab wieder öffnen']]],
   ['Suchen', [['Ctrl+F', 'Im Chat suchen'], ['Enter', 'Nächster Treffer'], ['Shift+Enter', 'Vorheriger Treffer']]],
   ['Eingabe', [['Enter', 'Senden (während eines Auftrags: einreihen)'], ['Shift+Enter', 'Neue Zeile'], ['/', 'Befehle und Skills'], ['@', 'Datei erwähnen'], ['Esc', 'Auftrag stoppen']]],
-  ['Ansicht', [['Ctrl+,', 'Einstellungen'], ['Ctrl+O', 'Details zeigen'], ['Ctrl+T', 'Aufgabenliste ein- und ausklappen'], ['Ctrl +', 'Grösser'], ['Ctrl −', 'Kleiner'], ['Ctrl+0', 'Normale Grösse']]],
+  ['Ansicht', [['F1', 'Hilfe'], ['Ctrl+,', 'Einstellungen'], ['Ctrl+O', 'Details zeigen'], ['Ctrl+T', 'Aufgabenliste ein- und ausklappen'], ['Ctrl +', 'Grösser'], ['Ctrl −', 'Kleiner'], ['Ctrl+0', 'Normale Grösse']]],
   ['Mods und Fehler', [['Ctrl+Shift+M', 'Alle Mods ausschalten und neu laden'], ['Ctrl+R', 'ASK-Seite neu laden'], ['Ctrl+Shift+J', 'Entwicklertools der Oberfläche']]],
 ];
 

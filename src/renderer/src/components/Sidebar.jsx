@@ -58,7 +58,7 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
       { icon: 'pin', label: 'Gedächtnis', run: () => onOpen({ name: 'memory' }) },
       { icon: 'github', label: 'GitHub', run: () => onOpen({ name: 'github' }) },
       { separator: true },
-      { icon: 'help', label: 'Hilfe und Einführung', run: () => onOpen({ name: 'tour' }) },
+      { icon: 'help', label: 'Hilfe', hint: 'F1', run: () => onOpen({ name: 'help' }) },
       { icon: 'keyboard', label: 'Tastenkombinationen', run: () => onOpen({ name: 'shortcuts' }) },
       state.releasesUrl ? { icon: 'gift', label: 'Neu in ASK', run: () => api().openLink(state.releasesUrl) } : null,
       { separator: true },

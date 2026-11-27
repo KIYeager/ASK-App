@@ -36,6 +36,14 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 /// Was die Hülle beim Start übergibt
+/// Interaktive Antworten (ENTSCHEIDE E80): kurzer Hinweis im Systemprompt, die Anleitung steht im Skill
+const INTERACTIVE_HINT: &str = "\n\n# Interaktive Antworten\nDie Oberfläche kann Teile deiner Antwort als interaktive Bausteine zeigen: \
+einen Block ```ask-ui mit JSON (Diagramm, Quiz, Karteikarten, Rechner, Auswahl, Formular, Schritte, Vergleich, Hinweis) oder ```ask-html \
+mit eigenem HTML und JavaScript ohne Internet. Benutze sie von selbst, wo sie mehr helfen als Text: Zahlen vergleichen, üben und \
+abfragen, mit Werten spielen, aus Möglichkeiten wählen lassen, Schritte abhaken. Kurze Antworten und reine Erklärungen bleiben Text. \
+Bevor du einen Baustein schreibst, lies den Skill «interaktive-antworten» mit skill_lesen und halte dich genau an das Format; \
+schreib den Block nie in eine Datei, sondern direkt in die Antwort, mit einem Satz Text davor.";
+
 pub struct AppOptions {
     pub host: Arc<dyn Host>,
     pub ask_view: Arc<dyn AskView>,
@@ -715,7 +723,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             if truthy(&s["chatMemory"]) { "an" } else { "aus" },
             if truthy(&u["beta"]) { "an" } else { "aus" },
             if mods.is_empty() { "keine".to_string() } else { mods.join(", ") },
-        )
+        ) + if truthy(&s["interactiveUi"]) { INTERACTIVE_HINT } else { "" }
     }
 
     pub fn current_model(&self) -> String {
@@ -786,6 +794,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             "model": self.current_model(),
             "webSearch": truthy(&s["webSearch"]),
             "chatMemory": truthy(&s["chatMemory"]),
+            "interactiveUi": truthy(&s["interactiveUi"]),
             "memory": self.knowledge.memory_on(),
             "thinking": self.thinking_level(),
             "webSearchAvailable": self.ask.web_search(),
@@ -2027,6 +2036,11 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 Value::Null
             }
             "memory:set" => { settings::set(json!({ "chatMemory": truthy(&arg(a, 0)) })); self.push_state(); Value::Null }
+            "ui:set" => { settings::set(json!({ "interactiveUi": truthy(&arg(a, 0)) })); self.push_state(); Value::Null }
+            // Adresse wie askfile, nur mit askui und «ansicht» (http://askui.localhost/ansicht/<id> bzw. askui://ansicht/<id>)
+            "ui:put" => crate::uiblocks::put(&sarg(a, 0))
+                .map(|id| json!(format!("{}{id}", self.file_base.replace("askfile", "askui").replace("/datei/", "/ansicht/"))))
+                .unwrap_or(Value::Null),
             "web:set" => { settings::set(json!({ "webSearch": truthy(&arg(a, 0)) })); self.push_state(); Value::Null }
             "model:set" => {
                 settings::set(json!({ "model": sarg(a, 0) }));

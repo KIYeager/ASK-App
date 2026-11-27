@@ -20,7 +20,7 @@ use unicode_normalization::UnicodeNormalization;
 pub const MAX_FILE: usize = 100 * 1024; // Import und Speichern: höchstens 100 KB
 pub const MAX_DESCRIPTION: usize = 300;
 pub const MAX_NAME: usize = 40;
-pub const PROMPT_MAX: usize = 4600; // Liste im Systemprompt (dazu die 16 mitgelieferten Skills und der Hilfe-Skill, E70, E78)
+pub const PROMPT_MAX: usize = 4600; // Liste im Systemprompt (dazu die 17 mitgelieferten Skills und der Hilfe-Skill, E70, E78, E80)
 pub const PROMPT_DESCRIPTION: usize = 160;
 pub const MAX_SKILLS: usize = 100;
 /// Befehle der App: ein Skill mit diesem Namen liesse sich mit /name nicht aufrufen
