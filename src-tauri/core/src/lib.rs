@@ -48,6 +48,8 @@ pub mod knowledge;
 pub mod extensions;
 pub mod visual;
 pub mod uiblocks;
+pub mod docx;
+pub mod docs;
 
 // Welle 3
 pub mod agent;

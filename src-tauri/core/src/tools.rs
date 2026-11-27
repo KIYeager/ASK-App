@@ -426,6 +426,8 @@ pub struct ToolResult {
     /// false: die Bilder gehen nicht automatisch an das Modell
     pub view: Option<bool>,
     pub plan: Option<Value>,
+    /// Datei, die das Werkzeug neu angelegt hat (zählt für die Rückfrage wie von write_file geschrieben)
+    pub made: Option<String>,
 }
 
 impl ToolResult {
@@ -455,6 +457,7 @@ impl ToolResult {
             images: v.get("images").and_then(Value::as_array).map(|a| a.iter().map(js_string).collect()).unwrap_or_default(),
             view: v.get("view").and_then(Value::as_bool),
             plan: v.get("plan").filter(|p| !p.is_null()).cloned(),
+            made: None,
         }
     }
 
@@ -801,7 +804,7 @@ const NOT_CONNECTED: &str = "Nicht mit GitHub verbunden. Sag der Person: in der 
 
 enum Gate {
     Go(Arc<GitHub>, String),
-    Stop(ToolResult),
+    Stop(Box<ToolResult>),
 }
 
 fn github_gate(ctx: &ToolCtx) -> Result<Gate> {
@@ -810,11 +813,11 @@ fn github_gate(ctx: &ToolCtx) -> Result<Gate> {
         _ => bail!("GitHub ist hier nicht verfügbar."),
     };
     if !gh.connected() {
-        return Ok(Gate::Stop(ToolResult::new(false, NOT_CONNECTED, "nicht verbunden")));
+        return Ok(Gate::Stop(Box::new(ToolResult::new(false, NOT_CONNECTED, "nicht verbunden"))));
     }
     // Die Person gleicht gerade selbst im Bereich «GitHub» ab (main.js): nicht gleichzeitig
     if !ctx.panel && gh.locked(Path::new(&ctx.folder)) {
-        return Ok(Gate::Stop(ToolResult::new(false, "Die Person gleicht gerade selbst mit GitHub ab. Kurz warten und nochmals versuchen.", "Abgleich läuft")));
+        return Ok(Gate::Stop(Box::new(ToolResult::new(false, "Die Person gleicht gerade selbst mit GitHub ab. Kurz warten und nochmals versuchen.", "Abgleich läuft"))));
     }
     Ok(Gate::Go(gh, ctx.folder.clone()))
 }
@@ -873,7 +876,7 @@ async fn github_status(ctx: &ToolCtx) -> Result<ToolResult> {
 
 fn gate_stop(g: Gate) -> ToolResult {
     match g {
-        Gate::Stop(r) => r,
+        Gate::Stop(r) => *r,
         Gate::Go(..) => ToolResult::default(),
     }
 }
@@ -1813,6 +1816,8 @@ fn build_tools() -> Vec<Tool> {
             }),
         ),
     ];
+    // ASK Docs (docs.rs, ENTSCHEIDE E81)
+    all.extend(crate::docs::doc_tools());
     // Gedächtnis und eigene Skills (memorytools)
     all.extend(memorytools::knowledge_tools().into_iter().map(|k| Tool {
         name: k.name.into(),
@@ -1899,6 +1904,7 @@ fn describe_detail(name: &str, a: &Value) -> String {
         "server_stoppen" => format!("stoppen {}", tpl(a, "id")),
         "server_liste" => "Liste".into(),
         "bild_erstellen" => format!("{}{}", if a.get("vorlage").is_some_and(truthy) { format!("{}: ", js_string(&a["vorlage"])) } else { String::new() }, or_empty(a, "beschreibung")),
+        other if crate::docs::is_doc_tool(other) => crate::docs::describe(other, a),
         other => memorytools::describe(other, a),
     }
 }
@@ -1970,6 +1976,7 @@ async fn run(terminal: Option<&dyn TerminalEndpoint>, name: &str, args: &Value, 
         "server_liste" => server_liste(ctx),
         "bild_erstellen" => bild_erstellen(ctx, args).await,
         "mod_testen" => mod_testen(ctx, args).await,
+        other if crate::docs::is_doc_tool(other) => crate::docs::run(other, args, ctx).await.unwrap_or_else(|| bail!("Unbekanntes Werkzeug: {other}")),
         other => {
             let mctx = MemoryToolCtx {
                 folder: ctx.folder.clone(),

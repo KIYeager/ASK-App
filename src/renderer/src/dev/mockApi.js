@@ -475,6 +475,40 @@ function answerWait(id, value) {
   return true;
 }
 
+// ASK Docs (ENTSCHEIDE E81): Docs im Speicher, wie docs.rs (?docs=leer: keine)
+const mockDocs = {};
+const mockComments = {};
+let docSeq = 0;
+const docHash = (t) => `h${t.length}-${[...t].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 7)}`;
+const docTitle = (t, p) => (/^# (.+)$/m.exec(t)?.[1] || p.split('/').pop().replace(/\.md$/, '')).trim();
+if (!new URLSearchParams(location.search).get('docs')) {
+  mockDocs['docs/lernzettel-photosynthese.md'] = { modified: Date.now() - 3600e3, content: '# Lernzettel Photosynthese\n\n## Worum es geht\n\nPflanzen bauen mit **Licht**, Wasser und CO₂ *Zucker* auf und geben Sauerstoff ab.\n\n## Formel\n\n6 CO₂ + 6 H₂O → C₆H₁₂O₆ + 6 O₂\n\n## Ablauf\n\n1. Lichtreaktion in den Thylakoiden\n   1. Wasser wird gespalten\n2. Calvin-Zyklus im Stroma\n\n| Teil | Ort |\n| --- | --- |\n| Lichtreaktion | Thylakoid |\n| Calvin-Zyklus | Stroma |\n\n> Merksatz: Ohne Licht kein Zucker.\n\nMehr dazu: [Wikipedia](https://de.wikipedia.org/wiki/Photosynthese)\n' };
+  mockDocs['docs/projektplan.md'] = { modified: Date.now() - 86400e3, content: '# Projektplan\n\n## Ziel\n\n…\n' };
+  mockComments['docs/lernzettel-photosynthese.md'] = [{ id: 'k1a2b3c', zitat: 'Calvin-Zyklus im Stroma', erledigt: false, zeit: Date.now() - 600e3,
+    eintraege: [{ von: 'person', text: 'Kannst du hier ein Beispiel ergänzen?', zeit: Date.now() - 600e3 }, { von: 'ask', text: 'Beispiel mit Glukose ergänzt.', zeit: Date.now() - 500e3 }] }];
+}
+const docMsg = (p, t) => `[Kommentar im Doc ${p}, ${t.id}] ${t.zitat ? `zur Stelle «${t.zitat}»` : 'zum ganzen Doc'}: ${[...t.eintraege].reverse().find((e) => e.von === 'person')?.text || ''}`;
+const mockDocsApi = {
+  docsList: async () => ({ ok: true, docs: Object.entries(mockDocs).map(([path, d]) => ({ path, title: docTitle(d.content, path), modified: d.modified, size: d.content.length,
+    comments: (mockComments[path] || []).filter((c) => !c.erledigt).length })).sort((a, b) => b.modified - a.modified) }),
+  docsRead: async (path) => { const d = mockDocs[path]; return d ? { ok: true, path, title: docTitle(d.content, path), content: d.content, hash: docHash(d.content), modified: d.modified, comments: structuredClone(mockComments[path] || []) } : { ok: false, reason: `Das Doc «${path}» gibt es nicht.` }; },
+  docsSave: async (path, content, base) => {
+    const d = mockDocs[path];
+    if (d && base && docHash(d.content) !== base && d.content !== content) return { ok: false, conflict: true, content: d.content, hash: docHash(d.content) };
+    mockDocs[path] = { content, modified: Date.now() };
+    return { ok: true, path, hash: docHash(content), title: docTitle(content, path) };
+  },
+  docsCreate: async (title) => { const path = `docs/${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'doc'}${docSeq++ ? `-${docSeq}` : ''}.md`; mockDocs[path] = { content: `# ${title}\n\n`, modified: Date.now() }; return { ok: true, path }; },
+  docsDelete: async (path) => { delete mockDocs[path]; delete mockComments[path]; return { ok: true }; },
+  docsOpen: async () => null,
+  docsComments: async (path) => ({ ok: true, comments: structuredClone(mockComments[path] || []) }),
+  docsCommentAdd: async (path, zitat, text) => { const t = { id: `k${Math.random().toString(16).slice(2, 8)}`, zitat, erledigt: false, zeit: Date.now(), eintraege: [{ von: 'person', text, zeit: Date.now() }] }; (mockComments[path] ||= []).push(t); return { ok: true, thread: structuredClone(t), message: docMsg(path, t) }; },
+  docsCommentReply: async (path, id, text) => { const t = (mockComments[path] || []).find((x) => x.id === id); t.eintraege.push({ von: 'person', text, zeit: Date.now() }); return { ok: true, thread: { ...t }, message: docMsg(path, t) }; },
+  docsCommentDone: async (path, id, done) => { const t = (mockComments[path] || []).find((x) => x.id === id); t.erledigt = !!done; return { ok: true, thread: { ...t } }; },
+  docsCommentDelete: async (path, id) => { mockComments[path] = (mockComments[path] || []).filter((x) => x.id !== id); return { ok: true }; },
+  docsExport: async (path, format) => ({ ok: true, path: `C:\\Users\\lea\\Downloads\\${path.split('/').pop().replace(/\.md$/, `.${format}`)}` }),
+};
+
 export function install() {
   // Rechtsklick ins Textfeld oder auf markierten Text: wie der Hauptprozess (context-menu → ui:menu)
   document.addEventListener('contextmenu', (e) => {
@@ -530,6 +564,7 @@ export function install() {
     chatRename: async (_f, id, title) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.title = title; return true; },
     chatPin: async (_f, id, on) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.pinned = on; return true; },
     chatSearch: async (q) => (/proxmox|budget/i.test(q) ? [{ folder: FOLDER, name: 'Haushaltsbudget', id: 'c2', title: 'Budgetplan 2027', updated: Date.now(), snippets: ['Person: Budget für 2027 aufstellen …'] }] : []),
+    ...mockDocsApi,
     listDir: async (rel) => ({ ok: true, entries: state.free ? [] : tree[rel] || [] }),
     findFiles: async (q) => Object.values(tree).flat().filter((e) => e.path.toLowerCase().includes(String(q).toLowerCase())),
     importFiles: async () => ({ ok: true, paths: [] }),

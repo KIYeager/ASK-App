@@ -227,7 +227,7 @@ impl crate::askapi::TokenStore for AskTokenStore {
 }
 
 pub struct App {
-    host: Arc<dyn Host>,
+    pub(crate) host: Arc<dyn Host>,
     pub ask: Arc<AskSession>,
     github: Arc<GitHub>,
     github_trust: Arc<GithubTrust>,
@@ -411,7 +411,7 @@ impl App {
         self.st.lock().terminal.clone()
     }
 
-    fn workspace(&self) -> Arc<Workspace> {
+    pub(crate) fn workspace(&self) -> Arc<Workspace> {
         self.st.lock().workspace.clone()
     }
 
@@ -987,7 +987,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 let history = if truthy(&settings::get("chatMemory")) { crate::history::history_prompt(Path::new(&f), chat) } else { String::new() };
                 // Ohne Projekt (E78): keine Projektnotizen und keine Vorlagen für Dateien
                 let (notes, templates) = if free { (String::new(), String::new()) } else { (project_notes(&f), crate::vorlagen::system_prompt()) };
-                format!("{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, templates, a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch())
+                format!("{}{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, templates, crate::docs::system_prompt(&f), a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch())
             }
         });
         o.get_command_hint = Arc::new({ let f = f.clone(); move |chat: &str| read_instruction("befehle.md", &f, chat) });
@@ -1896,6 +1896,9 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             }
         }
         if let Some(r) = self.handle_extensions(channel, a).await {
+            return r;
+        }
+        if let Some(r) = self.handle_docs(channel, a).await {
             return r;
         }
         let agent = self.agent();
