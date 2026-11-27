@@ -43,10 +43,13 @@
     ${IfNot} ${Errors}
       StrCpy $6 1
     ${EndIf}
-    ReadRegStr $7 SHCTX "${UNINSTKEY}" "DisplayVersion"
-    ${If} $7 != ""
-    ${OrIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
-    ${OrIf} ${FileExists} "$LOCALAPPDATA\Programs\ask-desktop\Uninstall ASK.exe"
+    ; Eine frühere Fassung entfernt die Vorlage schon vor diesem Fenster; gemerkt in .onInit (installer.nsi)
+    !ifdef ASK_TEMPLATE
+      ${If} $AskWasInstalled = 1
+        StrCpy $6 1
+      ${EndIf}
+    !endif
+    ${If} ${FileExists} "$LOCALAPPDATA\Programs\ask-desktop\Uninstall ASK.exe"
       StrCpy $6 1
     ${EndIf}
 
@@ -54,7 +57,7 @@
     ReadEnvStr $9 ASK_INSTALLER_DEBUG
     ${If} $9 != ""
       FileOpen $9 "$9" w
-      FileWrite $9 "update=$6 updatemode=$UpdateMode instdir=$INSTDIR version=$7 exe=$INSTDIR\${MAINBINARYNAME}.exe$\r$\n"
+      FileWrite $9 "update=$6 updatemode=$UpdateMode instdir=$INSTDIR$\r$\n"
       FileClose $9
     ${EndIf}
 

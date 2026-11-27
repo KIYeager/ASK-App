@@ -76,6 +76,9 @@ ${StrLoc}
 
 Var PassiveMode
 Var UpdateMode
+; ASK: war ASK schon installiert? In .onInit gemerkt, bevor die Neuinstallation die alte Fassung entfernt
+Var AskWasInstalled
+!define ASK_TEMPLATE
 Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
@@ -555,6 +558,14 @@ Function .onInit
     !endif
 
     Call RestorePreviousInstallLocation
+  ${EndIf}
+
+  ; ASK: für «ASK wird aktualisiert» im Fortschrittsfenster (hooks.nsh, askStyleBanner)
+  StrCpy $AskWasInstalled 0
+  ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
+  ${If} $R0 != ""
+  ${OrIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+    StrCpy $AskWasInstalled 1
   ${EndIf}
 
 
