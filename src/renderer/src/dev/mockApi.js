@@ -491,6 +491,7 @@ if (!new URLSearchParams(location.search).get('docs')) {
 const mockShares = { 'docs/lernzettel-photosynthese.md': { geteilt: true, ordner: 'C:\\Users\\lea\\OneDrive - TF Bern\\Gruppe Bio\\lernzettel-photosynthese.askdoc', fehler: '',
   personen: [{ name: 'Tim', ich: false, zuletzt: Date.now() - 90e3 }, { name: 'Lea Muster', ich: true, zuletzt: Date.now() - 300e3 }, { name: 'Mia', ich: false, zuletzt: Date.now() - 3 * 3600e3 }],
   anderen: [{ name: 'Tim', zeit: Date.now() - 90e3, text: 'Teil Ort Lichtreaktion Thylakoid' }] } };
+const mockMs = { name: new URLSearchParams(location.search).get('ms') === 'neu' ? '' : 'Lea Muster' };
 const docMsg = (p, t) => `[Kommentar im Doc ${p}, ${t.id}] ${t.zitat ? `zur Stelle «${t.zitat}»` : 'zum ganzen Doc'}: ${[...t.eintraege].reverse().find((e) => e.von === 'person')?.text || ''}`;
 const mockDocsApi = {
   docsList: async () => ({ ok: true, docs: Object.entries(mockDocs).map(([path, d]) => ({ path, title: docTitle(d.content, path), modified: d.modified, size: d.content.length,
@@ -510,6 +511,12 @@ const mockDocsApi = {
   docsUnshare: async (path) => { delete mockShares[path]; return { ok: true }; },
   docsShareInfo: async (path) => mockShares[path] || { geteilt: false },
   docsShowFolder: async () => null,
+  // Teilen per Link (E83): ?ms=aus ohne App-Registrierung, ?ms=neu nicht angemeldet
+  docsMsStatus: async () => ({ eingerichtet: params.get('ms') !== 'aus', angemeldet: !!mockMs.name, name: mockMs.name }),
+  docsMsLogin: async () => { await wait(500); mockMs.name = 'Lea Muster'; return { ok: true, name: mockMs.name }; },
+  docsMsLogout: async () => { mockMs.name = ''; return { ok: true }; },
+  docsShareLink: async (path) => { const link = 'https://tfbern-my.sharepoint.com/:f:/g/personal/lea_muster/EaBcD123'; mockShares[path] = { geteilt: true, link, ordner: 'OneDrive (Link)', fehler: '', personen: [{ name: 'Lea Muster', ich: true, zuletzt: Date.now() }], anderen: [] }; return { ok: true, ...mockShares[path] }; },
+  docsJoinLink: async (link) => (/^https:\/\//.test(link) ? { ok: true, path: Object.keys(mockDocs)[0] } : { ok: false, reason: 'Das ist kein Link.' }),
   docsComments: async (path) => ({ ok: true, comments: structuredClone(mockComments[path] || []) }),
   docsCommentAdd: async (path, zitat, text, farbe = '') => { const t = { id: `k${Math.random().toString(16).slice(2, 8)}`, zitat, farbe, erledigt: false, zeit: Date.now(), eintraege: text ? [{ von: 'person', text, zeit: Date.now() }] : [] }; (mockComments[path] ||= []).push(t); return { ok: true, thread: structuredClone(t), message: docMsg(path, t) }; },
   docsCommentReply: async (path, id, text) => { const t = (mockComments[path] || []).find((x) => x.id === id); t.eintraege.push({ von: 'person', text, zeit: Date.now() }); return { ok: true, thread: { ...t }, message: docMsg(path, t) }; },

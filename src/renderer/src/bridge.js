@@ -185,6 +185,11 @@ export function install() {
   docsUnshare: (path) => call('docs:unshare', path),
   docsShareInfo: (path) => call('docs:share-info', path),
   docsShowFolder: (path) => call('docs:show-folder', path),
+  docsMsStatus: () => call('docs:ms-status'),
+  docsMsLogin: () => call('docs:ms-login'),
+  docsMsLogout: () => call('docs:ms-logout'),
+  docsShareLink: (path) => call('docs:share-link', path),
+  docsJoinLink: (link) => call('docs:join-link', link),
   onDocsSync: on('docs:sync'),
   // Mods und Kataloge (ENTSCHEIDE E71, E72)
   modsList: () => call('mods:list'),

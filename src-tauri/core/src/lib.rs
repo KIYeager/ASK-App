@@ -51,6 +51,7 @@ pub mod uiblocks;
 pub mod docx;
 pub mod docs;
 pub mod docsync;
+pub mod msgraph;
 
 // Welle 3
 pub mod agent;
