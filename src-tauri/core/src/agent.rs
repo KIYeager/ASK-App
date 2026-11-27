@@ -141,8 +141,8 @@ pub fn plan_tool() -> Value {
 }
 
 /// Werkzeuge, die im Planmodus erlaubt sind: nichts, was den Ordner oder etwas ausserhalb verändert
-const PLAN_ALLOWED: [&str; 17] = ["read_file", "list_files", "find_files", "search_text", "view_file", "web_search", "web_fetch", HELPER,
-    "chat_search", "chat_read", "github_status", "server_liste", "skill_lesen", "update_tasks", "frage_stellen", "plan_vorlegen", EFFORT_TOOL];
+const PLAN_ALLOWED: [&str; 19] = ["read_file", "list_files", "find_files", "search_text", "view_file", "web_search", "web_fetch", HELPER,
+    "chat_search", "chat_read", "github_status", "server_liste", "skill_lesen", "mod_liste", "mod_lesen", "update_tasks", "frage_stellen", "plan_vorlegen", EFFORT_TOOL];
 const PLAN_PROMPT: &str = "\n\n# Planmodus\nDie Person will zuerst einen Plan sehen. Ändere nichts: keine Befehle, keine Dateien schreiben. Sieh dir mit den Lese- und Suchwerkzeugen an, was du brauchst, frag bei Unklarem mit frage_stellen, und lege dann mit plan_vorlegen einen kurzen, konkreten Plan vor (Schritte, betroffene Dateien). Danach hörst du auf.";
 
 /// Verbindung zu ASK weg oder ASK kurz überlastet: so lange warten und nochmals versuchen (Sekunden)

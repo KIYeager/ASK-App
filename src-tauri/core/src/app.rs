@@ -1671,6 +1671,14 @@ impl App {
         self.host.pick_folder(title, "").await.filter(|p| !p.is_empty())
     }
 
+    pub(crate) async fn host_pick_save(&self, title: &str, name: &str, filters: crate::host::Filters) -> Option<String> {
+        self.host.pick_save_file(title, name, filters).await.filter(|p| !p.is_empty())
+    }
+
+    pub(crate) fn host_copy(&self, text: &str) {
+        self.host.clipboard_write(text);
+    }
+
     pub(crate) async fn host_open(&self, path: &str) {
         let _ = self.host.open_path(path).await;
     }

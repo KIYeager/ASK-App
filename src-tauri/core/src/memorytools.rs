@@ -190,17 +190,60 @@ pub fn knowledge_tools() -> Vec<KnowledgeTool> {
             }),
         },
         KnowledgeTool {
+            name: "mod_liste",
+            label: "Mods",
+            description: "Listet die Mods der Person (Name, Kennung, an oder aus, was sie ändern) und die mitgelieferten Beispiele. Benutze es, bevor du einen Mod änderst oder wenn die Person nach ihren Mods fragt.",
+            parameters: json!({ "type": "object", "properties": {} }),
+        },
+        KnowledgeTool {
+            name: "mod_lesen",
+            label: "Mod lesen",
+            description: "Liest einen Mod der Person: mod.json und den Inhalt seiner Textdateien (CSS, JavaScript …), oder nur eine Datei. Benutze es, um einen Mod zu erklären, Fehler darin zu finden oder ihn zu ändern.",
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Kennung des Mods aus mod_liste, z. B. «robo-helfer»" },
+                    "datei": { "type": "string", "description": "Optional: nur diese Datei, z. B. «mod.js»" },
+                },
+                "required": ["id"],
+            }),
+        },
+        KnowledgeTool {
+            name: "mod_testen",
+            label: "Mod testen",
+            description: concat!(
+                "Probiert einen Mod aus, auch wenn er aus ist: lädt ihn in einer unsichtbaren Testansicht von ASK mit Beispieldaten, ",
+                "führt Aktionen aus und liefert ein Bildschirmfoto der Oberfläche und einen Bericht (geladen, Fehler in der Konsole, angelegte Elemente, Bereiche, Knöpfe, Befehle). ",
+                "Benutze es nach mod_erstellen, bevor du der Person sagst, dass der Mod fertig ist, und um Fehler zu finden.",
+            ),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Kennung des Mods" },
+                    "farbschema": { "type": "string", "enum": ["dunkel", "hell"], "description": "Standard: dunkel" },
+                    "aktionen": {
+                        "type": "array",
+                        "description": "Optional, der Reihe nach vor dem Bildschirmfoto: {art:'ereignis', name:'fertig'|'gesendet'|'antwort'|'fehler'|'frage'|'chat'|'theme', daten:{…}} · {art:'klick', selektor:'.robo-helfer-figur'} · {art:'panel', titel:'Timer'} (Bereich des Mods öffnen) · {art:'eingabe', text:'/vokabeln Tiere'} · {art:'senden', text:'Hallo'} (Beispielauftrag mit Antwort) · {art:'warten', ms:1000}",
+                        "items": { "type": "object" },
+                    },
+                },
+                "required": ["id"],
+            }),
+        },
+        KnowledgeTool {
             name: "mod_erstellen",
             label: "Mod erstellen",
             description: concat!(
-                "Legt einen Mod für die Oberfläche von ASK an oder ersetzt einen gleichnamigen (Aussehen, /Befehle, Bereiche, Figuren, Regeln). ",
-                "Lies vorher den Skill «mod-erstellen» (Format und JavaScript-Schnittstelle). Nur, wenn die Person es wünscht. ",
+                "Legt einen Mod für die Oberfläche von ASK an oder ändert einen vorhandenen (Aussehen, /Befehle, Bereiche, Figuren, Regeln). ",
+                "Lies vorher den Skill «mod-erstellen» (Format und JavaScript-Schnittstelle), zum Ändern zuerst mod_lesen. Nur, wenn die Person es wünscht. ",
+                "Beim Ändern genügen die geänderten Dateien (mit «id»); ein leerer Inhalt löscht eine Datei. ",
                 "Die Person bestätigt das Speichern; der Mod ist danach aus, bis sie ihn unter Einstellungen → Mods nach einer Vorschau einschaltet.",
             ),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "dateien": { "type": "object", "description": "Dateiname → Inhalt (Text), mindestens «mod.json»; dazu z. B. «style.css», «mod.js», «bild.svg»", "additionalProperties": { "type": "string" } },
+                    "id": { "type": "string", "description": "Kennung eines vorhandenen Mods, der geändert wird (weglassen bei einem neuen Mod)" },
+                    "dateien": { "type": "object", "description": "Dateiname → Inhalt (Text). Neuer Mod: mindestens «mod.json», dazu z. B. «style.css», «mod.js», «bild.svg». Ändern: nur die geänderten Dateien, \"\" löscht eine.", "additionalProperties": { "type": "string" } },
                 },
                 "required": ["dateien"],
             }),
@@ -217,7 +260,9 @@ pub fn describe(name: &str, a: &Value) -> String {
         }
         "skill_lesen" | "skill_erstellen" => field(a, "name"),
         "mod_erstellen" => a.get("dateien").and_then(|d| d.get("mod.json")).map(js_string)
-            .and_then(|t| crate::mods::parse_manifest(&t).ok()).map(|m| m.name).unwrap_or_default(),
+            .and_then(|t| crate::mods::parse_manifest(&t).ok()).map(|m| m.name).unwrap_or_else(|| field(a, "id")),
+        "mod_testen" => field(a, "id"),
+        "mod_lesen" => [field(a, "id"), field(a, "datei")].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · "),
         _ => String::new(),
     }
 }
@@ -230,6 +275,8 @@ pub async fn run(name: &str, a: &Value, ctx: &MemoryToolCtx) -> Option<Result<To
         "skill_lesen" => skill_lesen(a, ctx),
         "skill_erstellen" => skill_erstellen(a, ctx).await,
         "mod_erstellen" => mod_erstellen(a, ctx).await,
+        "mod_liste" => mod_liste(ctx),
+        "mod_lesen" => mod_lesen(a, ctx),
         _ => return None,
     })
 }
@@ -302,19 +349,121 @@ fn skill_lesen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
     Ok(out)
 }
 
+fn need_mods(ctx: &MemoryToolCtx) -> Result<Arc<crate::mods::Mods>> {
+    ctx.knowledge.as_ref().and_then(|k| k.mods.clone()).ok_or_else(|| anyhow::anyhow!("Mods sind hier nicht verfügbar."))
+}
+
+/// Teile eines Mods in Worten («Aussehen, Code, 2 Befehle …»)
+fn mod_parts(m: &crate::mods::Manifest) -> String {
+    let mut parts = Vec::new();
+    if !m.style.is_empty() { parts.push("Aussehen".to_string()); }
+    if !m.script.is_empty() { parts.push("Code".to_string()); }
+    if !m.befehle.is_empty() { parts.push(format!("Befehle {}", m.befehle.iter().map(|b| format!("/{}", b.name)).collect::<Vec<_>>().join(" "))); }
+    if !m.anweisungen.is_empty() { parts.push("Anweisungen".to_string()); }
+    if !m.nachfragen.is_empty() { parts.push(format!("fragt vor: {}", m.nachfragen.join(", "))); }
+    parts.join(", ")
+}
+
+fn mod_liste(ctx: &MemoryToolCtx) -> Result<ToolOutput> {
+    let mods = need_mods(ctx)?;
+    let list = mods.list();
+    let mut out = String::new();
+    if list.is_empty() {
+        out.push_str("Die Person hat noch keine Mods.");
+    } else {
+        out.push_str("Mods der Person:");
+        for m in &list {
+            let state = if !m.fehler.is_empty() { format!("fehlerhaft: {}", m.fehler) } else if m.aktiv { "an".into() } else if m.geaendert { "geändert, wieder einschalten nötig".into() } else { "aus".into() };
+            out.push_str(&format!("\n- {} (id {}, {}, Version {}): {} [{}; {} Dateien]", m.manifest.name, m.manifest.id, state,
+                if m.manifest.version.is_empty() { "–" } else { &m.manifest.version }, m.manifest.beschreibung, mod_parts(&m.manifest), m.dateien));
+        }
+    }
+    let examples: Vec<String> = mods.examples().iter().filter(|e| e["installiert"] != true)
+        .map(|e| format!("{} (id {})", js_string(&e["name"]), js_string(&e["id"]))).collect();
+    if !examples.is_empty() {
+        out.push_str(&format!("\nNicht hinzugefügte Beispiele (Einstellungen → Mods → Beispiele): {}", examples.join(", ")));
+    }
+    Ok(ToolOutput::new(true, out, format!("{} Mods", list.len())))
+}
+
+/// Höchstens so viel Text aus den Dateien eines Mods auf einmal
+const MOD_READ_MAX: usize = 30_000;
+
+fn mod_lesen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
+    let mods = need_mods(ctx)?;
+    let id = crate::mods::slug(&field(a, "id"));
+    let Some(v) = mods.get(&id) else {
+        let ids: Vec<String> = mods.list().into_iter().map(|m| m.manifest.id).collect();
+        return Ok(ToolOutput::new(false, format!("Keinen Mod «{id}» gefunden. Vorhanden: {}", if ids.is_empty() { "keine".into() } else { ids.join(", ") }), "nicht gefunden"));
+    };
+    let only = field(a, "datei").replace('\\', "/");
+    let files = v["files"].as_array().cloned().unwrap_or_default();
+    let state = if v["aktiv"] == true { "an" } else if v["geaendert"] == true { "geändert seit dem Einschalten (aus)" } else { "aus" };
+    let mut out = format!("Mod «{}» (id {}, {state}). Dateien: {}", js_string(&v["name"]), id,
+        files.iter().map(|f| format!("{} ({} Bytes)", js_string(&f["path"]), f["size"])).collect::<Vec<_>>().join(", "));
+    if truthy(&v["fehler"]) {
+        out.push_str(&format!("\nFehler: {}", js_string(&v["fehler"])));
+    }
+    let mut shown = 0;
+    for f in &files {
+        let path = js_string(&f["path"]);
+        if !only.is_empty() && path != only {
+            continue;
+        }
+        let text = js_string(&f["text"]);
+        if text.is_empty() {
+            out.push_str(&format!("\n\n--- {path} ---\n(keine Textdatei)"));
+            continue;
+        }
+        if char_len(&out) + char_len(&text) > MOD_READ_MAX {
+            out.push_str(&format!("\n\n--- {path} ---\n(zu lang für dieses Mal; einzeln lesen mit datei: «{path}»)"));
+            continue;
+        }
+        out.push_str(&format!("\n\n--- {path} ---\n{text}"));
+        shown += 1;
+    }
+    if !only.is_empty() && shown == 0 && !files.iter().any(|f| js_string(&f["path"]) == only) {
+        return Ok(ToolOutput::new(false, format!("Im Mod «{id}» gibt es keine Datei «{only}»."), "nicht gefunden"));
+    }
+    Ok(ToolOutput::new(true, out, if only.is_empty() { format!("{id} gelesen") } else { format!("{id}/{only}") }))
+}
+
 async fn mod_erstellen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
-    let Some(mods) = ctx.knowledge.as_ref().and_then(|k| k.mods.clone()) else { bail!("Mods sind hier nicht verfügbar.") };
-    let files = crate::mods::files_from_json(a.get("dateien").unwrap_or(&Value::Null))?;
+    let mods = need_mods(ctx)?;
+    let given = crate::mods::files_from_json(a.get("dateien").unwrap_or(&Value::Null))?;
+    // Kennung: aus der neuen mod.json, sonst aus «id» (Ändern einzelner Dateien)
+    let new_manifest = given.iter().find(|(p, _)| p == "mod.json").and_then(|(_, d)| crate::mods::parse_manifest(&String::from_utf8_lossy(d)).ok());
+    let id = new_manifest.as_ref().map(|m| m.id.clone()).unwrap_or_else(|| crate::mods::slug(&field(a, "id")));
+    let exists = !id.is_empty() && mods.info(&id).is_some();
+    let mut merged: std::collections::BTreeMap<String, Vec<u8>> = if exists { mods.files(&id)?.into_iter().collect() } else { Default::default() };
+    let (mut added, mut changed, mut removed) = (Vec::new(), Vec::new(), Vec::new());
+    for (p, d) in given {
+        let path = match crate::mods::check_path(&p) {
+            Ok(path) => path,
+            Err(e) => return Ok(ToolOutput::new(false, format!("Nicht gespeichert: {e}"), "ungültig")),
+        };
+        if d.is_empty() {
+            if merged.remove(&path).is_some() { removed.push(path); }
+        } else if let Some(old) = merged.insert(path.clone(), d.clone()) {
+            if old != d { changed.push(path); }
+        } else {
+            added.push(path);
+        }
+    }
+    let files: Vec<(String, Vec<u8>)> = merged.into_iter().collect();
     let m = match crate::mods::Mods::check_files(&files) {
         Ok(m) => m,
         Err(e) => return Ok(ToolOutput::new(false, format!("Nicht gespeichert: {e}"), "ungültig")),
     };
-    let exists = mods.info(&m.id).is_some();
-    let names: Vec<String> = files.iter().map(|(p, d)| format!("{p} ({} Bytes)", d.len())).collect();
+    if added.is_empty() && changed.is_empty() && removed.is_empty() {
+        return Ok(ToolOutput::new(false, "Nichts geändert: Die Dateien sind schon so.".into(), "unverändert"));
+    }
+    let what = [("Neu", &added), ("Geändert", &changed), ("Gelöscht", &removed)].iter().filter(|(_, l)| !l.is_empty())
+        .map(|(t, l)| format!("{t}: {}", l.join(", "))).collect::<Vec<_>>().join(" · ");
     let ok = match &ctx.confirm {
         Some(confirm) => {
-            let message = if exists { format!("Mod «{}» ersetzen?", m.name) } else { format!("Mod «{}» speichern?", m.name) };
-            let detail = format!("{}\n\nDateien: {}\n\nDer Mod ist danach aus. Einschalten unter Einstellungen → Mods, nach einer Vorschau des Codes.", clip_line(&m.beschreibung, 200), names.join(", "));
+            let message = if exists { format!("Mod «{}» ändern?", m.name) } else { format!("Mod «{}» speichern?", m.name) };
+            let detail = format!("{}\n\n{what}\n\nDer Mod ist danach aus. Einschalten unter Einstellungen → Mods, nach einer Vorschau des Codes.", clip_line(&m.beschreibung, 200));
             confirm(message, detail, ConfirmOptions::default()).await.ok
         }
         None => false,
@@ -326,7 +475,7 @@ async fn mod_erstellen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
     if let Some(k) = &ctx.knowledge {
         k.changed();
     }
-    Ok(ToolOutput::new(true, format!("Mod «{}» gespeichert (aus). Sag der Person: Einstellungen → Mods → «{}» → Vorschau ansehen und einschalten.", info.manifest.name, info.manifest.name), format!("{} gespeichert", info.manifest.id)))
+    Ok(ToolOutput::new(true, format!("Mod «{}» gespeichert (aus; {what}). Sag der Person: Einstellungen → Mods → «{}» → Vorschau ansehen und einschalten.", info.manifest.name, info.manifest.name), format!("{} gespeichert", info.manifest.id)))
 }
 
 async fn skill_erstellen(a: &Value, ctx: &MemoryToolCtx) -> Result<ToolOutput> {
@@ -485,7 +634,7 @@ mod tests {
     fn werkzeugbeschreibungen_im_openai_format() {
         let specs: Vec<Value> = knowledge_tools().iter().map(KnowledgeTool::spec).collect();
         let names: Vec<&str> = specs.iter().map(|s| s["function"]["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["merken", "vergessen", "skill_lesen", "skill_erstellen", "mod_erstellen"]);
+        assert_eq!(names, ["merken", "vergessen", "skill_lesen", "skill_erstellen", "mod_liste", "mod_lesen", "mod_testen", "mod_erstellen"]);
         assert_eq!(specs[0]["type"], "function");
         assert_eq!(specs[0]["function"]["parameters"]["required"], json!(["text", "bereich"]));
         let keys: Vec<&String> = specs[0]["function"]["parameters"]["properties"].as_object().unwrap().keys().collect();
@@ -518,5 +667,24 @@ mod tests {
         assert!(!m.aktiv, "neu ist aus");
         let r = run_tool("mod_erstellen", json!({ "dateien": { "mod.json": "{}" } }), &ctx).await;
         assert!(!r.ok && r.output.contains("Nicht gespeichert"), "{}", r.output);
+        // Ansehen
+        let r = run_tool("mod_liste", json!({}), &ctx).await;
+        assert!(r.ok && r.output.contains("Neon (id neon, aus") && r.output.contains("Aussehen"), "{}", r.output);
+        let r = run_tool("mod_lesen", json!({ "id": "neon" }), &ctx).await;
+        assert!(r.ok && r.output.contains("--- style.css ---\n:root{--accent:#0ff}"), "{}", r.output);
+        let r = run_tool("mod_lesen", json!({ "id": "neon", "datei": "fehlt.js" }), &ctx).await;
+        assert!(!r.ok);
+        assert!(!run_tool("mod_lesen", json!({ "id": "gibts-nicht" }), &ctx).await.ok);
+        // Ändern: nur die geänderte Datei, eine neue dazu, die mod.json bleibt
+        let r = run_tool("mod_erstellen", json!({ "id": "neon", "dateien": { "style.css": ":root{--acc:#f0f}", "bild.svg": "<svg/>" } }), &ctx).await;
+        assert!(r.ok && r.output.contains("Neu: bild.svg") && r.output.contains("Geändert: style.css"), "{}", r.output);
+        let r = run_tool("mod_lesen", json!({ "id": "neon", "datei": "style.css" }), &ctx).await;
+        assert!(r.output.contains("--acc:#f0f") && r.output.contains("mod.json"), "{}", r.output);
+        // Löschen mit leerem Inhalt; die nötige style.css lässt sich nicht löschen
+        assert!(run_tool("mod_erstellen", json!({ "id": "neon", "dateien": { "bild.svg": "" } }), &ctx).await.ok);
+        let r = run_tool("mod_erstellen", json!({ "id": "neon", "dateien": { "style.css": "" } }), &ctx).await;
+        assert!(!r.ok && r.output.contains("style.css"), "{}", r.output);
+        let r = run_tool("mod_erstellen", json!({ "id": "neon", "dateien": { "style.css": ":root{--acc:#f0f}" } }), &ctx).await;
+        assert!(!r.ok && r.output.contains("Nichts geändert"), "{}", r.output);
     }
 }

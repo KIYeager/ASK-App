@@ -11,7 +11,9 @@ import { fillTemplate, modCommandFor } from './modCommands.mjs';
 
 export { fillTemplate, modCommandFor };
 
-const BASE = /Windows/i.test(navigator.userAgent) ? 'http://askmod.localhost/mod/' : 'askmod://mod/';
+// Testansicht (mod_testen, ENTSCHEIDE E75): Dateien kommen über den Pfad «test», den die Hülle nur Testfenstern liefert
+const TEST = new URLSearchParams(location.search).get('modtest');
+const BASE = `${/Windows/i.test(navigator.userAgent) ? 'http://askmod.localhost/' : 'askmod://'}${TEST ? 'test' : 'mod'}/`;
 export const EVENTS = ['gesendet', 'antwort', 'fertig', 'fehler', 'frage', 'chat', 'theme'];
 
 const listeners = new Map(); // Ereignis → Set von { mod, fn }
@@ -44,8 +46,47 @@ export function setModHost(h) {
 /** Ereignis an alle Mods; Fehler eines Mods stören die anderen und die App nicht */
 export function emitMod(event, data = {}) {
   for (const { mod, fn } of listeners.get(event) || []) {
-    try { fn(data); } catch (err) { console.error(`[Mod ${mod}]`, err); }
+    try { fn(data); } catch (err) { console.error(`[Mod ${mod}]`, err); testError(`Ereignis «${event}»: ${err?.message || err}`); }
   }
+}
+
+// ---------- Testansicht: Fehler sammeln und Aktionen für mod_testen ----------
+const testState = { done: false, fehler: [], css: null, code: null };
+function testError(text) {
+  if (TEST && testState.fehler.length < 50) testState.fehler.push(String(text).slice(0, 300));
+}
+if (TEST) {
+  window.addEventListener('error', (e) => testError(`${e.message || 'Fehler'}${e.filename ? ` (${e.filename.split('/').pop()}:${e.lineno})` : ''}`));
+  window.addEventListener('unhandledrejection', (e) => testError(`Promise: ${e.reason?.message || e.reason}`));
+  const orig = console.error.bind(console);
+  console.error = (...args) => { testError(args.map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : JSON.stringify(a))).join(' ')); orig(...args); };
+  window.__modtest = {
+    get done() { return testState.done; },
+    emit: (name, data) => { emitMod(name, data || {}); return `«${name}» ausgelöst`; },
+    click: (sel) => {
+      let el = null;
+      try { el = document.querySelector(sel); } catch { return `ungültiger Selektor: ${sel}`; }
+      if (!el) return `nicht gefunden: ${sel}`;
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      el.click();
+      return `geklickt: ${sel}`;
+    },
+    panel: (titel) => {
+      const tabs = [...document.querySelectorAll('.mod-tab')];
+      const tab = tabs.find((t) => !titel || t.textContent.trim() === titel) || tabs[0];
+      if (!tab) return 'kein Bereich eines Mods';
+      tab.click();
+      return `Bereich «${tab.textContent.trim()}» geöffnet`;
+    },
+    input: (text) => { host.composer?.setText(String(text)); return 'eingetippt'; },
+    send: (text) => { host.send?.(String(text)); return 'gesendet (Beispielantwort)'; },
+    report: () => ({
+      css: testState.css, code: testState.code, fehler: testState.fehler,
+      elemente: document.querySelectorAll(`[class*="${CSS.escape(TEST)}"]`).length,
+      panels: store.panels.map((p) => p.titel), knoepfe: store.buttons.map((b) => `${b.symbol} ${b.titel}`), befehle: store.commands.map((c) => c.cmd),
+    }),
+  };
 }
 
 function fileUrl(m, path) {
@@ -125,6 +166,7 @@ function loadScript(src) {
     const s = document.createElement('script');
     s.src = src;
     s.async = false;
+    s.crossOrigin = 'anonymous'; // sonst meldet der Browser Fehler im Mod nur als «Script error.»
     s.onload = () => resolve(true);
     s.onerror = () => resolve(false);
     document.head.appendChild(s);
@@ -145,6 +187,8 @@ export async function loadMods() {
       link.rel = 'stylesheet';
       link.href = fileUrl(m, m.style);
       link.dataset.mod = m.id;
+      link.onload = () => { testState.css = true; };
+      link.onerror = () => { testState.css = false; testError(`${m.style} liess sich nicht laden`); };
       document.head.appendChild(link);
     }
     for (const b of m.befehle || []) templates.push({ cmd: `/${b.name}`, text: `${b.beschreibung || 'Befehl'} (Mod ${m.name})`, mod: m.id, prompt: b.prompt });
@@ -154,9 +198,12 @@ export async function loadMods() {
   for (const m of list.filter((x) => x.script)) {
     window.ASK = apiFor(m);
     const ok = await loadScript(fileUrl(m, m.script));
-    if (!ok) toast(`Mod «${m.name}» liess sich nicht laden.`, 6000);
+    testState.code = ok;
+    if (!ok) { toast(`Mod «${m.name}» liess sich nicht laden.`, 6000); testError(`${m.script} liess sich nicht laden`); }
   }
   try { delete window.ASK; } catch { window.ASK = undefined; }
+  // CSS lädt parallel; kurz warten, damit der Bericht stimmt
+  if (TEST) setTimeout(() => { testState.done = true; }, 400);
   return store.loaded;
 }
 

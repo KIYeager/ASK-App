@@ -342,6 +342,10 @@ function ModsPane({ state, go, onCompose }) {
         <button type="button" className="btn" onClick={() => api().modsFolder()}>Ordner öffnen</button>
       </div>
       <Message msg={msg} />
+      <Row title="Anleitung für andere KI" text="Mit Claude, ChatGPT, Codex oder Copilot einen Mod bauen: Anleitung kopieren und in den Chat einfügen, oder als SKILL.md speichern (in Claude als Skill «ask-mods»). Den fertigen Ordner holst du mit «Aus Ordner importieren …».">
+        <button type="button" className="btn small" onClick={async () => { const r = await api().modsGuide('kopieren'); setMsg(r?.ok ? { text: 'Anleitung kopiert. Füge sie im Chat der anderen KI ein und beschreibe deinen Mod.' } : { bad: true, text: r?.reason || 'Nicht kopiert.' }); }}>Kopieren</button>
+        <button type="button" className="btn small" onClick={async () => { const r = await api().modsGuide('speichern'); if (r?.path) setMsg({ text: `Gespeichert: ${r.path}` }); else if (r?.ok === false && !r.canceled) setMsg({ bad: true, text: r.reason }); }}>Speichern …</button>
+      </Row>
       <h3>Deine Mods</h3>
       {data === null ? <p className="muted">Lädt …</p> : !mods.length ? <p className="muted small">Noch keine Mods. Probier ein Beispiel aus oder lass ASK einen erstellen.</p> : mods.map((m) => (
         <Row key={m.id} title={<>{m.name} <span className="s-ver">{m.version}</span></>}

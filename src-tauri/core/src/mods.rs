@@ -345,6 +345,12 @@ impl Mods {
         files.into_iter().map(|p| Ok((p.clone(), std::fs::read(folder.join(&p))?))).collect()
     }
 
+    /// Alle Dateien eines installierten Mods (zum Ändern einzelner Dateien mit mod_erstellen)
+    pub fn files(&self, id: &str) -> Result<Vec<(String, Vec<u8>)>> {
+        check_id(id)?;
+        Self::read_folder(&self.dir.join(id))
+    }
+
     pub fn remove(&self, id: &str) -> Result<bool> {
         check_id(id)?;
         let root = self.dir.join(id);
@@ -408,6 +414,14 @@ impl Mods {
             return None;
         }
         Some(data)
+    }
+
+    /// Datei für die Testansicht (Werkzeug mod_testen, E75): auch wenn der Mod aus ist, aber nur mit dem aktuellen
+    /// Fingerabdruck und gültiger mod.json. Die Hülle liefert sie nur an die unsichtbaren Testfenster.
+    pub fn test_file(&self, id: &str, hash: &str, path: &str) -> Option<Vec<u8>> {
+        let info = self.info(id).filter(|m| m.fehler.is_empty() && m.hash == hash)?;
+        let p = check_path(path).ok()?;
+        std::fs::read(self.dir.join(&info.manifest.id).join(&p)).ok()
     }
 
     /// Zusatzanweisungen der aktiven Mods für den Systemprompt

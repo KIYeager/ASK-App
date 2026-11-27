@@ -87,6 +87,10 @@ pub fn page_event(label: &str, event: PageEvent) {
 
 /// Darf diese Webansicht dorthin navigieren?
 pub fn navigation_allowed(label: &str, url: &str) -> bool {
+    // Testansicht für Mods (E75): nur die eigene Oberfläche, nie eine Seite im Internet
+    if is_mod_test(label) {
+        return url::Url::parse(url).is_ok_and(|u| crate::views::is_own_ui_url(&u));
+    }
     let root = if label == views::BROWSER {
         shell().views.browser_file_root.lock().clone()
     } else {
@@ -407,6 +411,11 @@ fn hidden_window(label: &str, url: WebviewUrl, incognito: bool, opts: Watch) -> 
     Ok(wv)
 }
 
+/// Fenster der Testansicht für Mods (mod_testen)
+pub fn is_mod_test(label: &str) -> bool {
+    label.starts_with("modtest-")
+}
+
 pub struct Pages;
 
 #[async_trait]
@@ -432,6 +441,30 @@ impl PageProvider for Pages {
         let label = format!("unsichtbar-{}", SEQ.fetch_add(1, Ordering::SeqCst));
         hidden_window(&label, WebviewUrl::External("about:blank".parse()?), true, Watch { screencast: true, input: false })?;
         Ok(Arc::new(WebPage { label, pane: false }))
+    }
+
+    async fn ui_test(&self, query: &str, dark: bool) -> Result<Arc<dyn Page>> {
+        let label = format!("modtest-{}", SEQ.fetch_add(1, Ordering::SeqCst));
+        let path = format!("index.html?{query}");
+        let url = match std::env::var("ASK_DEV_UI") {
+            Ok(u) if cfg!(debug_assertions) && u.starts_with("http://localhost") => WebviewUrl::External(format!("{}/{path}", u.trim_end_matches('/')).parse()?),
+            _ => WebviewUrl::App(path.into()),
+        };
+        let before = load_gen(&label);
+        // incognito: eigener, leerer Speicher; keine Berechtigungen (capabilities gelten nur für «ui»)
+        let wv = hidden_window(&label, url, true, Watch::default())?;
+        let _ = wv.window().set_theme(Some(if dark { tauri::Theme::Dark } else { tauri::Theme::Light }));
+        let page = WebPage { label: label.clone(), pane: false };
+        for _ in 0..150 {
+            if load_gen(&label) > before {
+                break;
+            }
+            if !cfg!(windows) && page.eval("document.readyState").await.ok().and_then(|v| v.as_str().map(|s| s == "complete")).unwrap_or(false) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok(Arc::new(page))
     }
 
     async fn render_window(&self, url: &str) -> Result<Arc<dyn Page>> {

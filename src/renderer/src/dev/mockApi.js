@@ -252,7 +252,9 @@ const extensionsApi = {
     ...(m.script ? [{ path: m.script, size: 5200, text: "(function (ASK) {\n  ASK.on('fertig', function () {\n    ASK.meldung('Geschafft!');\n  });\n})(ASK);" }] : []),
   ] } : null; },
   // ?mods=demo: Beispiel-Mods laden (die Dateien liefert der Test unter http://askmod.localhost/mod/…)
-  modsActive: async () => (params.get('mods') === 'demo' ? [
+  modsActive: async () => (params.get('modtest') ? [{ id: params.get('modtest'), name: params.get('modtest'), hash: params.get('hash') || '',
+    style: params.get('style') || '', script: params.get('script') || '', befehle: (() => { try { return JSON.parse(params.get('befehle') || '[]') || []; } catch { return []; } })() }]
+    : params.get('mods') === 'demo' ? [
     { id: 'neon', name: 'Neon', hash: 'h', style: 'style.css', script: '', befehle: [] },
     { id: 'robo-helfer', name: 'Robo-Helfer', hash: 'h', style: 'style.css', script: 'mod.js', befehle: [] },
     { id: 'pomodoro', name: 'Pomodoro-Timer', hash: 'h', style: 'style.css', script: 'mod.js', befehle: [] },
@@ -264,6 +266,7 @@ const extensionsApi = {
   modsImport: async () => ({ ok: false, reason: 'Importieren geht nur in der App.' }),
   modsExample: async (id) => { const e = examples.find((x) => x.id === id); mods = [...mods.filter((m) => m.id !== id), { ...e, version: '1.0.0', autor: 'ASK', anweisungen: '', nachfragen: [], aktiv: false, geaendert: false, groesse: 4000, dateien: 3, hash: 'x', fehler: '' }]; modsChanged(); return { ok: true, kind: 'mod' }; },
   modsFolder: async () => {},
+  modsGuide: async (action) => (action === 'kopieren' ? { ok: true, copied: true } : action === 'speichern' ? { ok: true, path: 'C:\\Users\\lernende\\Downloads\\SKILL.md' } : { ok: true, text: '---\nname: ask-mods\n---' }),
   onModsChanged: on('mods:changed'),
   catalogSources: async (list) => { if (Array.isArray(list)) ownCatalogs = list; state = { ...state, catalogs: catalogsNow() }; push(); return { ok: true, catalogs: catalogsNow() }; },
   catalogList: async (repo) => { await wait(500); return /ASK-Erweiterungen/.test(repo) ? { ok: false, reason: 'Das Repository gibt es nicht oder es ist nicht öffentlich.' } : { ok: true, entries: [

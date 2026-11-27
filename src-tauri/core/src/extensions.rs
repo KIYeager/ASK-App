@@ -127,6 +127,27 @@ impl App {
                 Ok(files) => self.install_mod(files).await.unwrap_or_else(fail),
                 Err(e) => fail(e.to_string()),
             },
+            // Anleitung für andere KI (Claude, ChatGPT …): kopieren oder als SKILL.md speichern (E75)
+            "mods:guide" => match std::fs::read_to_string(crate::paths::mod_guide_file()) {
+                Ok(text) => {
+                    if s(a, 0) == "kopieren" {
+                        self.host_copy(&text);
+                        json!({ "ok": true, "copied": true })
+                    } else if s(a, 0) == "speichern" {
+                        let filters: crate::host::Filters = vec![("Markdown".into(), vec!["md".into()])];
+                        match self.host_pick_save("Anleitung für Mods speichern", "SKILL.md", filters).await {
+                            Some(path) => match std::fs::write(&path, text) {
+                                Ok(()) => json!({ "ok": true, "path": path }),
+                                Err(e) => fail(e.to_string()),
+                            },
+                            None => json!({ "ok": false, "canceled": true }),
+                        }
+                    } else {
+                        json!({ "ok": true, "text": text })
+                    }
+                }
+                Err(_) => fail("Die Anleitung fehlt in dieser Installation."),
+            },
             "mods:folder" => {
                 let _ = std::fs::create_dir_all(mods.dir());
                 self.host_open(&mods.dir().to_string_lossy()).await;

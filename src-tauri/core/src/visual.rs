@@ -193,6 +193,12 @@ pub trait PageProvider: Send + Sync {
     /// Unsichtbares Fenster (Sandbox, eigener Speicher «ask-render», keine Navigation, keine Popups), in dem die Seite
     /// `url` (src/render/pdf.html, `paths::render_dir()`; pdf.js aus `paths::vendor_dir()`) geladen ist
     async fn render_window(&self, url: &str) -> Result<Arc<dyn Page>>;
+    /// Unsichtbares Fenster mit der eigenen Oberfläche im Testmodus für Mods (`index.html?<query>`, ENTSCHEIDE E75):
+    /// Beispieldaten statt Hauptprozess, eigener leerer Speicher, kein Zugriff auf `ipc`, nur die eigene Adresse.
+    /// `dark`: Farbschema des Fensters.
+    async fn ui_test(&self, _query: &str, _dark: bool) -> Result<Arc<dyn Page>> {
+        bail!("Mods testen geht nur in der App.")
+    }
 }
 
 /// Meldungen an die Oberfläche: Start, Schritte, Konsole und Ende (unsichtbar auch Bilder)
@@ -1101,7 +1107,112 @@ impl Visual {
     }
 }
 
-/// Werkzeuge view_file und browser (tools.rs) über `Visual`
+/// Was `mod_testen` macht (ENTSCHEIDE E75)
+#[derive(Clone, Debug, Default)]
+pub struct ModTest {
+    pub id: String,
+    pub hash: String,
+    pub style: String,
+    pub script: String,
+    /// Befehle aus mod.json als JSON (für die Liste im Eingabefeld)
+    pub befehle: Value,
+    pub dark: bool,
+    /// [{ art: ereignis|klick|panel|eingabe|senden|warten, … }]
+    pub aktionen: Vec<Value>,
+    pub chat: String,
+}
+
+/// Höchstens so viele Aktionen pro Test
+const MOD_TEST_ACTIONS: usize = 12;
+
+/// Abfrage für die Testseite (`index.html?…`)
+pub fn mod_test_query(t: &ModTest) -> String {
+    let enc = |s: &str| percent_encoding::utf8_percent_encode(s, percent_encoding::NON_ALPHANUMERIC).to_string();
+    format!("modtest={}&hash={}&style={}&script={}&befehle={}", enc(&t.id), enc(&t.hash), enc(&t.style), enc(&t.script), enc(&t.befehle.to_string()))
+}
+
+/// JavaScript für eine Aktion auf der Testseite; Ergebnis ist ein kurzer Text
+pub fn mod_test_action(a: &Value) -> Option<(String, u64)> {
+    let s = |k: &str| a.get(k).map(crate::util::js_string).unwrap_or_default();
+    let js = |v: &str| serde_json::to_string(v).unwrap_or_default();
+    Some(match s("art").as_str() {
+        "ereignis" => (format!("window.__modtest.emit({}, {})", js(&s("name")), a.get("daten").cloned().unwrap_or(json!({}))), 400),
+        "klick" => (format!("window.__modtest.click({})", js(&s("selektor"))), 500),
+        "panel" => (format!("window.__modtest.panel({})", js(&s("titel"))), 500),
+        "eingabe" => (format!("window.__modtest.input({})", js(&s("text"))), 300),
+        "senden" => (format!("window.__modtest.send({})", js(&s("text"))), 2500),
+        "warten" => ("'gewartet'".to_string(), num_or(a.get("ms").unwrap_or(&Value::Null), 1000.0).clamp(0.0, 5000.0) as u64),
+        _ => return None,
+    })
+}
+
+impl Visual {
+    /// Mod in der eigenen Oberfläche ausprobieren: laden, Aktionen ausführen, Bildschirmfoto und Bericht
+    pub async fn mod_test(&self, root: &Path, t: ModTest) -> Result<Value> {
+        let page = self.provider.ui_test(&mod_test_query(&t), t.dark).await?;
+        let result = self.mod_test_on(root, &page, &t).await;
+        page.close();
+        result
+    }
+
+    async fn mod_test_on(&self, root: &Path, page: &Arc<dyn Page>, t: &ModTest) -> Result<Value> {
+        // Warten, bis die Oberfläche steht und der Mod geladen ist (höchstens 12 s)
+        let mut ready = false;
+        for _ in 0..60 {
+            if page.eval("!!(window.__modtest && window.__modtest.done)").await.ok().and_then(|v| v.as_bool()).unwrap_or(false) {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        if !ready {
+            bail!("Die Testseite für den Mod hat nicht geladen.");
+        }
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        let mut steps = Vec::new();
+        for a in t.aktionen.iter().take(MOD_TEST_ACTIONS) {
+            let Some((code, wait)) = mod_test_action(a) else {
+                steps.push(format!("Unbekannte Aktion: {a}"));
+                continue;
+            };
+            let r = page.eval(&code).await.map(|v| crate::util::js_string(&v)).unwrap_or_else(|e| format!("Fehler: {e}"));
+            steps.push(format!("{} → {r}", crate::util::js_string(&a["art"])));
+            tokio::time::sleep(Duration::from_millis(wait)).await;
+        }
+        let png = page.screenshot_png().await?;
+        let report = page.eval("window.__modtest.report()").await.unwrap_or(Value::Null);
+        let name = format!("mod-{}-{}.png", t.id, base36(now_ms() as u64));
+        let saved = self.save(root, &t.chat, &name, &png)?;
+        let errors: Vec<String> = report["fehler"].as_array().cloned().unwrap_or_default().iter().map(crate::util::js_string).take(20).collect();
+        let mut out = format!("Mod «{}» in einer Testansicht von ASK geladen ({}, Beispieldaten, nicht eingeschaltet).", t.id, if t.dark { "dunkel" } else { "hell" });
+        out.push_str(&format!("\nGeladen: CSS {}, Code {}.", yes_no(&report["css"]), yes_no(&report["code"])));
+        out.push_str(&format!("\nVom Mod angelegt: {} Elemente mit Klasse «{}…», Bereiche: {}, Knöpfe: {}, Befehle: {}.",
+            num_or(&report["elemente"], 0.0), t.id, list_or_none(&report["panels"]), list_or_none(&report["knoepfe"]), list_or_none(&report["befehle"])));
+        if !steps.is_empty() {
+            out.push_str(&format!("\nAktionen:\n- {}", steps.join("\n- ")));
+        }
+        if errors.is_empty() {
+            out.push_str("\nKeine Fehler in der Konsole.");
+        } else {
+            out.push_str(&format!("\nFehler ({}):\n- {}", errors.len(), errors.join("\n- ")));
+        }
+        out.push_str(&format!("\n{SHOT_NEXT}"));
+        Ok(json!({ "ok": errors.is_empty(), "output": out, "summary": if errors.is_empty() { "läuft".to_string() } else { format!("{} Fehler", errors.len()) }, "images": [saved] }))
+    }
+}
+
+const SHOT_NEXT: &str = "Das Bildschirmfoto folgt in der nächsten Nachricht.";
+
+fn yes_no(v: &Value) -> &'static str {
+    if v == &Value::Bool(true) { "ja" } else if v.is_null() { "–" } else { "nein" }
+}
+
+fn list_or_none(v: &Value) -> String {
+    let l: Vec<String> = v.as_array().cloned().unwrap_or_default().iter().map(crate::util::js_string).collect();
+    if l.is_empty() { "keine".into() } else { l.join(", ") }
+}
+
+/// Werkzeuge view_file, browser und mod_testen (tools.rs) über `Visual`
 #[async_trait]
 impl crate::tools::VisualTools for Visual {
     async fn view(&self, folder: &str, path: &str, opts: crate::tools::VisualOpts) -> Result<Value> {
@@ -1123,12 +1234,27 @@ impl crate::tools::VisualTools for Visual {
             local_ports: Some(opts.local_ports),
         }).await
     }
+
+    async fn mod_test(&self, folder: &str, test: ModTest) -> Result<Value> {
+        Visual::mod_test(self, Path::new(folder), test).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn testansicht_fuer_mods_abfrage_und_aktionen() {
+        let t = ModTest { id: "robo-helfer".into(), hash: "ab12".into(), style: "style.css".into(), script: "mod.js".into(), befehle: json!([{ "name": "x" }]), ..Default::default() };
+        let q = mod_test_query(&t);
+        assert!(q.starts_with("modtest=robo%2Dhelfer&hash=ab12&style=style%2Ecss&script=mod%2Ejs&befehle=%5B%7B"), "{q}");
+        assert_eq!(mod_test_action(&json!({ "art": "ereignis", "name": "fertig" })).unwrap().0, "window.__modtest.emit(\"fertig\", {})");
+        assert_eq!(mod_test_action(&json!({ "art": "klick", "selektor": "a[\"x\"]" })).unwrap().0, "window.__modtest.click(\"a[\\\"x\\\"]\")");
+        assert_eq!(mod_test_action(&json!({ "art": "warten", "ms": 99999 })).unwrap().1, 5000);
+        assert!(mod_test_action(&json!({ "art": "eval", "code": "x" })).is_none(), "kein freies JavaScript");
+    }
 
     fn ports(list: &[u16]) -> HashSet<u16> {
         list.iter().copied().collect()

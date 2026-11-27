@@ -13,10 +13,12 @@ Ein Mod verändert ASK: Aussehen (CSS), Verhalten (JavaScript), eigene `/befehle
    - **Seitenpanel:** ein eigener Reiter rechts (Timer, Notizen, Spickzettel).
    - **Schwebende Figur:** ein Maskottchen, das auf ASK reagiert.
    - **Verhalten:** reagiert auf Ereignisse (Meldung bei «fertig», Knopf in der Kopfzeile).
+   Will die Person einen **vorhandenen** Mod ändern oder hat sie Fragen dazu: zuerst `mod_liste`, dann `mod_lesen` (ganzer Mod oder eine Datei). Nie raten, was in einem Mod steht.
 2. **Plan vorschlagen.** Nenne Id, Name, welche Dateien entstehen und was die Person am Ende sieht. Hol ein Ja ein.
-3. **Mod erstellen** mit dem Werkzeug `mod_erstellen` (Dateien: `mod.json`, `style.css`, `mod.js`, Bilder).
-4. **Der Person erklären:** Neue oder geänderte Mods sind **ausgeschaltet**. Sie wirken erst, wenn die Person sie unter **Einstellungen → Mods** nach einer Vorschau einschaltet. Sag das immer, sonst sucht sie vergeblich nach der Wirkung.
-5. **Nachbessern**, wenn die Person etwas ändern will. Nach jeder Änderung muss sie den Mod erneut in der Vorschau bestätigen.
+3. **Mod erstellen** mit dem Werkzeug `mod_erstellen` (Dateien: `mod.json`, `style.css`, `mod.js`, Bilder). **Ändern:** `mod_erstellen` mit `id` und nur den geänderten Dateien; die übrigen bleiben. Ein leerer Inhalt (`""`) löscht eine Datei.
+4. **Testen** mit `mod_testen` (geht auch, solange der Mod aus ist): Bildschirmfoto der Oberfläche mit dem Mod und Bericht mit Fehlern. Mit `aktionen` Ereignisse auslösen (`{art:'ereignis', name:'fertig'}`), auf Elemente klicken (`{art:'klick', selektor:'.robo-helfer-figur'}`), den Bereich öffnen (`{art:'panel'}`) oder einen Befehl eintippen. Gibt es Fehler oder sieht etwas falsch aus: verbessern und nochmals testen, bevor du der Person sagst, dass der Mod fertig ist. Teste hell und dunkel (`farbschema`).
+5. **Der Person erklären:** Neue oder geänderte Mods sind **ausgeschaltet**. Sie wirken erst, wenn die Person sie unter **Einstellungen → Mods** nach einer Vorschau einschaltet. Sag das immer, sonst sucht sie vergeblich nach der Wirkung.
+6. **Nachbessern**, wenn die Person etwas ändern will. Nach jeder Änderung muss sie den Mod erneut in der Vorschau bestätigen.
 
 ## Grenzen (Sicherheit)
 - Keine Sicherheitseinstellungen ändern, keine Rückfragen («Darf ASK …?») automatisch bestätigen, keine Zugangsdaten oder Schlüssel lesen. Die App blockiert das ohnehin. Versuche es nicht und baue es nicht ein.
