@@ -78,6 +78,10 @@ jobs:
             while (-not $p.HasExited -and $i -lt 400) { Snap ("{0}-{1:D3}" -f $run, $i); Start-Sleep -Milliseconds 250; $i++ }
             Write-Host "$run`: $i Bilder, Exit-Code $($p.ExitCode)"
             if (Test-Path "$out\$run-erkannt.txt") { Write-Host "$run erkannt: $(Get-Content "$out\$run-erkannt.txt" -Raw)" }
+            Write-Host "$run Ordner: $((Get-ChildItem "$env:LOCALAPPDATA\ASK" -ErrorAction SilentlyContinue | Select-Object -First 8 -ExpandProperty Name) -join ', ')"
+            Write-Host "$run Registry: $((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ASK' -ErrorAction SilentlyContinue).DisplayVersion)"
+            Write-Host "$run laeuft: $((Get-Process ASK -ErrorAction SilentlyContinue | Measure-Object).Count)"
+            Write-Host "$run Desktop: $((Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Filter 'ASK*' -ErrorAction SilentlyContinue).Name -join ', ')"
             Start-Sleep -Seconds 3
             Snap "$run-danach"
             Get-Process ASK -ErrorAction SilentlyContinue | Stop-Process -Force
