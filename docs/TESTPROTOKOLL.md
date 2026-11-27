@@ -109,6 +109,12 @@ Zum Vergleich das zuerst versuchte Target `portable` von electron-builder: 148 M
 
 Vor dem Merge nur im Browser mit der Test-Attrappe (`npm run dev:ui`, Playwright) geprüft, hell und dunkel: Tabs (Ziehen, Mittelklick, Menü, Umbenennen, Tastenkürzel), Update-Dialog und Meldungen, Update-Karte, Projekt- und Ordner-Menü mit Untermenü per Maus und Tastatur, «Chat löschen» mit Fokus auf «Abbrechen», Einfügen ins Eingabefeld und Kopieren von markiertem Text. Danach als Beta 0.3.6-beta.1 in der installierten Windows-App ausprobiert: funktioniert (Rückmeldung am 26.11.2026), darum als 0.3.6 für alle freigegeben.
 
+### Chats ohne Projekt, parallele Chats, Kontext, Gedächtnis (ENTSCHEIDE E78)
+
+Vor dem Merge geprüft: `cargo test --workspace` (366 Tests) und `cargo clippy` unter Linux, in der CI auch unter Windows; `npm test` (41 Tests), `npm run lint`, `npm run build:ui`. Die Oberfläche im Browser mit der Test-Attrappe (`npm run dev:ui`, Playwright), hell, dunkel und bei 900 px Breite: parallele Chats und schneller Wechsel, Entwürfe pro Chat, erster Start, Chat ohne Projekt, Einstellungen (Kontextgrösse, Knopf «Mods …»), Suche im Chat, Verschieben und Exportieren, Hineinziehen von Dateien, Karte des Gedächtnisses und Import.
+
+Am 27.11.2026 als Beta 0.4.0-beta.1 gebaut und veröffentlicht, am selben Tag auf Wunsch als 0.4.0 für alle freigegeben. Für diese Punkte, die sich nur in der installierten Windows-App mit echtem ASK zeigen, ist hier kein Ergebnis festgehalten: Start eines Chats ohne Projekt (Terminal im Ordner unter AppData), Hineinziehen von Dateien in WebView2, Aussehen der Bildlaufleisten, Zusammenfassen mit einem echten Modell (von selbst und mit `/zusammenfassen`).
+
 ### Machbarkeitsversuche aus Phase 0 (von Hand)
 
 HTTPS-Seite in Electron auf http://127.0.0.1 mit CORS und Key-Einsetzung; Low IL ohne Admin (Kennzeichnen, Token absenken, Schreibschutz, Lauschen auf Loopback); Aufräumen über Job-Objekt; Kennzeichnung vererbt sich auf bestehende Dateien; Word per COM aus Low heraus geht nicht; Windows PowerShell 5.1 startet unter Low nicht (0x80131623); Git-Bash-Werkzeuge starten unter Low nicht.
