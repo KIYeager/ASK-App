@@ -109,9 +109,44 @@ pub fn handle_mod(ctx: UriSchemeContext<'_, Wry>, request: Request<Vec<u8>>, res
     let uri = request.uri().clone();
     // Testansicht (mod_testen, E75): Dateien auch ausgeschalteter Mods, aber nur an die unsichtbaren Testfenster
     let test = crate::pages::is_mod_test(ctx.webview_label());
+    let origin = request.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok());
+    let dev = if cfg!(debug_assertions) { ctx.app_handle().config().build.dev_url.as_ref().map(|u| u.origin().ascii_serialization()) } else { None };
+    let allow = allowed_origin(origin, dev.as_deref());
     tauri::async_runtime::spawn_blocking(move || {
-        responder.respond(if test { respond_mod_test(&uri) } else { respond_mod(&uri) });
+        let response = if test { respond_mod_test(&uri) } else { respond_mod(&uri) };
+        responder.respond(with_origin(response, allow.as_deref()));
     });
+}
+
+/// Ursprung der gebauten Oberfläche, wenn eine Anfrage keinen Origin-Header mitschickt
+#[cfg(windows)]
+const APP_ORIGIN: &str = "http://tauri.localhost"; // WebView2
+#[cfg(not(windows))]
+const APP_ORIGIN: &str = "tauri://localhost"; // WKWebView, WebKitGTK
+
+/// Ursprünge der gebauten Oberfläche (https nur, falls useHttpsScheme einmal eingeschaltet wird)
+const APP_ORIGINS: &[&str] = &["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
+
+/// Wert für Access-Control-Allow-Origin: CSS, Code und Schriften der Mods kommen von askmod, also von einem anderen
+/// Ursprung als die Oberfläche. Schriften (@font-face), `<link crossorigin>` und `<script crossorigin>` (mods.js)
+/// lädt der Browser nur mit CORS-Freigabe. Freigegeben wird nur die eigene Oberfläche (in der Entwicklung auch der
+/// Vite-Server `dev`), nicht `*`: Andere Seiten (z. B. im Browser-Bereich) können die Dateien nicht auslesen.
+pub fn allowed_origin(origin: Option<&str>, dev: Option<&str>) -> Option<String> {
+    match origin {
+        Some(o) if APP_ORIGINS.contains(&o) || dev == Some(o) => Some(o.to_string()),
+        Some(_) => None,
+        None => Some(dev.unwrap_or(APP_ORIGIN).to_string()),
+    }
+}
+
+fn with_origin(mut response: Response<Vec<u8>>, allow: Option<&str>) -> Response<Vec<u8>> {
+    let headers = response.headers_mut();
+    headers.insert(header::VARY, header::HeaderValue::from_static("Origin"));
+    if let Some(value) = allow.and_then(|a| header::HeaderValue::from_str(a).ok()) {
+        // Auch bei «nicht gefunden», sonst meldet der Browser einen CORS-Fehler statt 404
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
+    }
+    response
 }
 
 fn respond_mod_test(uri: &tauri::http::Uri) -> Response<Vec<u8>> {
@@ -124,7 +159,6 @@ fn respond_mod_test(uri: &tauri::http::Uri) -> Response<Vec<u8>> {
         .header(header::CONTENT_TYPE, mod_mime(&file))
         .header(header::CACHE_CONTROL, "no-store")
         .header("X-Content-Type-Options", "nosniff")
-        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*") // Fehlermeldungen mit Zeile (crossorigin in mods.js)
         .body(data)
         .expect("Antwort")
 }
@@ -165,7 +199,6 @@ fn respond_mod(uri: &tauri::http::Uri) -> Response<Vec<u8>> {
         .header(header::CONTENT_TYPE, mod_mime(&file))
         .header(header::CACHE_CONTROL, "no-cache")
         .header("X-Content-Type-Options", "nosniff")
-        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*") // Fehlermeldungen mit Zeile (crossorigin in mods.js)
         .body(data)
         .expect("Antwort")
 }
@@ -179,6 +212,33 @@ mod tests {
         assert_eq!(mod_path("askmod.localhost", "/mod/robo/abc/mod.js"), Some(("robo".into(), "abc".into(), "mod.js".into())));
         assert_eq!(mod_path("askmod.localhost", "/x/robo/abc/mod.js"), None);
         assert_eq!(mod_path("mod", "/robo/abc"), None);
+    }
+
+    #[test]
+    fn schriften_und_css_nur_fuer_die_eigene_oberflaeche() {
+        use super::{allowed_origin, APP_ORIGIN};
+        assert_eq!(allowed_origin(Some("http://tauri.localhost"), None).as_deref(), Some("http://tauri.localhost"));
+        assert_eq!(allowed_origin(Some("tauri://localhost"), None).as_deref(), Some("tauri://localhost"));
+        assert_eq!(allowed_origin(None, None).as_deref(), Some(APP_ORIGIN));
+        // Fremde Seiten bekommen keine Freigabe, auch nicht localhost mit anderem Port
+        assert_eq!(allowed_origin(Some("https://example.com"), None), None);
+        assert_eq!(allowed_origin(Some("http://localhost:8080"), None), None);
+        assert_eq!(allowed_origin(Some("null"), None), None);
+        // Entwicklung: Vite-Server
+        let dev = Some("http://localhost:5173");
+        assert_eq!(allowed_origin(Some("http://localhost:5173"), dev).as_deref(), Some("http://localhost:5173"));
+        assert_eq!(allowed_origin(None, dev).as_deref(), dev);
+        assert_eq!(allowed_origin(Some("http://localhost:8080"), dev), None);
+    }
+
+    #[test]
+    fn freigabe_auch_bei_nicht_gefunden() {
+        use super::{not_found, with_origin};
+        let r = with_origin(not_found(), Some("tauri://localhost"));
+        assert_eq!(r.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "tauri://localhost");
+        assert_eq!(r.headers()[header::VARY], "Origin");
+        let r = with_origin(not_found(), None);
+        assert!(r.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
     }
 
     use super::*;
