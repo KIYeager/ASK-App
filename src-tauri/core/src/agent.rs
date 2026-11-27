@@ -292,7 +292,7 @@ fn user_text(m: &Value) -> String {
         text.push_str(&format!("\n\n[Mit @ erwähnt, liegt im Arbeitsordner: {}. Lies es, wenn du es brauchst.]", mentions.join(", ")));
     }
     if !templates.is_empty() {
-        // Vorlagen der TF Bern (ENTSCHEIDE E65): nur lesen, in eine Kopie im Projekt
+        // Vorlagen der TF Bern (ENTSCHEIDE E66): nur lesen, in eine Kopie im Projekt
         text.push_str(&format!(
             "\n\n[Gewählte Vorlage der TF Bern (nur lesen): {}. Kopiere sie in den Arbeitsordner und arbeite in der Kopie.]",
             templates.iter().map(|p| p.replace('/', "\\")).collect::<Vec<_>>().join(", ")

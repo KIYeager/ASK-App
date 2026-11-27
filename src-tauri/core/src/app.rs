@@ -408,7 +408,7 @@ impl App {
 
     /// Installierte App und einzelne EXE: Python einmal entpacken (ENTSCHEIDE E39), ohne den Start aufzuhalten.
     /// Gleich zu Beginn von `start`, damit es fertig ist, bevor das Modell Python braucht; der Fortschritt
-    /// steht unten links (Zustand «python», E67).
+    /// steht unten links (Zustand «python», E68).
     fn prepare_python(self: &Arc<Self>) {
         if !paths::is_packaged() || crate::python::shared().ready() {
             return;
@@ -477,7 +477,7 @@ impl App {
         }
     }
 
-    /// «Neu in ASK» (ENTSCHEIDE E64): nach jedem Update einmal der Text dieser Version. Eine frische Installation
+    /// «Neu in ASK» (ENTSCHEIDE E65): nach jedem Update einmal der Text dieser Version. Eine frische Installation
     /// merkt sich die Version gleich; wer von der Electron-Fassung kommt (noch keine «lastVersion», Hinweis schon
     /// bestätigt), sieht die Karte auch.
     fn note_first_install(&self) {
@@ -1712,7 +1712,7 @@ impl App {
             }
             "workspace:list" => self.workspace().list(&sarg(a, 0)),
             "workspace:find" => {
-                // Dateien des Projekts, dazu Vorlagen der TF Bern (E65), damit sie unter den ersten acht stehen
+                // Dateien des Projekts, dazu Vorlagen der TF Bern (E66), damit sie unter den ersten acht stehen
                 let mut out = self.workspace().find(&sarg(a, 0));
                 let templates = crate::vorlagen::find(&sarg(a, 0));
                 let at = out.len().min(5);

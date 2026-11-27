@@ -1,4 +1,4 @@
-// Lädt das NSIS-Plugin SpiderBanner für das kleine Fortschrittsfenster des Installers (ENTSCHEIDE E59, E63).
+// Lädt das NSIS-Plugin SpiderBanner für das kleine Fortschrittsfenster des Installers (ENTSCHEIDE E59, E64).
 // Quelle wie bei electron-builder: nsis-resources-3.4.1 aus electron-builder-binaries, mit derselben Prüfsumme.
 // Ziel: src-tauri/windows/plugins/x86-unicode/SpiderBanner.dll (nicht im Repository, siehe .gitignore);
 // src-tauri/windows/hooks.nsh bindet es ein, wenn es da ist.

@@ -162,7 +162,7 @@ export default function Sidebar({ groups, chatId, running, runningChats = [], qu
                   {term.state === 'startet' ? (term.detail || 'Terminal startet') : term.state === 'fehler' ? 'Terminal: Fehler' : 'Terminal gestoppt'}
                 </button>
               ) : <button type="button" id="terminal-pill" className="dot-btn ok quiet" hidden onClick={() => onStatus('terminal')}>Terminal</button>}
-              {/* Python wird nach einer neuen Fassung einmal entpackt (E67); nur Befehle mit Python warten darauf */}
+              {/* Python wird nach einer neuen Fassung einmal entpackt (E68); nur Befehle mit Python warten darauf */}
               {state.python ? (
                 <span id="python-pill" className="dot-btn warn" title="Einmalig nach einem Update. Befehle mit Python warten, bis es fertig ist.">
                   {`Python wird eingerichtet … ${state.python.percent || 0} %`}

@@ -1,5 +1,5 @@
 # Baut den Installer ohne Signatur, installiert ASK auf dem Runner zweimal (neu, dann als Update) und nimmt
-# dabei Bildschirmfotos auf (ENTSCHEIDE E63). Die Bilder liegen als Artefakt «installer-bilder» bereit; drei
+# dabei Bildschirmfotos auf (ENTSCHEIDE E64). Die Bilder liegen als Artefakt «installer-bilder» bereit; drei
 # davon stehen zusätzlich als Base64 im Protokoll (Zeilen mit «BILD»), damit man sie ohne Download prüfen kann.
 name: Installer-Vorschau
 

@@ -67,7 +67,7 @@ pub enum ReadResult {
 pub struct FileApi {
     guard: PathGuard,
     home: PathBuf,
-    /// Ordner, die nur gelesen werden dürfen (Vorlagen der Schule, C:\Vorlagen; ENTSCHEIDE E65)
+    /// Ordner, die nur gelesen werden dürfen (Vorlagen der Schule, C:\Vorlagen; ENTSCHEIDE E66)
     read_only: Vec<PathGuard>,
 }
 

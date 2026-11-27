@@ -1,7 +1,7 @@
-; Ergaenzungen zum NSIS-Installer von Tauri (bundle.windows.nsis.installerHooks), ENTSCHEIDE E39, E60 und E63.
+; Ergaenzungen zum NSIS-Installer von Tauri (bundle.windows.nsis.installerHooks), ENTSCHEIDE E39, E60 und E64.
 ; Nur ASCII: makensis liest die Datei ohne BOM.
 
-; Kleines Fortschrittsfenster wie in der Electron-Fassung (ENTSCHEIDE E59, E63): das Plugin SpiderBanner aus
+; Kleines Fortschrittsfenster wie in der Electron-Fassung (ENTSCHEIDE E59, E64): das Plugin SpiderBanner aus
 ; den nsis-resources von electron-builder (scripts/nsis-plugins.js laedt es mit Pruefsumme nach plugins\).
 ; Fehlt es (Entwicklungs-Build ohne den Schritt), bleibt das Fenster von NSIS mit der Fortschrittsseite.
 !if /FileExists "${__FILEDIR__}\plugins\x86-unicode\SpiderBanner.dll"

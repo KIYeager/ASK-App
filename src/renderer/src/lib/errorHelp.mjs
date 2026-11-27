@@ -1,4 +1,4 @@
-// Was bei einem Fehler zu tun ist (ENTSCHEIDE E68): aus dem Text der Meldung eine kurze Erklärung in einfachen
+// Was bei einem Fehler zu tun ist (ENTSCHEIDE E69): aus dem Text der Meldung eine kurze Erklärung in einfachen
 // Worten und zwei, drei Schritte. null, wenn nichts Passendes bekannt ist (dann bleibt nur die Meldung).
 const CASES = [
   {

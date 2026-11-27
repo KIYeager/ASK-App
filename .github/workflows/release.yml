@@ -1,5 +1,6 @@
 # Baut ASK auf Windows und veröffentlicht Installer, einzelne EXE und latest.yml im öffentlichen
-# Repository KIYeager/ASK-Releases (ENTSCHEIDE E37, E38). Zwei Wege:
+# Repository KIYeager/ASK-Releases (ENTSCHEIDE E37, E38), bei normalen Versionen danach die Download-Seite
+# (download-page.yml, E63). Zwei Wege:
 # - Merge eines PRs in main mit Label «beta» oder «release»: Job «version» setzt die nächste Version
 #   (oder die aus der Zeile «Version: …» im PR), macht Commit und Tag auf main, dann baut «release».
 #   Label «kein-release»: nichts. Die Wahl prüft release-label.yml schon im PR.
@@ -58,6 +59,8 @@ jobs:
     if: always() && (github.event_name == 'push' || needs.version.outputs.tag != '')
     runs-on: windows-latest
     timeout-minutes: 60
+    outputs:
+      beta: ${{ steps.version.outputs.beta }}
     concurrency:
       group: release-${{ needs.version.outputs.tag || github.ref_name }}
       cancel-in-progress: false
@@ -96,7 +99,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       # Zwischenspeicher aus der CI auf main (shared-key «windows», dort mit Release-Build); hier nur lesen,
-      # ein Release läuft im Bereich des PRs und würde ihn für spätere Releases nicht finden (ENTSCHEIDE E66)
+      # ein Release läuft im Bereich des PRs und würde ihn für spätere Releases nicht finden (ENTSCHEIDE E67)
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -125,7 +128,7 @@ jobs:
         run: scripts\build-python.ps1 -BuildDir $env:ASK_BUILD_DIR
 
       # Release-Text aus dem Tag (npm run release schreibt ihn hinein): im Update-Dialog und als «Neu in ASK»
-      # in der App (ENTSCHEIDE E64). Den Tag neu holen: checkout macht aus einem annotierten Tag sonst
+      # in der App (ENTSCHEIDE E65). Den Tag neu holen: checkout macht aus einem annotierten Tag sonst
       # unter Umständen einen leichten.
       - name: Release-Text
         run: |
@@ -192,3 +195,11 @@ jobs:
           [string[]]$files = (Get-ChildItem $manifests -Filter '*.json' -File).FullName
           gh release upload updater --repo KIYeager/ASK-Releases --clobber @files
           if ($LASTEXITCODE -ne 0) { throw "Update-Dateien nicht hochgeladen" }
+
+  # Download-Seite für die Lernenden neu schreiben, nur bei normalen Versionen (ENTSCHEIDE E63).
+  # «always()», weil «version» bei einem Tag von Hand übersprungen ist und das sonst auch diesen Job überspringt.
+  download-page:
+    needs: release
+    if: always() && needs.release.result == 'success' && needs.release.outputs.beta == 'false'
+    uses: ./.github/workflows/download-page.yml
+    secrets: inherit

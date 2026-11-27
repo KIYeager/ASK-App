@@ -1,0 +1,56 @@
+# Download-Seite für die Lernenden (ENTSCHEIDE E63): baut aus dem neuesten normalen Release von
+# KIYeager/ASK-Releases eine index.html (scripts/download-page.js) und legt sie dort als docs/index.html ab.
+# GitHub Pages von ASK-Releases zeigt sie unter https://kiyeager.github.io/ASK-Releases/ (einmal einrichten:
+# README, «Einmal einrichten», Schritt 1a).
+# Läuft nach jeder normalen Version (release.yml ruft diesen Workflow auf) und von Hand über «Run workflow».
+# Beta-Versionen ändern die Seite nicht: «gh release view» ohne Tag liefert nur Versionen mit «Latest».
+# Braucht das Secret RELEASES_TOKEN (Contents: Read and write auf ASK-Releases), wie release.yml.
+name: Download-Seite
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: download-page
+  cancel-in-progress: false
+
+jobs:
+  page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      REPO: KIYeager/ASK-Releases
+      PAGE: docs/index.html
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Seite bauen
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "Secret RELEASES_TOKEN fehlt (siehe README, «Einmal einrichten»)."; exit 1; fi
+          gh release view --repo "$REPO" --json tagName,body,publishedAt,assets > "$RUNNER_TEMP/release.json"
+          node scripts/download-page.js "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/page"
+
+      - name: In ASK-Releases ablegen
+        run: |
+          file="$RUNNER_TEMP/page/index.html"
+          version=$(jq -r '.tagName' "$RUNNER_TEMP/release.json")
+          api="repos/$REPO/contents/$PAGE"
+          # Die bisherige Fassung (falls vorhanden): gleicher Blob-Hash heisst gleicher Inhalt, dann kein Commit.
+          sha=$(gh api "$api" --jq .sha 2>/dev/null) || sha=""
+          if [ -n "$sha" ] && [ "$sha" = "$(git hash-object "$file")" ]; then
+            echo "Download-Seite für $version ist schon aktuell."
+            exit 0
+          fi
+          jq -n --arg message "Download-Seite für ASK ${version#v}" --arg content "$(base64 -w0 "$file")" --arg sha "$sha" \
+            '{message: $message, content: $content} + (if $sha == "" then {} else {sha: $sha} end)' > "$RUNNER_TEMP/body.json"
+          gh api -X PUT "$api" --input "$RUNNER_TEMP/body.json" --jq '.commit.html_url'
+          echo "Download-Seite für $version abgelegt: https://kiyeager.github.io/ASK-Releases/"

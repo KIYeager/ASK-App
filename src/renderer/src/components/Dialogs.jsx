@@ -20,7 +20,7 @@ function Dialog({ id, title, wide, full, children, actions, onClose }) {
   );
 }
 
-// «Neu in ASK» nach einem Update (ENTSCHEIDE E64): Text aus dem Release, Zeilen als Absätze
+// «Neu in ASK» nach einem Update (ENTSCHEIDE E65): Text aus dem Release, Zeilen als Absätze
 function WhatsNewDialog({ info, onClose }) {
   const lines = String(info?.text || '').split(/\n+/).map((l) => l.trim()).filter(Boolean);
   return (
@@ -101,7 +101,7 @@ function ProjectDialog({ state, first, error: startError, onResult, onClose }) {
   );
 }
 
-// Was zu tun ist, und «Details kopieren» für die Lehrperson (ENTSCHEIDE E68)
+// Was zu tun ist, und «Details kopieren» für die Lehrperson (ENTSCHEIDE E69)
 function HelpSteps({ text, state, extra = '' }) {
   const help = errorHelp(text);
   const [copied, setCopied] = useState(false);
@@ -492,7 +492,7 @@ export function activeDialog(state, dialog) {
   if (!state.folder) return 'start';
   if (dialog?.name) return dialog.name;
   if (state.prefs && state.prefs.tourDone === false && !LOGIN_PENDING.includes(state.ask?.state)) return 'tour';
-  if (state.whatsNew) return 'whatsnew'; // nach jedem Update einmal (E64)
+  if (state.whatsNew) return 'whatsnew'; // nach jedem Update einmal (E65)
   return null;
 }
 

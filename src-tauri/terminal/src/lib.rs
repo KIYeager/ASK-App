@@ -42,7 +42,7 @@ pub struct Config {
     /// Nur ausserhalb von Windows: ob der Server «Low» meldet (Entwicklung und Tests). Unter Windows zählt das Token.
     #[serde(default = "default_true")]
     pub low_integrity: bool,
-    /// Ordner nur zum Lesen (Vorlagen der Schule, ENTSCHEIDE E65)
+    /// Ordner nur zum Lesen (Vorlagen der Schule, ENTSCHEIDE E66)
     #[serde(default)]
     pub read_only: Vec<String>,
 }

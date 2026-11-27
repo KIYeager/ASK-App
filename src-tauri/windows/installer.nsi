@@ -1,5 +1,5 @@
 ; ASK: Kopie der Vorlage von tauri-bundler 2.10.6 (bundle/windows/nsis/installer.nsi, zu @tauri-apps/cli 2.12.6),
-; ENTSCHEIDE E63. Aenderungen sind mit "ASK:" markiert. Bei einem neuen tauri-bundler die Vorlage neu kopieren
+; ENTSCHEIDE E64. Aenderungen sind mit "ASK:" markiert. Bei einem neuen tauri-bundler die Vorlage neu kopieren
 ; und die markierten Stellen uebernehmen.
 Unicode true
 ManifestDPIAware true

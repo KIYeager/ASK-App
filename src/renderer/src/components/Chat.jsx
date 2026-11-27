@@ -68,7 +68,7 @@ function Detail({ entry, hidden }) {
 
 // Bild aus dem Arbeitsordner; lädt es nicht (Datei eben erst geschrieben und unter Windows kurz gesperrt),
 // bis zu dreimal mit neuer Adresse nachladen, statt ein kaputtes Bild stehen zu lassen
-// Fehler im Chat mit kurzer Hilfe in einfachen Worten und «Details kopieren» (ENTSCHEIDE E68)
+// Fehler im Chat mit kurzer Hilfe in einfachen Worten und «Details kopieren» (ENTSCHEIDE E69)
 function ErrorRow({ text, ctx }) {
   const help = errorHelp(text);
   const [copied, setCopied] = useState(false);

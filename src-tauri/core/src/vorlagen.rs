@@ -1,4 +1,4 @@
-//! Vorlagen der TF Bern (ENTSCHEIDE E65): Auf den Laptops der Schule liegen sie in `C:\Vorlagen`, für Lernende
+//! Vorlagen der TF Bern (ENTSCHEIDE E66): Auf den Laptops der Schule liegen sie in `C:\Vorlagen`, für Lernende
 //! nur zum Lesen. Ist der Ordner da, darf das Terminal dort auflisten, lesen und suchen (nie schreiben), das Modell
 //! erfährt im Systemprompt davon, und Befehle, die nur `C:\Vorlagen` nennen, gelten nicht als «ausserhalb».
 

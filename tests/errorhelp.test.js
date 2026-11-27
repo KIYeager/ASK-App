@@ -1,4 +1,4 @@
-// Hilfe bei Fehlern (ENTSCHEIDE E68): passende Erklärung je Meldung, sonst keine
+// Hilfe bei Fehlern (ENTSCHEIDE E69): passende Erklärung je Meldung, sonst keine
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
