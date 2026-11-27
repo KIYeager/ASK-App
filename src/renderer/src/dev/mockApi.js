@@ -307,6 +307,7 @@ export function install() {
       if (value === 'edit1') console.log('kopiert:', String(window.getSelection()) || document.activeElement?.value?.slice(document.activeElement.selectionStart, document.activeElement.selectionEnd));
     }, updateLater: async () => {}, setBetaUpdates: async (on) => { state = { ...state, update: { ...state.update, beta: on } }; push(); },
     setPrefs: async (v) => { state = { ...state, prefs: { ...state.prefs, ...v } }; push(); },
+    whatsNewSeen: async () => { state = { ...state, whatsNew: null }; push(); },
     usageGet: async (withAsk = true) => (withAsk ? (await wait(600), { ...mockUsage(), ask: params.get('ohneask') ? null : { webChats: 42, webChats30: 12 } }) : { ...mockUsage(), ask: null }),
     chatRewind: async () => ({ ok: true, text: 'Räum den Ordner auf', attachments: [] }),
     chatRename: async (_f, id, title) => { const c = projects.flatMap((p) => p.chats).find((x) => x.id === id); if (c) c.title = title; return true; },

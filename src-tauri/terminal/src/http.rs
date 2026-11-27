@@ -74,7 +74,7 @@ pub async fn serve(config: Config) -> std::io::Result<ServerHandle> {
         port: addr.port(),
         origin: config.origin.clone(),
         execute_timeout: config.execute_timeout,
-        files: Arc::new(FileApi::new(std::path::Path::new(&config.workdir))),
+        files: Arc::new(FileApi::new(std::path::Path::new(&config.workdir)).with_read_only(&config.read_only)),
         registry: registry.clone(),
         integrity,
         low_integrity,

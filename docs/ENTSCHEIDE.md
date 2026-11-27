@@ -523,3 +523,13 @@ Das Plugin kommt wie bei electron-builder aus `nsis-resources-3.4.1` (electron-b
 Geprüft mit dem Workflow «Installer-Vorschau»: baut den Installer, installiert ASK auf einem Windows-Runner neu und als Update und nimmt dabei Bildschirmfotos auf (Artefakt «installer-bilder»).
 
 Nicht gewählt: Fenster von NSIS nur umgestalten (Knöpfe und Details ausblenden; bleibt das grosse Fenster); eigene Seite mit nsDialogs (Fortschritt müsste selbst nachgebildet werden); Updates ganz ohne Fenster (Lernende sehen dann nicht, dass etwas passiert).
+
+## E64 «Neu in ASK» nach jedem Update
+
+Nach jedem Update zeigt die App einmal eine Karte «Neu in ASK <Version>» mit dem Release-Text dieser Version (dem Text aus dem PR, Zeile «Release-Text: …», wie im Update-Dialog). «Alles klar» merkt sich die Version (`lastVersion` in den Einstellungen). Eine frische Installation merkt sich die Version gleich und zeigt die Karte nicht; die Einführung (E49) hat Vorrang. Wer von der Electron-Fassung kommt (noch keine `lastVersion`, Hinweis schon bestätigt), sieht sie.
+
+Der Text kommt beim Bauen in die App: Der Release-Workflow liest ihn vor dem Bauen aus dem Tag (Schritt «Release-Text», `ASK_NOTES_FILE`), `scripts/dist.js` legt ihn als `neu.json` zu den Ressourcen. Fehlt er (Build von Hand), steht «ASK ist jetzt auf Version …».
+
+## E65 Vorlagen der TF Bern aus C:\Vorlagen
+
+Auf den Laptops der Schule liegen alle Vorlagen der TF Bern in `C:\Vorlagen`, für Lernende nur zum Lesen. Gibt es den Ordner, darf das Terminal dort auflisten, lesen und suchen (`list_files`, `find_files`, `read_file`, `search_text`), schreiben weiterhin nur im Arbeitsordner (`FileApi::with_read_only`, Einstellung `read_only` des Terminal-Servers). Der Systemprompt nennt den Ordner, die Vorlagen darin (bis 80 Dateien, Office und PDF, drei Ebenen tief) und wie man eine .dotx/.xltx/.potx für python-docx, openpyxl und python-pptx in eine normale Datei kopiert. Befehle, die nur `C:\Vorlagen` nennen (etwa eine Vorlage kopieren), gelten bei den Rückfragen nicht als «ausserhalb des Ordners». Ohne den Ordner ändert sich nichts.

@@ -337,6 +337,7 @@ pub mod native_low {
                 "origin": o.origin.clone().unwrap_or_default(),
                 "execute_timeout": self.execute_timeout,
                 "low_integrity": low || (!cfg!(windows) && self.low_integrity),
+                "read_only": crate::vorlagen::read_only_dirs(),
             });
             // stdin bleibt offen: Endet die App, endet stdin, und der Server beendet sich
             let _ = stdin.write_all(format!("{cfg}\n").as_bytes()).await;
@@ -1216,6 +1217,7 @@ mod tests {
                 origin: o.origin.unwrap_or_default(),
                 execute_timeout: 60.0,
                 low_integrity: true,
+                read_only: crate::vorlagen::read_only_dirs(),
             };
             *self.server.lock() = Some(ask_terminal::serve(config).await?);
             Ok(())

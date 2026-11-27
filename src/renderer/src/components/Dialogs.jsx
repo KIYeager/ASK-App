@@ -19,6 +19,17 @@ function Dialog({ id, title, wide, full, children, actions, onClose }) {
   );
 }
 
+// «Neu in ASK» nach einem Update (ENTSCHEIDE E64): Text aus dem Release, Zeilen als Absätze
+function WhatsNewDialog({ info, onClose }) {
+  const lines = String(info?.text || '').split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  return (
+    <Dialog id="dlg-whatsnew" title={`Neu in ASK ${info?.version || ''}`} onClose={onClose}
+      actions={<button id="whatsnew-ok" type="button" className="btn primary" autoFocus onClick={onClose}>Alles klar</button>}>
+      {lines.map((l, i) => <p key={i}>{l.replace(/^[-*•]\s*/, '')}</p>)}
+    </Dialog>
+  );
+}
+
 function WarningDialog() {
   const [ok, setOk] = useState(false);
   return (
@@ -455,6 +466,7 @@ export function activeDialog(state, dialog) {
   if (!state.folder) return 'start';
   if (dialog?.name) return dialog.name;
   if (state.prefs && state.prefs.tourDone === false && !LOGIN_PENDING.includes(state.ask?.state)) return 'tour';
+  if (state.whatsNew) return 'whatsnew'; // nach jedem Update einmal (E64)
   return null;
 }
 
@@ -463,6 +475,13 @@ export default function Dialogs({ state, dialog, setDialog, selected, startError
   if (!name) return null;
   const close = () => setDialog(null);
   if (name === 'tour') return <Tour state={state} onDone={() => { api().setPrefs({ tourDone: true }); close(); }} />;
+  if (name === 'whatsnew') {
+    return (
+      <div id="overlay" className="overlay">
+        <WhatsNewDialog info={state.whatsNew} onClose={() => api().whatsNewSeen()} />
+      </div>
+    );
+  }
   return (
     <div id="overlay" className="overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && dialog && name === dialog.name) close(); }}>
       {name === 'warning' ? <WarningDialog /> : null}

@@ -115,6 +115,19 @@ jobs:
         shell: powershell
         run: scripts\build-python.ps1 -BuildDir $env:ASK_BUILD_DIR
 
+      # Release-Text aus dem Tag (npm run release schreibt ihn hinein): im Update-Dialog und als «Neu in ASK»
+      # in der App (ENTSCHEIDE E64). Den Tag neu holen: checkout macht aus einem annotierten Tag sonst
+      # unter Umständen einen leichten.
+      - name: Release-Text
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          git fetch --force origin "refs/tags/v$($version):refs/tags/v$($version)" 2>$null
+          $notes = (git tag -l --format='%(contents)' "v$version" | Out-String).Trim()
+          if (-not $notes -or $notes -eq "v$version") { $notes = "Neue Version $version." }
+          $notesFile = Join-Path $env:RUNNER_TEMP 'notes.md'
+          Set-Content $notesFile -Encoding utf8 -Value $notes
+          "ASK_NOTES_FILE=$notesFile" >> $env:GITHUB_ENV
+
       - name: Installer bauen
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -141,14 +154,8 @@ jobs:
           Copy-Item $setup (Join-Path $out 'ASK-Setup.exe')
           Copy-Item $portable (Join-Path $out 'ASK.exe')
 
-          # Text aus dem Tag (npm run release schreibt ihn hinein); erscheint im Update-Dialog der App.
-          # Die Download-Anleitung steht im README von ASK-Releases, nicht hier.
-          # Den Tag neu holen: checkout macht aus einem annotierten Tag sonst unter Umständen einen leichten.
-          git fetch --force origin "refs/tags/v$($env:VERSION):refs/tags/v$($env:VERSION)" 2>$null
-          $notes = (git tag -l --format='%(contents)' "v$env:VERSION" | Out-String).Trim()
-          if (-not $notes -or $notes -eq "v$env:VERSION") { $notes = "Neue Version $env:VERSION." }
-          $notesFile = Join-Path $env:RUNNER_TEMP 'notes.md'
-          Set-Content $notesFile -Encoding utf8 -Value $notes
+          # Text aus dem Schritt «Release-Text»; die Download-Anleitung steht im README von ASK-Releases, nicht hier.
+          $notesFile = $env:ASK_NOTES_FILE
 
           # Update-Dateien: latest.yml (für die frühere Electron-Fassung) kommt in das Release selbst,
           # latest.json und beta.json (Tauri) in das feste Release «updater» (ENTSCHEIDE E60)

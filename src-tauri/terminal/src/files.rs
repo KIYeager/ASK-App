@@ -67,6 +67,8 @@ pub enum ReadResult {
 pub struct FileApi {
     guard: PathGuard,
     home: PathBuf,
+    /// Ordner, die nur gelesen werden dürfen (Vorlagen der Schule, C:\Vorlagen; ENTSCHEIDE E65)
+    read_only: Vec<PathGuard>,
 }
 
 /// Zeilenenden wie `_LINE_BREAK` in open-terminal
@@ -239,7 +241,24 @@ impl FileApi {
     /// `workdir`: der Arbeitsordner; relative Pfade und der Standardordner beziehen sich darauf
     pub fn new(workdir: &Path) -> Self {
         let home = crate::guard::realpath(workdir);
-        FileApi { guard: PathGuard::new(&home), home }
+        FileApi { guard: PathGuard::new(&home), home, read_only: Vec::new() }
+    }
+
+    /// Dazu Ordner, die nur gelesen werden dürfen (Auflisten, Lesen, Suchen); Schreiben bleibt im Arbeitsordner
+    pub fn with_read_only(mut self, dirs: &[String]) -> Self {
+        self.read_only = dirs.iter().map(Path::new).filter(|d| d.is_dir()).map(PathGuard::new).collect();
+        self
+    }
+
+    /// Wie `resolve`, aber auch in den Ordnern nur zum Lesen
+    pub fn resolve_read(&self, path: &str) -> Res<PathBuf> {
+        let p = Path::new(path);
+        let target = if p.is_absolute() { normpath(p) } else { normpath(&self.home.join(p)) };
+        if self.read_only.iter().any(|g| g.inside(&target)) {
+            return Ok(target);
+        }
+        self.guard.check(&target)?;
+        Ok(target)
     }
 
     pub fn home(&self) -> &Path {
@@ -258,14 +277,15 @@ impl FileApi {
         Ok(target)
     }
 
+    /// Lesbar: im Arbeitsordner oder in einem Ordner nur zum Lesen
     fn inside(&self, path: &Path) -> bool {
-        self.guard.inside(path)
+        self.guard.inside(path) || self.read_only.iter().any(|g| g.inside(path))
     }
 
     // ---------- list ----------
 
     pub fn list(&self, directory: &str) -> Res<Value> {
-        let target = self.resolve(directory)?;
+        let target = self.resolve_read(directory)?;
         if !target.is_dir() {
             return Err(ApiError::new(404, "Directory not found"));
         }
@@ -294,7 +314,7 @@ impl FileApi {
     // ---------- read ----------
 
     pub fn read(&self, path: &str, start_line: Option<u32>, end_line: Option<u32>) -> Res<ReadResult> {
-        let target = self.resolve(path)?;
+        let target = self.resolve_read(path)?;
         if !target.is_file() {
             return Err(ApiError::new(404, "File not found"));
         }
@@ -395,7 +415,7 @@ impl FileApi {
     // ---------- glob ----------
 
     pub fn glob(&self, pattern: &str, path: &str, exclude: &[String], kind: &str, max_results: usize) -> Res<Value> {
-        let target = self.resolve(path)?;
+        let target = self.resolve_read(path)?;
         if !target.is_dir() {
             return Err(ApiError::new(404, "Search directory not found"));
         }
@@ -435,7 +455,7 @@ impl FileApi {
 
     #[allow(clippy::too_many_arguments)]
     pub fn grep(&self, query: &str, path: &str, regex: bool, case_insensitive: bool, include: &[String], match_per_line: bool, max_results: usize) -> Res<Value> {
-        let target = self.resolve(path)?;
+        let target = self.resolve_read(path)?;
         if !target.exists() {
             return Err(ApiError::new(404, "Search path not found"));
         }
@@ -553,6 +573,24 @@ mod tests {
         api.replace("m.txt", &[rep("a", "b", true)]).unwrap();
         let ReadResult::Json(v) = api.read("m.txt", None, None).unwrap() else { panic!() };
         assert_eq!(v["content"], "b b");
+    }
+
+    #[test]
+    fn vorlagen_nur_lesen() {
+        let base = tempfile::tempdir().unwrap();
+        let work = base.path().join("projekt");
+        let vorlagen = base.path().join("Vorlagen");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(vorlagen.join("Word")).unwrap();
+        std::fs::write(vorlagen.join("Word").join("brief.txt"), "Vorlage").unwrap();
+        let api = FileApi::new(&work).with_read_only(&[vorlagen.to_string_lossy().to_string()]);
+        let file = vorlagen.join("Word").join("brief.txt").to_string_lossy().to_string();
+        assert!(matches!(api.read(&file, None, None).unwrap(), ReadResult::Json(_)));
+        assert_eq!(api.list(&vorlagen.to_string_lossy()).unwrap()["entries"][0]["name"], "Word");
+        assert_eq!(api.glob("*.txt", &vorlagen.to_string_lossy(), &[], "file", 10).unwrap()["matches"].as_array().unwrap().len(), 1);
+        assert_eq!(api.write(&file, "x").unwrap_err().status, 403, "nur lesen");
+        assert_eq!(api.write(&vorlagen.join("neu.txt").to_string_lossy(), "x").unwrap_err().status, 403);
+        assert_eq!(std::fs::read_to_string(vorlagen.join("Word").join("brief.txt")).unwrap(), "Vorlage");
     }
 
     #[test]
