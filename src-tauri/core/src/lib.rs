@@ -50,6 +50,7 @@ pub mod visual;
 pub mod uiblocks;
 pub mod docx;
 pub mod docs;
+pub mod docsync;
 
 // Welle 3
 pub mod agent;

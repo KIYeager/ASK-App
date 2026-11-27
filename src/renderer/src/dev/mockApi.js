@@ -487,11 +487,15 @@ if (!new URLSearchParams(location.search).get('docs')) {
   mockComments['docs/lernzettel-photosynthese.md'] = [{ id: 'k1a2b3c', zitat: 'Calvin-Zyklus im Stroma', erledigt: false, zeit: Date.now() - 600e3,
     eintraege: [{ von: 'person', text: 'Kannst du hier ein Beispiel ergänzen?', zeit: Date.now() - 600e3 }, { von: 'ask', text: 'Beispiel mit Glukose ergänzt.', zeit: Date.now() - 500e3 }] }];
 }
+// Geteilte Docs (E82): ein Beispiel ist mit Tim und Mia geteilt
+const mockShares = { 'docs/lernzettel-photosynthese.md': { geteilt: true, ordner: 'C:\\Users\\lea\\OneDrive - TF Bern\\Gruppe Bio\\lernzettel-photosynthese.askdoc', fehler: '',
+  personen: [{ name: 'Tim', ich: false, zuletzt: Date.now() - 90e3 }, { name: 'Lea Muster', ich: true, zuletzt: Date.now() - 300e3 }, { name: 'Mia', ich: false, zuletzt: Date.now() - 3 * 3600e3 }],
+  anderen: [{ name: 'Tim', zeit: Date.now() - 90e3, text: 'Teil Ort Lichtreaktion Thylakoid' }] } };
 const docMsg = (p, t) => `[Kommentar im Doc ${p}, ${t.id}] ${t.zitat ? `zur Stelle «${t.zitat}»` : 'zum ganzen Doc'}: ${[...t.eintraege].reverse().find((e) => e.von === 'person')?.text || ''}`;
 const mockDocsApi = {
   docsList: async () => ({ ok: true, docs: Object.entries(mockDocs).map(([path, d]) => ({ path, title: docTitle(d.content, path), modified: d.modified, size: d.content.length,
-    comments: (mockComments[path] || []).filter((c) => !c.erledigt).length })).sort((a, b) => b.modified - a.modified) }),
-  docsRead: async (path) => { const d = mockDocs[path]; return d ? { ok: true, path, title: docTitle(d.content, path), content: d.content, hash: docHash(d.content), modified: d.modified, comments: structuredClone(mockComments[path] || []) } : { ok: false, reason: `Das Doc «${path}» gibt es nicht.` }; },
+    comments: (mockComments[path] || []).filter((c) => !c.erledigt).length, geteilt: !!mockShares[path] })).sort((a, b) => b.modified - a.modified) }),
+  docsRead: async (path) => { const d = mockDocs[path]; return d ? { ok: true, path, title: docTitle(d.content, path), content: d.content, hash: docHash(d.content), modified: d.modified, comments: structuredClone(mockComments[path] || []), share: mockShares[path] || { geteilt: false } } : { ok: false, reason: `Das Doc «${path}» gibt es nicht.` }; },
   docsSave: async (path, content, base) => {
     const d = mockDocs[path];
     if (d && base && docHash(d.content) !== base && d.content !== content) return { ok: false, conflict: true, content: d.content, hash: docHash(d.content) };
@@ -501,8 +505,13 @@ const mockDocsApi = {
   docsCreate: async (title) => { const path = `docs/${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'doc'}${docSeq++ ? `-${docSeq}` : ''}.md`; mockDocs[path] = { content: `# ${title}\n\n`, modified: Date.now() }; return { ok: true, path }; },
   docsDelete: async (path) => { delete mockDocs[path]; delete mockComments[path]; return { ok: true }; },
   docsOpen: async () => null,
+  docsShare: async (path) => { mockShares[path] = { geteilt: true, ordner: 'C:\\Users\\lea\\OneDrive - TF Bern\\Geteilt\\doc.askdoc', fehler: '', personen: [{ name: 'Lea Muster', ich: true, zuletzt: Date.now() }], anderen: [] }; return { ok: true, ...mockShares[path] }; },
+  docsJoin: async () => ({ ok: false, canceled: true }),
+  docsUnshare: async (path) => { delete mockShares[path]; return { ok: true }; },
+  docsShareInfo: async (path) => mockShares[path] || { geteilt: false },
+  docsShowFolder: async () => null,
   docsComments: async (path) => ({ ok: true, comments: structuredClone(mockComments[path] || []) }),
-  docsCommentAdd: async (path, zitat, text) => { const t = { id: `k${Math.random().toString(16).slice(2, 8)}`, zitat, erledigt: false, zeit: Date.now(), eintraege: [{ von: 'person', text, zeit: Date.now() }] }; (mockComments[path] ||= []).push(t); return { ok: true, thread: structuredClone(t), message: docMsg(path, t) }; },
+  docsCommentAdd: async (path, zitat, text, farbe = '') => { const t = { id: `k${Math.random().toString(16).slice(2, 8)}`, zitat, farbe, erledigt: false, zeit: Date.now(), eintraege: text ? [{ von: 'person', text, zeit: Date.now() }] : [] }; (mockComments[path] ||= []).push(t); return { ok: true, thread: structuredClone(t), message: docMsg(path, t) }; },
   docsCommentReply: async (path, id, text) => { const t = (mockComments[path] || []).find((x) => x.id === id); t.eintraege.push({ von: 'person', text, zeit: Date.now() }); return { ok: true, thread: { ...t }, message: docMsg(path, t) }; },
   docsCommentDone: async (path, id, done) => { const t = (mockComments[path] || []).find((x) => x.id === id); t.erledigt = !!done; return { ok: true, thread: { ...t } }; },
   docsCommentDelete: async (path, id) => { mockComments[path] = (mockComments[path] || []).filter((x) => x.id !== id); return { ok: true }; },
@@ -523,7 +532,7 @@ export function install() {
   });
   window.ask = {
     getState: async () => { chatOf(state.chat.id); return full(); },
-    onState: on('state'), onFiles: on('files'), onTasks: on('tasks'),
+    onState: on('state'), onFiles: on('files'), onTasks: on('tasks'), onDocsSync: on('docs:sync'),
     onMenuChooseFolder: on('x1'), onMenuNewFolder: on('x2'), onMenuGithub: on('x3'), onFolderError: on('folder:error'),
     onProjectRename: on('project:rename'), onGroupsChanged: on('groups'), onChatEvent: on('chat:event'), onChatChanged: on('chat:changed'),
     onBrowserState: on('browser:state'), onBrowserNotice: on('browser:notice'), onServers: on('servers'),

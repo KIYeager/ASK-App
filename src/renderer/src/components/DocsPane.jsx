@@ -7,8 +7,18 @@ import Icon from './Icon.jsx';
 import PopMenu from './PopMenu.jsx';
 import { api } from '../api.js';
 import { htmlToMd, mdToHtml } from '../lib/docMd.mjs';
+import { fileUrl } from '../lib/format.js';
 
 const SAVE_MS = 800;
+// Farben zum Anstreichen (wie COLORS in docs.rs); ohne Farbe gilt Gelb
+const COLORS = [['gelb', 'Gelb'], ['gruen', 'Grün'], ['blau', 'Blau'], ['rot', 'Rot']];
+// Schnellaktionen der Leiste an der Markierung: Text für ASK
+const ACTIONS = [
+  ['erklaeren', 'Erklären', 'help', 'Erkläre mir diese Stelle verständlich. Antworte im Kommentar, ändere das Doc nicht.'],
+  ['grafik', 'Grafik dazu', 'chart', 'Mach eine Grafik dazu (Diagramm oder Bild) und füge sie im Doc direkt nach dieser Stelle ein.'],
+  ['einfacher', 'Einfacher', 'pen', 'Formuliere diese Stelle einfacher und ersetze sie im Doc.'],
+  ['beispiel', 'Beispiel', 'list', 'Ergänze direkt nach dieser Stelle ein kurzes Beispiel im Doc.'],
+];
 const when = (ms) => {
   const d = new Date(ms);
   if (d.toDateString() === new Date().toDateString()) return d.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' });
@@ -35,6 +45,8 @@ function DocList({ docs, free, onOpen, onCompose }) {
       <div className="docs-head">
         <b>Docs</b><span className="muted small">{free ? 'Chats ohne Projekt' : 'in diesem Projekt'}</span>
         <span className="spacer" />
+        <button type="button" className="icon-btn" title="Geteiltes Doc öffnen (Ordner von OneDrive, Teams oder der Schule)" aria-label="Geteiltes Doc öffnen"
+          onClick={async () => { const r = await api().docsJoin(); if (r?.ok) onOpen(r.path); else if (!r?.canceled) setError(r?.reason || 'Nicht geöffnet.'); }}><Icon name="user" size={15} /></button>
         <button type="button" className="btn small" onClick={() => setNaming(true)}><Icon name="plus" size={13} /> Neues Doc</button>
       </div>
       {naming ? (
@@ -45,6 +57,7 @@ function DocList({ docs, free, onOpen, onCompose }) {
           {error ? <p className="docs-error">{error}</p> : null}
         </form>
       ) : null}
+      {error && !naming ? <p className="docs-error docs-pad">{error}</p> : null}
       {docs === null ? <p className="muted docs-pad">Lädt …</p> : docs.length ? (
         <ul className="docs-items">
           {docs.map((d) => (
@@ -52,6 +65,7 @@ function DocList({ docs, free, onOpen, onCompose }) {
               <button type="button" className="docs-item" onClick={() => onOpen(d.path)} title={d.path}>
                 <Icon name="doc" size={16} />
                 <span className="docs-item-text"><b className="ell">{d.title}</b><span className="muted ell">{d.path} · {when(d.modified)}</span></span>
+                {d.geteilt ? <span className="docs-shared" title="Geteilt: andere schreiben mit"><Icon name="user" size={13} /></span> : null}
                 {d.comments ? <span className="docs-badge" title={`${d.comments} offene Kommentare`}>{d.comments}</span> : null}
               </button>
             </li>
@@ -69,10 +83,92 @@ function DocList({ docs, free, onOpen, onCompose }) {
   );
 }
 
+// ---------- Teilen (E82) ----------
+
+const ago = (ms) => {
+  if (!ms) return 'noch nie';
+  const min = Math.round((Date.now() - ms) / 60000);
+  return min < 1 ? 'gerade eben' : min < 60 ? `vor ${min} Min.` : min < 1440 ? `vor ${Math.round(min / 60)} Std.` : when(ms);
+};
+
+function SharePanel({ path, share, onChanged, onClose, notice }) {
+  const [busy, setBusy] = useState(false);
+  const start = async () => {
+    setBusy(true);
+    const r = await api().docsShare(path);
+    setBusy(false);
+    if (r?.ok) { onChanged(); notice?.('Geteilt. Gib den Ordner jetzt in OneDrive oder Teams frei.'); } else if (!r?.canceled) notice?.(r?.reason || 'Nicht geteilt.');
+  };
+  const stop = async () => { const r = await api().docsUnshare(path); if (r?.ok) { onChanged(); onClose(); } };
+  if (!share?.geteilt) {
+    return (
+      <div className="docs-share">
+        <b>Doc live teilen</b>
+        <p>Andere schreiben auf ihrem Laptop mit, und ihr seht die Änderungen gegenseitig. Dafür braucht ihr einen Ordner, den alle haben:</p>
+        <ul>
+          <li>einen Ordner in <b>OneDrive</b>, den du für die anderen freigibst,</li>
+          <li>die Dateien eines <b>Teams</b>-Kanals (in OneDrive synchronisiert) oder</li>
+          <li>ein <b>Laufwerk der Schule</b> (am schnellsten).</li>
+        </ul>
+        <p className="muted small">ASK legt dort einen Ordner «….askdoc» an. Die anderen öffnen ihn in ASK mit dem Personen-Knopf in der Liste der Docs. Mit OneDrive kommen Änderungen nach ein paar Sekunden an.</p>
+        <div className="docs-row">
+          <button type="button" className="btn small primary" disabled={busy} onClick={start}>{busy ? 'Teilt …' : 'Ordner wählen …'}</button>
+          <button type="button" className="btn small" onClick={onClose}>Abbrechen</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="docs-share">
+      <div className="docs-row"><b>Geteilt</b><span className="spacer" /><button type="button" className="icon-btn" aria-label="Schliessen" onClick={onClose}><Icon name="close" size={13} /></button></div>
+      {share.fehler ? <p className="docs-error">{share.fehler}</p> : null}
+      <ul className="docs-people">
+        {(share.personen || []).map((p, i) => (
+          <li key={i}><Icon name="user" size={13} /> <b>{p.name}</b>{p.ich ? ' (du)' : ''}<span className="spacer" /><span className="muted small">{ago(p.zuletzt)}</span></li>
+        ))}
+      </ul>
+      {(share.anderen || []).length ? (
+        <>
+          <p className="muted small">Zuletzt von anderen geändert:</p>
+          <ul className="docs-recent">{share.anderen.map((c, i) => <li key={i}><b>{c.name}</b> {ago(c.zeit)}: «{c.text}»</li>)}</ul>
+        </>
+      ) : null}
+      <p className="muted small ell" title={share.ordner}>Ordner: {share.ordner}</p>
+      <div className="docs-row">
+        <button type="button" className="btn small" onClick={() => api().docsShowFolder(path)}>Ordner öffnen</button>
+        <button type="button" className="btn small" onClick={stop}>Nicht mehr teilen</button>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Kommentare ----------
 
 function Entry({ e }) {
   return <p className={`docs-entry ${e.von === 'ask' ? 'ask' : ''}`}><b>{e.von === 'ask' ? 'ASK' : 'Du'}</b> {e.text}</p>;
+}
+
+// Leiste direkt an der markierten Stelle: Schnellaktionen für ASK und Anstreichen
+function SelectionBar({ at, onAction, onCustom, onMark }) {
+  // Über der Markierung, mit der echten Höhe der Leiste; reicht der Platz oben nicht, darunter
+  const ref = useRef(null);
+  const [top, setTop] = useState(at.bottom + 6);
+  useLayoutEffect(() => {
+    const h = ref.current?.offsetHeight || 40;
+    setTop(at.top - h - 6 >= at.scrollTop ? at.top - h - 6 : at.bottom + 6);
+  }, [at]);
+  return (
+    <div ref={ref} className="docs-selbar" style={{ left: at.x, top }} role="toolbar" aria-label="Markierte Stelle" onMouseDown={(e) => e.preventDefault()}>
+      {ACTIONS.map(([key, label, icon]) => (
+        <button key={key} type="button" title={`${label}: geht an ASK`} onClick={() => onAction(key)}><Icon name={icon} size={13} /> {label}</button>
+      ))}
+      <button type="button" title="Eigene Bitte an ASK oder Notiz zur Stelle" onClick={onCustom}><Icon name="chat" size={13} /> Bitte …</button>
+      <span className="docs-selbar-sep" aria-hidden="true" />
+      {COLORS.map(([c, label]) => (
+        <button key={c} type="button" className={`docs-swatch ${c}`} title={`${label} anstreichen`} aria-label={`${label} anstreichen`} onClick={() => onMark(c)} />
+      ))}
+    </div>
+  );
 }
 
 function Thread({ t, onReply, onDone, onDelete, onShow }) {
@@ -81,8 +177,9 @@ function Thread({ t, onReply, onDone, onDelete, onShow }) {
   const send = async (toAsk) => { if (!reply.trim()) return; await onReply(t, reply, toAsk); setReply(''); setOpen(false); };
   return (
     <li className={`docs-thread${t.erledigt ? ' done' : ''}`}>
-      {t.zitat ? <button type="button" className="docs-quote" onClick={() => onShow(t)} title="Stelle im Doc zeigen">«{t.zitat}»</button> : <span className="docs-quote whole">Zum ganzen Doc</span>}
+      {t.zitat ? <button type="button" className={`docs-quote ${t.farbe || 'gelb'}`} onClick={() => onShow(t)} title="Stelle im Doc zeigen">«{t.zitat}»</button> : <span className="docs-quote whole">Zum ganzen Doc</span>}
       {(t.eintraege || []).map((e, i) => <Entry key={i} e={e} />)}
+      {!(t.eintraege || []).length ? <p className="docs-entry muted">Angestrichen</p> : null}
       {open ? (
         <div className="docs-reply">
           <textarea autoFocus rows={2} value={reply} placeholder="Antworten …" onChange={(e) => setReply(e.target.value)}
@@ -128,6 +225,15 @@ function rangeFor(root, quote) {
 
 const BLOCKS = [['p', 'Text'], ['h1', 'Titel'], ['h2', 'Überschrift'], ['h3', 'Unterüberschrift'], ['blockquote', 'Zitat'], ['pre', 'Code']];
 
+// Bildpfad im Doc (relativ zum Doc) → Adresse im Projekt; nie aus dem Projekt hinaus
+export function imageAddress(docPath, src, v = '') {
+  const parts = String(docPath).split('/').slice(0, -1);
+  for (const p of String(src).split('/')) {
+    if (p === '..') { if (!parts.length) return ''; parts.pop(); } else if (p && p !== '.') parts.push(p);
+  }
+  return parts.length ? fileUrl(parts.join('/'), v) : '';
+}
+
 function blockOf(node, root) {
   for (let n = node; n && n !== root; n = n.parentNode) {
     const name = n.nodeName?.toLowerCase();
@@ -137,7 +243,7 @@ function blockOf(node, root) {
   return 'p';
 }
 
-function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice }) {
+function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty, notice }) {
   const ed = useRef(null);
   const scroller = useRef(null);
   const hash = useRef('');
@@ -156,22 +262,31 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
   const [menu, setMenu] = useState(null);
   const [writing, setWriting] = useState(false);
   const [missing, setMissing] = useState(false);
+  const [share, setShare] = useState(null);
+  const [sharing, setSharing] = useState(false);
+  const shared = useRef(false);
+  const [selBar, setSelBar] = useState(null); // { x, y, quote }
 
   const setDirty = (on) => { dirty.current = on; onDirty?.(on); };
 
   const show = useCallback((md) => {
     const box = scroller.current;
     const top = box?.scrollTop || 0;
-    if (ed.current) ed.current.innerHTML = mdToHtml(md);
+    const v = Date.now(); // Bilder nach einer Änderung neu laden
+    if (ed.current) ed.current.innerHTML = mdToHtml(md, { image: (src) => imageAddress(path, src, v) });
     if (box) box.scrollTop = top;
-  }, []);
+  }, [path]);
 
   const load = useCallback(async (force) => {
     const r = await api().docsRead(path);
     if (!r?.ok) { setMissing(true); return; }
     setMissing(false);
     setComments(r.comments || []);
+    setShare(r.share || null);
+    shared.current = !!r.share?.geteilt;
     if (!force && r.hash === hash.current) return;
+    // Geteiltes Doc: Andere haben geschrieben, während du tippst. Deine Änderung wird gegen deinen Stand zusammengeführt.
+    if (!force && dirty.current && shared.current) { saveRef.current(); return; }
     if (!force && dirty.current) { setConflict({ content: r.content, hash: r.hash }); return; }
     show(r.content);
     hash.current = r.hash;
@@ -195,7 +310,12 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
       hash.current = r.hash;
       saved.current = md;
       setTitle(r.title || title);
-      if (seq.current === at) { setDirty(false); setStatus('Gespeichert'); }
+      if (seq.current === at) {
+        setDirty(false);
+        setStatus('Gespeichert');
+        // Zusammengeführt mit Änderungen anderer: zeigen, was jetzt gilt
+        if (r.merged && typeof r.content === 'string') { show(r.content); saved.current = r.content; }
+      }
     } else if (r?.conflict) {
       setConflict({ content: r.content, hash: r.hash });
       setStatus('Nicht gespeichert');
@@ -209,7 +329,7 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
 
   useEffect(() => { hash.current = ''; setDirty(false); load(true); }, [path]);  
   // Dateien im Ordner geändert (auch durch ASK über den Ordner): neu lesen, falls es nicht die eigene Änderung war
-  useEffect(() => { if (hash.current) load(false); }, [files]);  
+  useEffect(() => { if (hash.current) load(false); }, [files, synced]);  
   // ASK schreibt an diesem Doc
   useEffect(() => {
     if (live?.path !== path) return undefined;
@@ -232,11 +352,35 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
   // Markierte Stellen der offenen Kommentare (CSS Custom Highlight API, ändert das DOM nicht)
   const paintMarks = useCallback(() => {
     if (!window.CSS?.highlights || typeof window.Highlight !== 'function') return;
-    const ranges = comments.filter((c) => !c.erledigt && c.zitat).map((c) => rangeFor(ed.current, c.zitat)).filter(Boolean);
-    CSS.highlights.set('doc-kommentar', new window.Highlight(...ranges));
+    for (const [c] of COLORS) {
+      const ranges = comments.filter((x) => !x.erledigt && x.zitat && (x.farbe || 'gelb') === c).map((x) => rangeFor(ed.current, x.zitat)).filter(Boolean);
+      CSS.highlights.set(`doc-${c}`, new window.Highlight(...ranges));
+    }
   }, [comments]);
   useLayoutEffect(() => { paintMarks(); }, [paintMarks, title, status]);
-  useEffect(() => () => window.CSS?.highlights?.delete('doc-kommentar'), []);
+  useEffect(() => () => { for (const [c] of COLORS) window.CSS?.highlights?.delete(`doc-${c}`); }, []);
+
+  // Leiste an der Markierung: erscheint, wenn im Doc Text markiert ist (nach Maus oder Tastatur)
+  const placeBar = () => {
+    const sel = window.getSelection();
+    const box = scroller.current;
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !ed.current?.contains(sel.anchorNode) || !box) { setSelBar(null); return; }
+    const quote = String(sel).trim().slice(0, 500);
+    if (!quote) { setSelBar(null); return; }
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    const b = box.getBoundingClientRect();
+    const x = Math.max(4, Math.min(r.left - b.left + box.scrollLeft, b.width - 330));
+    setSelBar({ x, top: r.top - b.top + box.scrollTop, bottom: r.bottom - b.top + box.scrollTop, scrollTop: box.scrollTop, quote });
+  };
+  useEffect(() => {
+    // Nur nach einer Markierung im Doc; ein Klick anderswo blendet die Leiste aus
+    const off = (e) => {
+      if (e.target.closest?.('.docs-selbar')) return;
+      if (ed.current?.contains(e.target)) setTimeout(placeBar, 0); else setSelBar(null);
+    };
+    document.addEventListener('mouseup', off);
+    return () => document.removeEventListener('mouseup', off);
+  });
 
   const exec = (cmd, value = null) => {
     ed.current?.focus();
@@ -262,7 +406,8 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
     const md = html ? htmlToMd(new DOMParser().parseFromString(html, 'text/html').body) : text;
     if (!md.trim()) return;
     const single = !md.trim().includes('\n') && !/^(#|>|[-*+] |\d+\. |\||```)/.test(md.trim());
-    document.execCommand('insertHTML', false, single ? mdToHtml(md).replace(/^<p>|<\/p>$/g, '') : mdToHtml(md));
+    const out = mdToHtml(md, { image: (src) => imageAddress(path, src) });
+    document.execCommand('insertHTML', false, single ? out.replace(/^<p>|<\/p>$/g, '') : out);
     changed();
   };
 
@@ -291,18 +436,39 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
 
   const startComment = () => {
     const sel = window.getSelection();
-    const quote = sel && ed.current?.contains(sel.anchorNode) ? String(sel).trim().slice(0, 500) : '';
-    setDraft({ quote, text: '' });
+    const quote = selBar?.quote || (sel && ed.current?.contains(sel.anchorNode) ? String(sel).trim().slice(0, 500) : '');
+    setSelBar(null);
+    setDraft({ quote, text: '', farbe: quote ? 'gelb' : '' });
+  };
+  const comment = async ({ quote, text, farbe = '', toAsk }) => {
+    await save();
+    const r = await api().docsCommentAdd(path, quote, text, farbe);
+    if (!r?.ok) { notice?.(r?.reason || 'Kommentar nicht gespeichert.'); return false; }
+    setComments((c) => [...c, r.thread]);
+    if (toAsk) onAsk(r.message);
+    return true;
   };
   const addComment = async (toAsk) => {
     const text = draft.text.trim();
     if (!text) return;
+    if (await comment({ quote: draft.quote, text, farbe: draft.farbe || '', toAsk })) setDraft(null);
+  };
+  const quickAction = async (key) => {
+    const quote = selBar?.quote;
+    const text = ACTIONS.find((a) => a[0] === key)?.[3];
+    setSelBar(null);
+    window.getSelection()?.removeAllRanges();
+    if (quote && text) await comment({ quote, text, farbe: 'gelb', toAsk: true });
+  };
+  const markOnly = async (farbe) => {
+    const quote = selBar?.quote;
+    setSelBar(null);
+    window.getSelection()?.removeAllRanges();
+    if (quote) await comment({ quote, text: '', farbe });
+  };
+  const feedback = async () => {
     await save();
-    const r = await api().docsCommentAdd(path, draft.quote, text);
-    if (!r?.ok) { notice?.(r?.reason || 'Kommentar nicht gespeichert.'); return; }
-    setDraft(null);
-    setComments((c) => [...c, r.thread]);
-    if (toAsk) onAsk(r.message);
+    onAsk(`Gib mir Feedback und Vorschläge zum Doc ${path}: Was ist gut, was fehlt, was ist unklar oder falsch? Lies es mit doc_lesen und setz deine Vorschläge als Kommentare an die passenden Stellen (doc_kommentieren ohne id, mit zitat). Ändere das Doc selbst nicht.`);
   };
   const replyTo = async (t, text, toAsk) => {
     await save();
@@ -379,9 +545,13 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
       <div className="docs-head">
         <button type="button" className="icon-btn" title="Alle Docs" aria-label="Alle Docs" onClick={async () => { await save(); onBack(); }}><Icon name="list" size={15} /></button>
         <b className="ell" title={path}>{title || path}</b>
+        {share?.geteilt ? <button type="button" className="docs-shared-btn" title="Geteilt: wer mitschreibt" onClick={() => setSharing(!sharing)}>
+          <Icon name="user" size={13} /> {(share.personen || []).length}</button> : null}
         <span className="spacer" />
         {writing && running ? <span className="docs-live" title="ASK schreibt an diesem Doc"><span className="live-dot" aria-hidden="true" /> ASK schreibt</span>
           : <span className="muted small docs-status" aria-live="polite">{status}</span>}
+        {!share?.geteilt ? <button type="button" className="icon-btn" title="Live teilen: andere schreiben mit" aria-label="Teilen" onClick={() => setSharing(!sharing)}><Icon name="user" size={15} /></button> : null}
+        <button type="button" className="icon-btn" title="Feedback von ASK: Vorschläge als Kommentare" aria-label="Feedback von ASK" onClick={feedback}><Icon name="spark" size={15} /></button>
         <button type="button" className="icon-btn" title="Speichern als Word, PDF oder Markdown" aria-label="Speichern als …"
           onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left - 120, y: r.bottom + 4 }); }}><Icon name="down" size={15} /></button>
         <button type="button" className="icon-btn" title="Doc löschen" aria-label="Doc löschen" onClick={remove}><Icon name="trash" size={14} /></button>
@@ -391,6 +561,7 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
         { label: 'PDF (mit Word)', icon: 'file', run: () => exportAs('pdf') },
         { label: 'Markdown (.md)', icon: 'file', run: () => exportAs('md') },
       ]} /> : null}
+      {sharing ? <SharePanel path={path} share={share} notice={notice} onClose={() => setSharing(false)} onChanged={() => load(true)} /> : null}
       <div className="docs-tools" role="toolbar" aria-label="Formatierung">
         <select value={block} aria-label="Absatzart" onChange={(e) => { exec('formatBlock', e.target.value); setBlock(e.target.value); }}>
           {BLOCKS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -423,9 +594,11 @@ function DocEditor({ path, live, files, running, onBack, onAsk, onDirty, notice 
           </div>
         </div>
       ) : null}
-      <div className="docs-scroll" ref={scroller}>
+      <div className="docs-scroll" ref={scroller} onScroll={() => setSelBar(null)}>
+        {selBar ? <SelectionBar at={selBar} onAction={quickAction} onCustom={startComment} onMark={markOnly} /> : null}
         <div ref={ed} className="docs-page md" contentEditable suppressContentEditableWarning spellCheck lang="de-CH" role="textbox" aria-multiline="true"
-          aria-label={`Doc ${title}`} onInput={changed} onPaste={onPaste} onKeyDown={onKey} onBlur={() => { if (dirty.current) save(); }} />
+          aria-label={`Doc ${title}`} onInput={() => { setSelBar(null); changed(); }} onPaste={onPaste} onKeyDown={onKey}
+          onKeyUp={(e) => { if (e.shiftKey || e.key === 'Escape') { if (e.key === 'Escape') setSelBar(null); else placeBar(); } }} onBlur={() => { if (dirty.current) save(); }} />
       </div>
       <div className="docs-comments">
         <div className="docs-row docs-comments-head">
@@ -465,7 +638,10 @@ export default function DocsPane({ root, free, files, live, path, setPath, runni
     const r = await api().docsList();
     setDocs(r?.ok ? r.docs : []);
   }, []);
-  useEffect(() => { if (!path) loadList(); }, [root, files, live, path, loadList]);
+  const [synced, setSynced] = useState(0);
+  useEffect(() => { if (!path) loadList(); }, [root, files, live, path, loadList, synced]);
+  // Geteilte Docs: Änderungen der anderen sind angekommen
+  useEffect(() => api().onDocsSync?.(() => setSynced(Date.now())), []);
   // Welches Doc offen ist, steht im Systemprompt («dieses Doc»)
   useEffect(() => { api().docsOpen(path || ''); }, [path, root]);
   useEffect(() => () => { api().docsOpen(''); }, []);
@@ -473,7 +649,7 @@ export default function DocsPane({ root, free, files, live, path, setPath, runni
   useEffect(() => { if (live?.path && live.path !== path && !dirty.current) setPath(live.path); }, [live]);  
   return (
     <div className="docs-pane">
-      {path ? <DocEditor key={`${root}|${path}`} path={path} live={live} files={files} running={running} onBack={() => setPath('')}
+      {path ? <DocEditor key={`${root}|${path}`} path={path} live={live} files={files} synced={synced} running={running} onBack={() => setPath('')}
         onAsk={onAsk} onDirty={(on) => { dirty.current = on; }} notice={notice} />
         : <DocList docs={docs} free={free} onOpen={setPath} onCompose={onCompose} />}
     </div>
