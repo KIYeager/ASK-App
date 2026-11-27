@@ -1,5 +1,6 @@
 # Baut ASK auf Windows und veröffentlicht Installer, einzelne EXE und latest.yml im öffentlichen
-# Repository KIYeager/ASK-Releases (ENTSCHEIDE E37, E38). Zwei Wege:
+# Repository KIYeager/ASK-Releases (ENTSCHEIDE E37, E38), bei normalen Versionen danach die Download-Seite
+# (download-page.yml, E63). Zwei Wege:
 # - Merge eines PRs in main mit Label «beta» oder «release»: Job «version» setzt die nächste Version
 #   (oder die aus der Zeile «Version: …» im PR), macht Commit und Tag auf main, dann baut «release».
 #   Label «kein-release»: nichts. Die Wahl prüft release-label.yml schon im PR.
@@ -58,6 +59,8 @@ jobs:
     if: always() && (github.event_name == 'push' || needs.version.outputs.tag != '')
     runs-on: windows-latest
     timeout-minutes: 60
+    outputs:
+      beta: ${{ steps.version.outputs.beta }}
     concurrency:
       group: release-${{ needs.version.outputs.tag || github.ref_name }}
       cancel-in-progress: false
@@ -176,3 +179,11 @@ jobs:
           [string[]]$files = (Get-ChildItem $manifests -Filter '*.json' -File).FullName
           gh release upload updater --repo KIYeager/ASK-Releases --clobber @files
           if ($LASTEXITCODE -ne 0) { throw "Update-Dateien nicht hochgeladen" }
+
+  # Download-Seite für die Lernenden neu schreiben, nur bei normalen Versionen (ENTSCHEIDE E63).
+  # «always()», weil «version» bei einem Tag von Hand übersprungen ist und das sonst auch diesen Job überspringt.
+  download-page:
+    needs: release
+    if: always() && needs.release.result == 'success' && needs.release.outputs.beta == 'false'
+    uses: ./.github/workflows/download-page.yml
+    secrets: inherit
