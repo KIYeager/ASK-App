@@ -45,6 +45,7 @@
     ${EndIf}
     ReadRegStr $7 SHCTX "${UNINSTKEY}" "DisplayVersion"
     ${If} $7 != ""
+    ${OrIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
     ${OrIf} ${FileExists} "$LOCALAPPDATA\Programs\ask-desktop\Uninstall ASK.exe"
       StrCpy $6 1
     ${EndIf}
