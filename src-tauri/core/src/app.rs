@@ -453,6 +453,13 @@ impl App {
         }
         crate::portable::cleanup_old_versions();
         self.updater.start();
+        // Geteilte Docs (ENTSCHEIDE E82) abgleichen; geänderte Docs der Oberfläche melden
+        let me = self.me.clone();
+        crate::docsync::start(move |project, rel| {
+            if let Some(a) = me.upgrade() {
+                a.send_ui("docs:sync", json!({ "projekt": project, "pfad": rel }));
+            }
+        });
     }
 
     /// Installierte App und einzelne EXE: Python einmal entpacken (ENTSCHEIDE E39), ohne den Start aufzuhalten.

@@ -189,7 +189,7 @@ pub fn list(folder: &str) -> Vec<Value> {
             let size = e.metadata().ok()?.len();
             let head = read_head(e.path());
             Some(json!({ "path": rel, "title": title_of(&head, &rel), "modified": modified_ms(e.path()), "size": size,
-                "comments": open_count(folder, &rel) }))
+                "comments": open_count(folder, &rel), "geteilt": crate::docsync::is_shared(folder, &rel) }))
         })
         .collect();
     out.sort_by(|a, b| b["modified"].as_i64().cmp(&a["modified"].as_i64()));
@@ -226,6 +226,10 @@ pub fn read(folder: &str, rel: &str) -> Result<Value> {
 /// zurückgegeben. Sonst `{ ok: true, hash, modified, title }`.
 pub fn save(folder: &str, rel: &str, content: &str, base: Option<&str>) -> Result<Value> {
     let rel = doc_rel(rel)?;
+    // Geteiltes Doc (E82): gegen den Stand `base` vergleichen und mit den Änderungen der anderen zusammenführen
+    if let Some(r) = crate::docsync::save(folder, &rel, &content.replace("\r\n", "\n"), base.filter(|b| !b.is_empty())) {
+        return r;
+    }
     let p = full_path(folder, &rel)?;
     let content = content.replace("\r\n", "\n");
     if let Some(base) = base.filter(|b| !b.is_empty()) {
@@ -326,13 +330,26 @@ pub fn open_count(folder: &str, rel: &str) -> usize {
 
 /// Neuer Kommentar der Person zu einer Stelle (`zitat`, darf leer sein: zum ganzen Doc)
 pub fn add_comment(folder: &str, rel: &str, quote: &str, text: &str) -> Result<Value> {
+    add_comment_with(folder, rel, quote, text, "person", "")
+}
+
+/// Farben zum Anstreichen (leer: Kommentar ohne eigene Farbe)
+pub const COLORS: [&str; 4] = ["gelb", "gruen", "blau", "rot"];
+
+/// Neuer Kommentar von der Person oder von ASK (`from`), auf Wunsch angestrichen (`color`, siehe `COLORS`).
+/// Eine angestrichene Stelle darf ohne Text sein (nur angestrichen).
+pub fn add_comment_with(folder: &str, rel: &str, quote: &str, text: &str, from: &str, color: &str) -> Result<Value> {
     let k = key(rel)?;
     let text = clean(text, MAX_COMMENT);
-    if text.is_empty() {
+    let quote = clean(quote, MAX_QUOTE);
+    let color = if COLORS.contains(&color) { color } else { "" };
+    if text.is_empty() && (color.is_empty() || quote.is_empty()) {
         bail!("Der Kommentar ist leer.");
     }
-    let thread = json!({ "id": format!("k{}", hex::encode(rand::random::<[u8; 3]>())), "zitat": clean(quote, MAX_QUOTE), "erledigt": false,
-        "zeit": now_ms(), "eintraege": [{ "von": "person", "text": text, "zeit": now_ms() }] });
+    let from = if from == "ask" { "ask" } else { "person" };
+    let entries = if text.is_empty() { json!([]) } else { json!([{ "von": from, "text": text, "zeit": now_ms() }]) };
+    let thread = json!({ "id": format!("k{}", hex::encode(rand::random::<[u8; 3]>())), "zitat": quote, "farbe": color, "erledigt": false,
+        "zeit": now_ms(), "eintraege": entries });
     with_comments(folder, |all| {
         let list = all.entry(k).or_insert_with(|| json!([]));
         let arr = list.as_array_mut().expect("Liste");
@@ -427,11 +444,16 @@ So gehst du vor: Zuerst mit doc_erstellen das Gerüst anlegen (Titel, alle Über
 doc_bearbeiten füllen (alt «…» unter der Überschrift, neu der Text); die Person sieht dabei zu. Vor jeder Änderung an einem bestehenden Doc liest \
 du es mit doc_lesen, denn die Person kann es inzwischen selbst geändert haben, und du änderst nur, was verlangt ist. Im Chat sagst du danach in \
 ein, zwei Sätzen, was im Doc steht, ohne den Text zu wiederholen. Formatierung: Markdown mit #, ##, ###, Listen, Tabellen, Zitaten, **fett**, \
-*kursiv* und Links; kein HTML und keine Blöcke ask-ui. Will die Person ausdrücklich eine Word-Datei nach einer Vorlage oder mit besonderem Layout, \
+*kursiv* und Links; kein HTML und keine Blöcke ask-ui. Bilder und Diagramme: Lege die Datei in docs/bilder/ an (Diagramme mit Python und \
+matplotlib als PNG, Bilder mit bild_erstellen und datei «docs/bilder/name.png») und füge sie mit ![kurze Beschreibung](bilder/name.png) ein; \
+der Pfad gilt ab dem Ordner docs/. Will die Person ausdrücklich eine Word-Datei nach einer Vorlage oder mit besonderem Layout, \
 nimm statt eines Docs die Anleitung für Word.\n\
 Kommentare: Eine Nachricht, die mit «[Kommentar im Doc» beginnt, kommt aus dem Reiter «Docs» (Doc, Kennung des Kommentars, Stelle, Text). Lies \
 das Doc, ändere die Stelle mit doc_bearbeiten, wenn das verlangt ist, und antworte mit doc_kommentieren kurz im Kommentar (was du getan hast oder \
-deine Antwort); setze erledigt, wenn er damit erledigt ist. Im Chat genügt dann ein Satz.";
+deine Antwort); setze erledigt, wenn er damit erledigt ist. Im Chat genügt dann ein Satz. Halte dich genau an die Bitte: «Erkläre …» heisst nur \
+im Kommentar antworten, das Doc bleibt; «Mach eine Grafik dazu …» heisst Grafik erstellen und direkt nach der Stelle einfügen; «einfacher» \
+und «Beispiel» ändern das Doc. Wünscht die Person Feedback oder Vorschläge, ändere das Doc nicht, sondern setze sie mit doc_kommentieren \
+ohne id und mit zitat als Kommentare an die passenden Stellen.";
 
 /// Abschnitt «ASK Docs» im Systemprompt: Anleitung, die Docs des Ordners und das offene Doc
 pub fn system_prompt(folder: &str) -> String {
@@ -440,13 +462,19 @@ pub fn system_prompt(folder: &str) -> String {
     if !docs.is_empty() {
         let shown: Vec<String> = docs.iter().take(PROMPT_LIST).map(|d| {
             let n = d["comments"].as_u64().unwrap_or(0);
-            format!("{} «{}»{}", str_of(d, "path"), str_of(d, "title"), if n > 0 { format!(" ({n} offene Kommentare)") } else { String::new() })
+            format!("{} «{}»{}{}", str_of(d, "path"), str_of(d, "title"), if n > 0 { format!(" ({n} offene Kommentare)") } else { String::new() },
+                if truthy(&d["geteilt"]) { " (geteilt, andere schreiben live mit)" } else { "" })
         }).collect();
         out.push_str(&format!("\nDocs hier: {}{}.", shown.join("; "), if docs.len() > PROMPT_LIST { format!(" und {} weitere (doc_liste)", docs.len() - PROMPT_LIST) } else { String::new() }));
     }
     if let Some(open) = open_doc(folder).filter(|r| full_path(folder, r).map(|p| p.is_file()).unwrap_or(false)) {
         out.push_str(&format!("\nGerade offen im Reiter «Docs»: {open}. Meint die Person «das Doc» oder «hier», ist dieses gemeint."));
+        let note = crate::docsync::prompt_note(folder, &open);
+        if !note.is_empty() {
+            out.push_str(&format!(" {note}"));
+        }
     }
+    out.push_str("\nGeteilte Docs: Andere Personen können am selben Doc mitschreiben (live über einen geteilten Ordner). Lies ein geteiltes Doc vor jeder Antwort dazu neu; doc_lesen nennt, wer zuletzt was geändert hat. Gibst du Feedback zu den Änderungen anderer, nenne sie beim Namen.");
     out
 }
 
@@ -480,13 +508,16 @@ pub fn doc_tools() -> Vec<Tool> {
                 "anhaengen": { "type": "string", "description": "Markdown, das ans Ende kommt" },
                 "inhalt": { "type": "string", "description": "Das ganze Doc neu (Markdown, beginnt mit # Titel)" },
             }, "required": ["pfad"] })),
-        tool("doc_kommentieren", "Kommentar beantwortet", "Antwortet in einem Kommentar der Person zu einem Doc (Kennung aus «[Kommentar im Doc …, k…]» oder doc_lesen) und setzt ihn auf Wunsch erledigt.",
+        tool("doc_kommentieren", "Kommentar", concat!(
+            "Antwortet in einem Kommentar der Person zu einem Doc (Kennung aus «[Kommentar im Doc …, k…]» oder doc_lesen) und setzt ihn auf Wunsch erledigt. ",
+            "Ohne id legst du einen neuen Kommentar an einer Stelle an (zitat), z. B. für Feedback und Vorschläge, ohne das Doc selbst zu ändern."),
             json!({ "type": "object", "properties": {
                 "pfad": { "type": "string", "description": "Pfad des Docs" },
-                "id": { "type": "string", "description": "Kennung des Kommentars, z. B. k3f2a1c" },
-                "antwort": { "type": "string", "description": "Kurze Antwort: was du getan hast oder deine Antwort auf die Frage" },
+                "id": { "type": "string", "description": "Kennung des Kommentars, z. B. k3f2a1c; leer für einen neuen Kommentar" },
+                "zitat": { "type": "string", "description": "Nur neuer Kommentar: die Stelle im Doc, wörtlich (ein paar Wörter bis ein Satz); leer für das ganze Doc" },
+                "antwort": { "type": "string", "description": "Kurzer Text: was du getan hast, deine Antwort oder dein Vorschlag" },
                 "erledigt": { "type": "boolean", "description": "true, wenn der Kommentar damit erledigt ist" },
-            }, "required": ["pfad", "id", "antwort"] })),
+            }, "required": ["pfad", "antwort"] })),
     ]
 }
 
@@ -514,6 +545,7 @@ fn live(ctx: &ToolCtx, rel: &str, comments: bool) {
 fn thread_text(t: &Value) -> String {
     let entries: Vec<String> = t["eintraege"].as_array().map(|a| a.iter().map(|e| format!("  {}: {}", if e["von"] == "ask" { "ASK" } else { "Person" }, str_of(e, "text"))).collect()).unwrap_or_default();
     let quote = str_of(t, "zitat");
+    let entries = if entries.is_empty() { vec!["  (nur angestrichen)".to_string()] } else { entries };
     format!("- {}{}:\n{}", str_of(t, "id"), if quote.is_empty() { " (ganzes Doc)".to_string() } else { format!(" zu «{}»", take_chars(&quote, 200)) }, entries.join("\n"))
 }
 
@@ -546,6 +578,10 @@ fn run_inner(name: &str, a: &Value, ctx: &ToolCtx, folder: &str) -> Result<ToolR
             let content = str_of(&doc, "content");
             let open: Vec<String> = threads(folder, &rel).iter().filter(|t| !truthy(&t["erledigt"])).map(thread_text).collect();
             let mut out = crate::tools::clip(&content, 60_000);
+            let note = crate::docsync::prompt_note(folder, &rel);
+            if !note.is_empty() {
+                out = format!("[{note}]\n\n{out}");
+            }
             if !open.is_empty() {
                 out.push_str(&format!("\n\n--- Offene Kommentare ---\n{}", open.join("\n")));
             }
@@ -592,7 +628,10 @@ fn run_inner(name: &str, a: &Value, ctx: &ToolCtx, folder: &str) -> Result<ToolR
             if next == current {
                 return Ok(ToolResult::new(true, "Keine Änderung: Das Doc steht schon so.", "unverändert"));
             }
-            save(folder, &rel, &next, None)?;
+            let saved = save(folder, &rel, &next, Some(&hash(&current)))?;
+            if saved["conflict"] == true {
+                bail!("Das Doc hat sich gerade geändert (die Person schreibt). Lies es mit doc_lesen nochmals und ändere dann.");
+            }
             live(ctx, &rel, false);
             let (before, after) = (current.lines().count() as i64, next.lines().count() as i64);
             let diff = after - before;
@@ -606,6 +645,15 @@ fn run_inner(name: &str, a: &Value, ctx: &ToolCtx, folder: &str) -> Result<ToolR
                 bail!("Die Antwort ist leer.");
             }
             let done = a.get("erledigt").and_then(Value::as_bool);
+            if id.trim().is_empty() {
+                // Neuer Kommentar von ASK (Feedback, Vorschlag) an einer Stelle, die es im Doc gibt
+                let content = str_of(&read(folder, &rel)?, "content");
+                let quote = arg(a, "zitat").unwrap_or_default();
+                let quote = if !quote.trim().is_empty() && content.contains(quote.trim()) { quote.trim().to_string() } else { String::new() };
+                let t = add_comment_with(folder, &rel, &quote, &text, "ask", "")?;
+                live(ctx, &rel, true);
+                return Ok(ToolResult::new(true, format!("Kommentar {} angelegt{}.", str_of(&t, "id"), if quote.is_empty() { " (zum ganzen Doc; die Stelle stand so nicht im Doc)" } else { "" }), "Kommentar angelegt"));
+            }
             reply(folder, &rel, id.trim(), "ask", &text, done)?;
             live(ctx, &rel, true);
             Ok(ToolResult::new(true, format!("Antwort im Kommentar {id} gespeichert{}.", if done == Some(true) { ", erledigt" } else { "" }), if done == Some(true) { "beantwortet, erledigt" } else { "beantwortet" }))
@@ -619,7 +667,9 @@ fn run_inner(name: &str, a: &Value, ctx: &ToolCtx, folder: &str) -> Result<ToolR
 /// Doc als Word-Datei
 pub fn export_docx(folder: &str, rel: &str) -> Result<Vec<u8>> {
     let doc = read(folder, rel)?;
-    crate::docx::markdown_to_docx(&str_of(&doc, "content"), &str_of(&doc, "title"))
+    let path = full_path(folder, &str_of(&doc, "path"))?;
+    let dir = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from(folder));
+    crate::docx::markdown_to_docx_in(&str_of(&doc, "content"), &str_of(&doc, "title"), &dir, Path::new(folder))
 }
 
 // ---------- Oberfläche ----------
@@ -649,7 +699,39 @@ impl App {
         let f = folder.as_str();
         let v = match channel {
             "docs:list" => json!({ "ok": true, "docs": list(f) }),
-            "docs:read" => or_fail(read(f, &s(a, 0)).map(|mut d| { d["ok"] = json!(true); d["comments"] = json!(threads(f, &s(a, 0))); d })),
+            "docs:read" => or_fail(read(f, &s(a, 0)).map(|mut d| {
+                d["ok"] = json!(true);
+                d["comments"] = json!(threads(f, &s(a, 0)));
+                d["share"] = crate::docsync::info(f, &str_of(&d, "path"));
+                d
+            })),
+            "docs:share-info" => crate::docsync::info(f, &doc_rel(&s(a, 0)).unwrap_or_default()),
+            "docs:share" => {
+                let rel = doc_rel(&s(a, 0)).unwrap_or_default();
+                let start = crate::paths::home().to_string_lossy().to_string();
+                match self.host.pick_folder("Geteilten Ordner wählen (OneDrive, Teams oder Laufwerk der Schule)", &start).await {
+                    None => json!({ "ok": false, "canceled": true }),
+                    Some(dir) => or_fail(crate::docsync::share(f, &rel, &dir, &self.share_name()).map(|mut i| { i["ok"] = json!(true); i })),
+                }
+            }
+            "docs:join" => {
+                let start = crate::paths::home().to_string_lossy().to_string();
+                match self.host.pick_folder("Geteiltes Doc öffnen (Ordner «….askdoc»)", &start).await {
+                    None => json!({ "ok": false, "canceled": true }),
+                    Some(dir) => or_fail(crate::docsync::join(f, &dir, &self.share_name()).map(|p| json!({ "ok": true, "path": p }))),
+                }
+            }
+            "docs:unshare" => {
+                let rel = doc_rel(&s(a, 0)).unwrap_or_default();
+                let ok = self.confirm("Nicht mehr teilen?", "Das Doc bleibt bei dir, bekommt aber keine Änderungen der anderen mehr, und sie keine von dir. Der geteilte Ordner bleibt für die anderen.",
+                    crate::host::ConfirmOptions::default()).await.ok;
+                if ok { crate::docsync::unshare(f, &rel); json!({ "ok": true }) } else { json!({ "ok": false, "canceled": true }) }
+            }
+            "docs:show-folder" => {
+                let i = crate::docsync::info(f, &doc_rel(&s(a, 0)).unwrap_or_default());
+                if truthy(&i["geteilt"]) { self.host.open_path(&str_of(&i, "ordner")).await; }
+                Value::Null
+            }
             "docs:save" => {
                 let base = s(a, 2);
                 or_fail(save(f, &s(a, 0), &s(a, 1), Some(base.as_str())))
@@ -664,11 +746,12 @@ impl App {
                 if !ok {
                     json!({ "ok": false, "canceled": true })
                 } else {
+                    crate::docsync::unshare(f, &doc_rel(&rel).unwrap_or_default());
                     or_fail(remove(f, &rel).map(|_| json!({ "ok": true })))
                 }
             }
             "docs:comments" => json!({ "ok": true, "comments": threads(f, &s(a, 0)) }),
-            "docs:comment-add" => or_fail(add_comment(f, &s(a, 0), &s(a, 1), &s(a, 2)).map(|t| json!({ "ok": true, "thread": t, "message": comment_message(&doc_rel(&s(a, 0)).unwrap_or_default(), &t) }))),
+            "docs:comment-add" => or_fail(add_comment_with(f, &s(a, 0), &s(a, 1), &s(a, 2), "person", &s(a, 3)).map(|t| json!({ "ok": true, "thread": t, "message": comment_message(&doc_rel(&s(a, 0)).unwrap_or_default(), &t) }))),
             "docs:comment-reply" => or_fail(reply(f, &s(a, 0), &s(a, 1), "person", &s(a, 2), None).map(|t| json!({ "ok": true, "thread": t, "message": comment_message(&doc_rel(&s(a, 0)).unwrap_or_default(), &t) }))),
             "docs:comment-done" => or_fail(set_done(f, &s(a, 0), &s(a, 1), truthy(&a.get(2).cloned().unwrap_or(Value::Null))).map(|t| json!({ "ok": true, "thread": t }))),
             "docs:comment-delete" => or_fail(delete_comment(f, &s(a, 0), &s(a, 1)).map(|_| json!({ "ok": true }))),
@@ -676,6 +759,11 @@ impl App {
             _ => return Some(Err(format!("Unbekannter Kanal: {channel}"))),
         };
         Some(Ok(v))
+    }
+
+    /// Name, unter dem die Person in geteilten Docs erscheint
+    fn share_name(&self) -> String {
+        crate::docsync::display_name(self.ask.user().map(|u| u.name))
     }
 
     async fn export_doc(&self, folder: &str, rel: &str, format: &str) -> Value {
@@ -692,6 +780,8 @@ impl App {
         let Some(target) = self.host.pick_save_file("Doc speichern", &format!("{name}.{ext}"), vec![(label.to_string(), vec![ext.to_string()])]).await else {
             return json!({ "ok": false, "canceled": true });
         };
+        // Ohne Endung öffnet Windows die Datei nicht mit Word
+        let target = if target.to_lowercase().ends_with(&format!(".{ext}")) { target } else { format!("{target}.{ext}") };
         let res: Result<()> = async {
             match ext {
                 "md" => std::fs::write(&target, str_of(&doc, "content").as_bytes())?,
@@ -714,6 +804,8 @@ impl App {
         }.await;
         match res {
             Ok(()) => json!({ "ok": true, "path": target }),
+            Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::PermissionDenied) =>
+                fail("Nicht gespeichert: Die Datei ist wohl gerade in Word geöffnet. Schliess sie dort und versuch es nochmals, oder wähle einen anderen Namen."),
             Err(e) => fail(format!("Nicht gespeichert: {e}")),
         }
     }
@@ -839,6 +931,35 @@ mod tests {
         let listed = run("doc_liste", &json!({}), &c).await.unwrap().unwrap();
         assert!(listed.output.contains("docs/bericht.md «Bericht»"));
         assert!(run("read_file", &json!({}), &c).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn anstreichen_und_kommentare_von_ask() {
+        let dir = tempfile::tempdir().unwrap();
+        TEST_DIR.with(|d| *d.borrow_mut() = Some(dir.path().join("daten")));
+        let proj = dir.path().join("p");
+        std::fs::create_dir_all(&proj).unwrap();
+        let c = ctx(&proj);
+        let f = c.folder.clone();
+        let rel = create(&f, "Notizen", "Die Mitochondrien sind die Kraftwerke der Zelle.").unwrap();
+        // Nur angestrichen: ohne Text, mit Farbe; ohne Stelle oder ohne Farbe geht das nicht
+        let mark = add_comment_with(&f, &rel, "Kraftwerke", "", "person", "gruen").unwrap();
+        assert_eq!(mark["farbe"], "gruen");
+        assert!(mark["eintraege"].as_array().unwrap().is_empty());
+        assert!(add_comment_with(&f, &rel, "", "", "person", "gruen").is_err());
+        assert!(add_comment_with(&f, &rel, "Kraftwerke", "", "person", "lila").is_err(), "unbekannte Farbe gilt als keine");
+        // ASK legt Vorschläge als eigene Kommentare an; eine Stelle, die es nicht gibt, wird zum ganzen Doc
+        let r = run("doc_kommentieren", &json!({ "pfad": rel, "zitat": "Mitochondrien", "antwort": "Hier ein Bild der Zelle?" }), &c).await.unwrap().unwrap();
+        assert!(r.ok, "{}", r.output);
+        let r2 = run("doc_kommentieren", &json!({ "pfad": rel, "zitat": "gibt es nicht", "antwort": "Quelle fehlt" }), &c).await.unwrap().unwrap();
+        assert!(r2.output.contains("ganzen Doc"));
+        let all = threads(&f, &rel);
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[1]["eintraege"][0]["von"], "ask");
+        assert_eq!(all[1]["zitat"], "Mitochondrien");
+        assert_eq!(all[2]["zitat"], "");
+        let shown = run("doc_lesen", &json!({ "pfad": rel }), &c).await.unwrap().unwrap();
+        assert!(shown.output.contains("(nur angestrichen)") && shown.output.contains("ASK: Hier ein Bild"));
     }
 
     #[test]

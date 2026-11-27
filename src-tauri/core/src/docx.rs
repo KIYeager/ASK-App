@@ -6,8 +6,11 @@
 //! mit #, Absätze, Listen mit -, * oder 1. (eingerückt verschachtelt), Zitate mit >, Codeblöcke mit ```, Tabellen
 //! mit |, Trennlinien und im Text **fett**, *kursiv*, ~~durchgestrichen~~, `Code` und [Links](https://…).
 //!
-//! Öffentliche Schnittstelle: `markdown_to_docx(markdown, titel) -> Result<Vec<u8>>`, `parse_blocks`, `parse_inline`,
-//! `Block`, `Span`.
+//! Bilder `![Beschreibung](bilder/a.png)` (E82) werden eingebettet, wenn `markdown_to_docx_in` den Ordner des Docs kennt:
+//! nur Dateien im Projekt, PNG und JPEG wie sie sind, GIF, WebP und BMP als PNG, höchstens 16 cm breit.
+//!
+//! Öffentliche Schnittstelle: `markdown_to_docx(markdown, titel) -> Result<Vec<u8>>`, `markdown_to_docx_in(markdown, titel,
+//! ordner_des_docs, projekt)`, `parse_blocks`, `parse_inline`, `Block`, `Span`.
 
 use anyhow::Result;
 use std::io::Write;
@@ -21,6 +24,8 @@ pub struct Span {
     pub strike: bool,
     pub code: bool,
     pub link: Option<String>,
+    /// Bild: Pfad relativ zum Doc; `text` ist die Beschreibung
+    pub image: Option<String>,
 }
 
 /// Ein Block des Docs
@@ -255,9 +260,23 @@ pub fn parse_inline(text: &str) -> Vec<Span> {
         if c == '`' {
             if let Some(end) = (i + 1..chars.len()).find(|k| chars[*k] == '`') {
                 push(&mut buf, &mut spans, bold, italic, strike);
-                spans.push(Span { text: chars[i + 1..end].iter().collect(), bold, italic, strike, code: true, link: None });
+                spans.push(Span { text: chars[i + 1..end].iter().collect(), bold, italic, strike, code: true, ..Default::default() });
                 i = end + 1;
                 continue;
+            }
+        }
+        if c == '!' && next == Some('[') {
+            // ![Beschreibung](bilder/a.png)
+            if let Some(mid) = (i + 2..chars.len()).find(|k| chars[*k] == ']') {
+                if chars.get(mid + 1) == Some(&'(') {
+                    if let Some(end) = (mid + 2..chars.len()).find(|k| chars[*k] == ')') {
+                        push(&mut buf, &mut spans, bold, italic, strike);
+                        let src: String = chars[mid + 2..end].iter().collect();
+                        spans.push(Span { text: chars[i + 2..mid].iter().collect(), image: Some(src.trim().to_string()), ..Default::default() });
+                        i = end + 1;
+                        continue;
+                    }
+                }
             }
         }
         if c == '[' {
@@ -311,6 +330,18 @@ pub fn parse_inline(text: &str) -> Vec<Span> {
     spans
 }
 
+/// Text für <w:t>: Tabulatoren als Leerzeichen, kein Wagenrücklauf (beides gehört nicht in w:t)
+fn esc_text(s: &str) -> String {
+    esc(&s.replace('\t', "    ").replace('\r', ""))
+}
+
+/// Adresse eines Links, wie Word sie in den Beziehungen erwartet (gültige URI, Leerzeichen und Umlaute kodiert); None,
+/// wenn es keine Web- oder E-Mail-Adresse ist
+fn link_target(url: &str) -> Option<String> {
+    let u = url::Url::parse(url.trim()).ok()?;
+    matches!(u.scheme(), "http" | "https" | "mailto").then(|| u.as_str().to_string()).filter(|s| s.len() <= 2000)
+}
+
 fn esc(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for c in s.chars() {
@@ -319,17 +350,52 @@ fn esc(s: &str) -> String {
             '<' => o.push_str("&lt;"),
             '>' => o.push_str("&gt;"),
             '"' => o.push_str("&quot;"),
-            // In XML 1.0 verboten
+            // In XML 1.0 verboten (Word meldet sonst «nicht lesbarer Inhalt»)
             c if (c as u32) < 0x20 && !matches!(c, '\t' | '\n' | '\r') => {}
+            '\u{FFFE}' | '\u{FFFF}' => {}
             c => o.push(c),
         }
     }
     o
 }
 
+/// Breite eines Bildes höchstens (16 cm in EMU, Textbreite auf A4 mit 2,5 cm Rand)
+const MAX_IMAGE_EMU: u64 = 16 * 360_000;
+const MAX_IMAGE_BYTES: u64 = 20_000_000;
+
+/// Bild aus dem Projekt laden: (Endung, Inhalt, Breite, Höhe in Pixeln); None, wenn es nicht geht oder ausserhalb liegt
+fn load_image(base: &std::path::Path, root: &std::path::Path, src: &str) -> Option<(&'static str, Vec<u8>, u32, u32)> {
+    if src.contains(':') || src.starts_with(['/', '\\']) || src.contains('\\') {
+        return None;
+    }
+    let path = base.join(src);
+    let real = dunce::canonicalize(&path).ok()?;
+    let root = dunce::canonicalize(root).ok()?;
+    if !real.starts_with(&root) || std::fs::metadata(&real).ok()?.len() > MAX_IMAGE_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(&real).ok()?;
+    let format = image::guess_format(&bytes).ok()?;
+    let img = image::load_from_memory_with_format(&bytes, format).ok()?;
+    let (w, h) = (img.width(), img.height());
+    match format {
+        image::ImageFormat::Png => Some(("png", bytes, w, h)),
+        image::ImageFormat::Jpeg => Some(("jpeg", bytes, w, h)),
+        _ => {
+            let mut out = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut out, image::ImageFormat::Png).ok()?;
+            Some(("png", out.into_inner(), w, h))
+        }
+    }
+}
+
 struct Writer {
     body: String,
     links: Vec<String>,
+    /// Ordner des Docs und des Projekts (für Bilder); ohne: Bilder werden zu ihrer Beschreibung
+    base: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// Eingebettete Bilder: (Dateiname in word/media, Inhalt)
+    media: Vec<(String, Vec<u8>)>,
     /// Nummern der Listen mit Zählung (je eine num in numbering.xml)
     ordered_lists: Vec<usize>,
 }
@@ -338,6 +404,31 @@ impl Writer {
     fn runs(&mut self, text: &str, base_bold: bool) -> String {
         let mut out = String::new();
         for s in parse_inline(text) {
+            if let Some(src) = &s.image {
+                let loaded = self.base.as_ref().and_then(|(b, r)| load_image(b, r, src));
+                match loaded {
+                    Some((ext, bytes, w, h)) => {
+                        let n = self.media.len() + 1;
+                        self.media.push((format!("bild{n}.{ext}"), bytes));
+                        let (mut cx, mut cy) = (u64::from(w.max(1)) * 9525, u64::from(h.max(1)) * 9525);
+                        if cx > MAX_IMAGE_EMU {
+                            cy = cy * MAX_IMAGE_EMU / cx;
+                            cx = MAX_IMAGE_EMU;
+                        }
+                        out.push_str(&format!(
+                            "<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\"><wp:extent cx=\"{cx}\" cy=\"{cy}\"/>\
+<wp:docPr id=\"{n}\" name=\"Bild {n}\" descr=\"{alt}\"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" noChangeAspect=\"1\"/></wp:cNvGraphicFramePr>\
+<a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+<pic:pic xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:nvPicPr><pic:cNvPr id=\"{n}\" name=\"bild{n}.{ext}\"/><pic:cNvPicPr/></pic:nvPicPr>\
+<pic:blipFill><a:blip r:embed=\"rIdB{n}\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+<pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>\
+</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>", alt = esc(&s.text)));
+                    }
+                    None if !s.text.is_empty() => out.push_str(&format!("<w:r><w:rPr><w:i/></w:rPr><w:t xml:space=\"preserve\">[Bild: {}]</w:t></w:r>", esc(&s.text))),
+                    None => {}
+                }
+                continue;
+            }
             let mut rpr = String::new();
             if s.link.is_some() {
                 rpr.push_str("<w:rStyle w:val=\"Hyperlink\"/>");
@@ -359,10 +450,10 @@ impl Writer {
                     r.push_str(&format!("<w:r>{}<w:br/></w:r>", if rpr.is_empty() { String::new() } else { format!("<w:rPr>{rpr}</w:rPr>") }));
                 }
                 if !part.is_empty() {
-                    r.push_str(&format!("<w:r>{}<w:t xml:space=\"preserve\">{}</w:t></w:r>", if rpr.is_empty() { String::new() } else { format!("<w:rPr>{rpr}</w:rPr>") }, esc(part)));
+                    r.push_str(&format!("<w:r>{}<w:t xml:space=\"preserve\">{}</w:t></w:r>", if rpr.is_empty() { String::new() } else { format!("<w:rPr>{rpr}</w:rPr>") }, esc_text(part)));
                 }
             }
-            match s.link.filter(|u| u.starts_with("https://") || u.starts_with("http://") || u.starts_with("mailto:")) {
+            match s.link.as_deref().and_then(link_target) {
                 Some(url) => {
                     self.links.push(url);
                     out.push_str(&format!("<w:hyperlink r:id=\"rIdL{}\" w:history=\"1\">{r}</w:hyperlink>", self.links.len()));
@@ -403,7 +494,7 @@ impl Writer {
             Block::Code(code) => {
                 for line in code.split('\n') {
                     self.body.push_str(&format!("<w:p><w:pPr><w:pStyle w:val=\"Code\"/></w:pPr>{}</w:p>",
-                        if line.is_empty() { String::new() } else { format!("<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r>", esc(line)) }));
+                        if line.is_empty() { String::new() } else { format!("<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r>", esc_text(line)) }));
                 }
             }
             Block::Rule => self.body.push_str("<w:p><w:pPr><w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"A6A6A6\"/></w:pBdr></w:pPr></w:p>"),
@@ -411,7 +502,7 @@ impl Writer {
                 let cols = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
                 let width = 9000 / cols;
                 let grid: String = (0..cols).map(|_| format!("<w:gridCol w:w=\"{width}\"/>")).collect();
-                let mut t = format!("<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"5000\" w:type=\"pct\"/><w:tblLook w:val=\"04A0\" w:firstRow=\"1\"/></w:tblPr><w:tblGrid>{grid}</w:tblGrid>");
+                let mut t = format!("<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/><w:tblW w:w=\"5000\" w:type=\"pct\"/><w:tblLook w:val=\"04A0\"/></w:tblPr><w:tblGrid>{grid}</w:tblGrid>");
                 for (r, row) in rows.iter().enumerate() {
                     t.push_str(&format!("<w:tr>{}", if r == 0 { "<w:trPr><w:tblHeader/></w:trPr>" } else { "" }));
                     for c in 0..cols {
@@ -430,7 +521,8 @@ impl Writer {
     }
 }
 
-const NS: &str = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"";
+const NS: &str = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"";
 
 fn styles() -> String {
     let mut headings = String::new();
@@ -453,7 +545,7 @@ fn styles() -> String {
 <w:style w:type=\"paragraph\" w:styleId=\"Code\"><w:name w:val=\"Code\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/><w:spacing w:after=\"0\" w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:sz w:val=\"19\"/></w:rPr></w:style>\
 <w:style w:type=\"paragraph\" w:styleId=\"ListParagraph\"><w:name w:val=\"List Paragraph\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/><w:pPr><w:spacing w:after=\"40\"/><w:contextualSpacing/></w:pPr></w:style>\
 <w:style w:type=\"character\" w:styleId=\"Hyperlink\"><w:name w:val=\"Hyperlink\"/><w:rPr><w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/></w:rPr></w:style>\
-<w:style w:type=\"character\" w:styleId=\"CodeZeichen\"><w:name w:val=\"Code (Zeichen)\"/><w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/></w:rPr></w:style>\
+<w:style w:type=\"character\" w:styleId=\"CodeZeichen\"><w:name w:val=\"Code (Zeichen)\"/><w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\" w:cs=\"Consolas\"/><w:sz w:val=\"20\"/><w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F2F2F2\"/></w:rPr></w:style>\
 <w:style w:type=\"table\" w:default=\"1\" w:styleId=\"TableNormal\"><w:name w:val=\"Normal Table\"/><w:tblPr><w:tblInd w:w=\"0\" w:type=\"dxa\"/><w:tblCellMar><w:top w:w=\"0\" w:type=\"dxa\"/><w:left w:w=\"108\" w:type=\"dxa\"/><w:bottom w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr></w:style>\
 <w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/><w:basedOn w:val=\"TableNormal\"/><w:tblPr><w:tblBorders>\
 <w:top w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"BFBFBF\"/><w:left w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"BFBFBF\"/><w:bottom w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"BFBFBF\"/>\
@@ -486,11 +578,23 @@ fn numbering(ordered: usize) -> String {
 <w:abstractNum w:abstractNumId=\"1\"><w:multiLevelType w:val=\"hybridMultilevel\"/>{number_levels}</w:abstractNum>{nums}</w:numbering>")
 }
 
-/// Word-Datei aus Markdown
+/// Word-Datei aus Markdown (ohne Bilder)
 pub fn markdown_to_docx(md: &str, title: &str) -> Result<Vec<u8>> {
-    let mut w = Writer { body: String::new(), links: Vec::new(), ordered_lists: Vec::new() };
+    build(md, title, None)
+}
+
+/// Word-Datei aus Markdown mit Bildern: `doc_dir` ist der Ordner des Docs, `root` das Projekt (Bilder nur von dort)
+pub fn markdown_to_docx_in(md: &str, title: &str, doc_dir: &std::path::Path, root: &std::path::Path) -> Result<Vec<u8>> {
+    build(md, title, Some((doc_dir.to_path_buf(), root.to_path_buf())))
+}
+
+fn build(md: &str, title: &str, base: Option<(std::path::PathBuf, std::path::PathBuf)>) -> Result<Vec<u8>> {
+    let mut w = Writer { body: String::new(), links: Vec::new(), base, media: Vec::new(), ordered_lists: Vec::new() };
     for b in parse_blocks(md) {
         w.block(&b);
+    }
+    if w.body.is_empty() {
+        w.body.push_str("<w:p/>"); // Word braucht mindestens einen Absatz
     }
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document {NS}><w:body>{}\
@@ -499,6 +603,9 @@ pub fn markdown_to_docx(md: &str, title: &str) -> Result<Vec<u8>> {
     let mut rels = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
 <Relationship Id=\"rIdS\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>\
 <Relationship Id=\"rIdN\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\" Target=\"numbering.xml\"/>");
+    for (k, (name, _)) in w.media.iter().enumerate() {
+        rels.push_str(&format!("<Relationship Id=\"rIdB{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/{name}\"/>", k + 1));
+    }
     for (k, url) in w.links.iter().enumerate() {
         rels.push_str(&format!("<Relationship Id=\"rIdL{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink\" Target=\"{}\" TargetMode=\"External\"/>", k + 1, esc(url)));
     }
@@ -513,6 +620,7 @@ xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc
     let parts: Vec<(&str, String)> = vec![
         ("[Content_Types].xml", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
 <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+<Default Extension=\"png\" ContentType=\"image/png\"/><Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/>\
 <Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
 <Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>\
 <Override PartName=\"/word/numbering.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml\"/>\
@@ -531,6 +639,10 @@ xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc
     for (name, content) in parts {
         zip.start_file(name, opts)?;
         zip.write_all(content.as_bytes())?;
+    }
+    for (name, bytes) in &w.media {
+        zip.start_file(format!("word/media/{name}"), opts)?;
+        zip.write_all(bytes)?;
     }
     Ok(zip.finish()?.into_inner())
 }
@@ -593,6 +705,145 @@ mod tests {
         let mut rels = String::new();
         std::io::Read::read_to_string(&mut z.by_name("word/_rels/document.xml.rels").unwrap(), &mut rels).unwrap();
         assert!(rels.contains("https://tfbern.ch") && rels.contains("TargetMode=\"External\""));
+    }
+
+    #[test]
+    fn bilder_werden_eingebettet_nur_aus_dem_projekt() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("p");
+        std::fs::create_dir_all(root.join("docs/bilder")).unwrap();
+        let img = image::RgbImage::from_pixel(1200, 600, image::Rgb([10, 120, 180]));
+        img.save(root.join("docs/bilder/diagramm.png")).unwrap();
+        image::RgbImage::from_pixel(10, 10, image::Rgb([0, 0, 0])).save(dir.path().join("aussen.png")).unwrap();
+        let md = "# Bericht\n\n![Diagramm der Werte](bilder/diagramm.png)\n\n![weg](../../aussen.png) ![fehlt](bilder/nicht-da.png)\n";
+        let bytes = markdown_to_docx_in(md, "Bericht", &root.join("docs"), &root).unwrap();
+        assert_eq!(crate::ooxml::check_ooxml(&bytes), "", "Bilder sind kein Verweis nach aussen");
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert!(z.by_name("word/media/bild1.png").is_ok());
+        assert!(z.by_name("word/media/bild2.png").is_err(), "Bild ausserhalb des Projekts wird nicht eingebettet");
+        let mut doc = String::new();
+        std::io::Read::read_to_string(&mut z.by_name("word/document.xml").unwrap(), &mut doc).unwrap();
+        assert!(doc.contains("r:embed=\"rIdB1\""));
+        assert!(doc.contains(&format!("cx=\"{MAX_IMAGE_EMU}\" cy=\"{}\"", MAX_IMAGE_EMU / 2)), "auf 16 cm verkleinert, Seitenverhältnis bleibt");
+        assert!(doc.contains("[Bild: weg]") && doc.contains("[Bild: fehlt]"));
+        let mut rels = String::new();
+        std::io::Read::read_to_string(&mut z.by_name("word/_rels/document.xml.rels").unwrap(), &mut rels).unwrap();
+        assert!(rels.contains("Target=\"media/bild1.png\""));
+        // Ohne Ordner: nur die Beschreibung
+        let plain = markdown_to_docx(md, "Bericht").unwrap();
+        assert!(zip::ZipArchive::new(std::io::Cursor::new(plain)).unwrap().by_name("word/media/bild1.png").is_err());
+    }
+
+    /// Alles, was ein Doc enthalten kann, in einer Datei (auch für den Test von Hand in Word):
+    /// `ASK_DOCX_OUT=beispiel.docx cargo test -p ask-core docx::tests::beispiel_mit_allem -- --ignored`
+    pub(crate) const ALLES: &str = "# Bericht über «Photosynthese» & Co <Test>\n\nEin Absatz mit **fett**, *kursiv*, ***beides***, ~~weg~~, `code <x> & y`, \
+[Link mit Leerzeichen](https://example.org/a b?x=ä&y=1), [Mail](mailto:lea@example.org), Emoji 🌱 und Umlaute äöü ÄÖÜ ß.\\\nZweite Zeile nach hartem Umbruch.\n\n\
+## Listen\n\n- Punkt eins\n  - darunter\n    - noch tiefer\n- Punkt zwei mit *kursiv*\n\n1. Erstens\n   1. Unterpunkt\n2. Zweitens\n\nText dazwischen.\n\n\
+1. Neue Liste beginnt bei eins\n2. Weiter\n\n### Zitat und Code\n\n> Ein Zitat\n> über zwei Zeilen\n\n```\nfn main() {\n\tprintln!(\"<&>\");\n}\n```\n\n\
+#### Tabelle\n\n| Teil | Ort | Leer |\n| --- | :---: | --- |\n| Lichtreaktion | **Thylakoid** | |\n| Calvin\\|Zyklus | `Stroma` | x |\n\n\
+##### Bild\n\n![Ein Diagramm](bilder/diagramm.png)\n\n###### Kleinste Überschrift\n\nSteuerzeichen \u{1}\u{8}\u{FFFF} weg. Sehr langes Wort: \
+Donaudampfschifffahrtsgesellschaftskapitänsmützenabzeichenherstellungsbetriebsleitung.\n\n---\n\nEnde.\n";
+
+    fn write_example(dir: &std::path::Path) -> Vec<u8> {
+        let root = dir.join("p");
+        std::fs::create_dir_all(root.join("docs/bilder")).unwrap();
+        let mut img = image::RgbImage::new(800, 400);
+        for (x, y, px) in img.enumerate_pixels_mut() {
+            *px = if (x / 40 + y / 40) % 2 == 0 { image::Rgb([0, 130, 180]) } else { image::Rgb([242, 136, 85]) };
+        }
+        img.save(root.join("docs/bilder/diagramm.png")).unwrap();
+        markdown_to_docx_in(ALLES, "Bericht", &root.join("docs"), &root).unwrap()
+    }
+
+    #[test]
+    fn beispiel_mit_allem_ist_gueltig() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = write_example(dir.path());
+        assert_eq!(crate::ooxml::check_ooxml(&bytes), "");
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        for i in 0..z.len() {
+            let mut f = z.by_index(i).unwrap();
+            let name = f.name().to_string();
+            if !name.ends_with(".xml") && !name.ends_with(".rels") {
+                continue;
+            }
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut f, &mut text).unwrap();
+            assert!(!text.chars().any(|c| ((c as u32) < 0x20 && !matches!(c, '\t' | '\n' | '\r')) || c == '\u{FFFF}'), "verbotenes Zeichen in {name}");
+            assert!(well_formed(&text), "{name} ist kein gültiges XML");
+        }
+        let mut rels = String::new();
+        std::io::Read::read_to_string(&mut z.by_name("word/_rels/document.xml.rels").unwrap(), &mut rels).unwrap();
+        assert!(rels.contains("https://example.org/a%20b?x=%C3%A4&amp;y=1"), "Adresse als gültige URI: {rels}");
+        let p = dir.path().join("b.docx");
+        std::fs::write(&p, &bytes).unwrap();
+        let text = ask_terminal::documents::extract(&p.to_string_lossy()).unwrap();
+        for part in ["Bericht über «Photosynthese» & Co <Test>", "Zweite Zeile", "noch tiefer", "Neue Liste", "Ein Zitat", "println!", "Calvin|Zyklus", "Kleinste Überschrift", "Ende."] {
+            assert!(text.contains(part), "{part} fehlt");
+        }
+    }
+
+    /// Zufällige Docs aus allen Bausteinen und heiklen Zeichen (fester Startwert, immer dieselben)
+    fn random_docs(n: usize) -> Vec<String> {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(81);
+        let parts = ["# Titel", "## Teil", "###### klein", "Text", "**fett", "*kursiv*", "~~", "`", "[a](https://x.ch/ä ö)", "[b](javascript:x)",
+            "![bild](bilder/diagramm.png)", "![x](../../aussen.png)", "- punkt", "  - tiefer", "      - sehr tief", "1. eins", "   2. zwei",
+            "> zitat", "```", "| a | b |", "|---|---|", "| 1 |", "---", "<&>\"'", "\u{1}\u{FFFE}", "\t", "\\", "🌱", "", "", "\n"];
+        (0..n).map(|_| (0..rng.random_range(1..40)).map(|_| parts[rng.random_range(0..parts.len())]).collect::<Vec<_>>().join(if rng.random_bool(0.5) { "\n" } else { " " })).collect()
+    }
+
+    #[test]
+    fn zufaellige_docs_bleiben_gueltig() {
+        let dir = tempfile::tempdir().unwrap();
+        write_example(dir.path());
+        let root = dir.path().join("p");
+        for md in random_docs(300) {
+            let bytes = markdown_to_docx_in(&md, "Zufall", &root.join("docs"), &root).unwrap();
+            assert_eq!(crate::ooxml::check_ooxml(&bytes), "", "{md:?}");
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut doc = String::new();
+            std::io::Read::read_to_string(&mut z.by_name("word/document.xml").unwrap(), &mut doc).unwrap();
+            assert!(well_formed(&doc), "{md:?}");
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn beispiel_mit_allem() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = std::env::var("ASK_DOCX_OUT").unwrap_or_else(|_| "beispiel.docx".into());
+        std::fs::write(&out, write_example(dir.path())).unwrap();
+        // Sonderfälle: leeres Doc, nur Text, nur eine Tabelle am Ende, viele Listen
+        std::fs::write(format!("{out}.leer.docx"), markdown_to_docx("", "").unwrap()).unwrap();
+        std::fs::write(format!("{out}.text.docx"), markdown_to_docx("Nur Text.", "T").unwrap()).unwrap();
+        std::fs::write(format!("{out}.tabelle.docx"), markdown_to_docx("| a |\n|---|\n| 1 |", "T").unwrap()).unwrap();
+        let many: String = (0..30).map(|k| format!("{}. x\n\nText {k}\n\n", k + 1)).collect();
+        std::fs::write(format!("{out}.listen.docx"), markdown_to_docx(&many, "T").unwrap()).unwrap();
+        let root = dir.path().join("p");
+        for (k, md) in random_docs(40).iter().enumerate() {
+            std::fs::write(format!("{out}.zufall{k}.docx"), markdown_to_docx_in(md, "Zufall", &root.join("docs"), &root).unwrap()).unwrap();
+        }
+    }
+
+    /// Einfache Prüfung auf wohlgeformtes XML: jedes Tag schliesst in der richtigen Reihenfolge
+    fn well_formed(xml: &str) -> bool {
+        let body = xml.split_once("?>").map(|x| x.1).unwrap_or(xml);
+        let mut stack: Vec<String> = Vec::new();
+        let mut rest = body;
+        while let Some(start) = rest.find('<') {
+            let Some(end) = rest[start..].find('>') else { return false };
+            let tag = &rest[start + 1..start + end];
+            rest = &rest[start + end + 1..];
+            if let Some(name) = tag.strip_prefix('/') {
+                if stack.pop().as_deref() != Some(name.trim()) {
+                    return false;
+                }
+            } else if !tag.ends_with('/') {
+                stack.push(tag.split_whitespace().next().unwrap_or("").to_string());
+            }
+        }
+        stack.is_empty()
     }
 
     #[test]
