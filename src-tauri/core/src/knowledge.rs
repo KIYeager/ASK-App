@@ -35,6 +35,8 @@ pub const SKILL_TEXT_MAX: usize = 12000;
 
 /// Zeitlimit einer Abfrage zum Merken
 const LEARN_TIMEOUT: Duration = Duration::from_secs(90);
+/// Ein Import kann viel Text sein und viele Einträge ergeben: mehr Zeit als für das Merken nach einem Auftrag
+const IMPORT_TIMEOUT: Duration = Duration::from_secs(240);
 
 /// Die Einstellungen, die Knowledge braucht (in JS `settings.get` und `settings.set`)
 pub trait KnowledgeSettings: Send + Sync {
@@ -338,6 +340,46 @@ impl Knowledge {
                     source: "hand".into(),
                     ..Default::default()
                 }).map(|item| json!({ "item": item })))
+            }
+            // Import aus einer anderen KI (E78): zuerst Vorschläge aus dem eingefügten Text, gespeichert wird erst, was die
+            // Person danach ausgewählt hat
+            "memory:import-read" => {
+                let text = text_arg(arg(0));
+                if text.trim().chars().count() < 10 {
+                    return Some(Ok(json!({ "ok": false, "reason": "Füge zuerst den Text ein, den die andere KI über dich gespeichert hat." })));
+                }
+                let complete: Option<CompleteFn> = self.cfg.ask.clone().map(|ask| -> CompleteFn {
+                    Arc::new(move |model, messages| {
+                        let ask = ask.clone();
+                        Box::pin(async move {
+                            let request = ChatRequest { model, messages, tools: None, web_search: false, thinking: "tief".into(), ..Default::default() };
+                            Ok(tokio::time::timeout(IMPORT_TIMEOUT, ask.chat(request)).await.map_err(|_| anyhow!("Zeitüberschreitung"))??.content)
+                        })
+                    })
+                });
+                let (facts, by_model) = memory::import_parse(complete.as_ref(), &(self.cfg.get_model)(), &text).await;
+                let known: Vec<String> = self.memory.list().into_iter().filter(|i| i.scope == "konto").map(|i| i.text.to_lowercase()).collect();
+                let items: Vec<Value> = facts.iter().map(|f| json!({ "text": f.text, "tags": f.tags, "known": known.contains(&f.text.to_lowercase()) })).collect();
+                Ok(json!({ "ok": true, "items": items, "byModel": by_model }))
+            }
+            "memory:import-save" => {
+                let mut added = 0;
+                let mut failed = 0;
+                for v in arg(0).as_array().map(Vec::as_slice).unwrap_or_default().iter().take(memory::IMPORT_MAX) {
+                    let text = str_of(v, "text");
+                    if memory::is_sensitive(&text) {
+                        failed += 1;
+                        continue;
+                    }
+                    match self.memory.add(NewItem { text, tags: json!(clean_tags(v.get("tags").unwrap_or(&null))), scope: "konto".into(), source: "import".into(), ..Default::default() }) {
+                        Ok(_) => added += 1,
+                        Err(_) => failed += 1,
+                    }
+                }
+                if added > 0 {
+                    changed();
+                }
+                Ok(json!({ "ok": true, "added": added, "failed": failed }))
             }
             "memory:update" => {
                 let v = arg(1);

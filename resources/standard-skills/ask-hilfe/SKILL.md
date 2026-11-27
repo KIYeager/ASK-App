@@ -200,7 +200,7 @@ Die Liste steht auch unter Profil → Tastenkombinationen. Alles Anklickbare ist
 
 ## 10. Gedächtnis, frühere Chats, Skills, Mods
 
-**Gedächtnis.** ASK merkt sich über alle Chats, was auch später nützt (über dich und über einzelne Projekte). Neues steht als «Gemerkt: …» im Chat. «Merk dir …» legt einen Eintrag an (`merken`), «vergiss …» löscht ihn (`vergessen`). Ansehen: `/gedaechtnis` oder Profil → Gedächtnis oder Einstellungen → Gedächtnis → Ansehen … (als Netz oder Liste; Bearbeiten, Vergessen, «Neu», «Alles vergessen»). Es liegt nur auf diesem Laptop. Ausschalten: Einstellungen → Gedächtnis → Schalter «Gedächtnis».
+**Gedächtnis.** ASK merkt sich über alle Chats, was auch später nützt (über dich und über einzelne Projekte). Neues steht als «Gemerkt: …» im Chat. «Merk dir …» legt einen Eintrag an (`merken`), «vergiss …» löscht ihn (`vergessen`). Ansehen: `/gedaechtnis` oder Profil → Gedächtnis oder Einstellungen → Gedächtnis → Ansehen … (als Karte oder Liste; Bearbeiten, Vergessen, «Neu», «Alles vergessen»; «Importieren …» übernimmt, was Claude, ChatGPT oder eine andere KI über die Person gespeichert hat: Text einfügen, «Auswerten», Vorschläge auswählen, übernehmen). Es liegt nur auf diesem Laptop. Ausschalten: Einstellungen → Gedächtnis → Schalter «Gedächtnis».
 
 **Frühere Chats.** Einstellungen → Chat → «Frühere Chats» oder `/chats`. Ausgeschaltet beginnt jeder Chat ohne Wissen über andere. Chats anderer Projekte sieht ASK nie.
 

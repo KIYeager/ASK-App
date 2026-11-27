@@ -250,7 +250,21 @@ const JOURNAL = 'C:\\Users\\lernende\\ASK-Projekte\\Lernjournal';
 const day = 86400000;
 const mem = (id, text, tags, project = null, ago = 1, extra = {}) => ({ id, text, tags, scope: project ? 'projekt' : 'konto', project, chat: 'c1', chatTitle: 'Ausgaben auswerten',
   chatFolder: project || FOLDER, source: 'auto', created: now - ago * day, updated: now - ago * day, ...extra });
-let memoryItems = params.get('gedaechtnis') === 'leer' ? [] : [
+const manyMemories = () => [
+  ['Lernt Informatik EFZ an der TF Bern, zweites Lehrjahr.', ['ausbildung', 'tfbern']], ['Schreibt jeden Tag einen Tagesbericht ins Lernjournal Kytt.', ['lernjournal', 'kytt']],
+  ['Betreibt ein Homelab mit Proxmox und einem Mac mini.', ['homelab', 'geräte']], ['Nutzt vLLM für lokale Inferenz auf der eigenen Grafikkarte.', ['vllm', 'inferenz']],
+  ['Baut Webprojekte mit Vite, React und WebGL.', ['webprojekte', 'stack']], ['Mag dunkle, ruhige Oberflächen mit wenig Farbe.', ['design', 'ui']],
+  ['Will Antworten auf Hochdeutsch, nie in Mundart.', ['sprache', 'antworten']], ['Erwartet, dass Rückfragen zum Anklicken gestellt werden.', ['fragen', 'arbeitsweise']],
+  ['Legt Wert auf Qualität: lieber prüfen als raten.', ['qualität', 'arbeitsweise']], ['Arbeitet mit mehreren KI-Abos und vergleicht die Modelle.', ['ki-abos', 'tools']],
+  ['Überwacht seine Server mit Grafana und Uptime Kuma.', ['monitoring', 'homelab']], ['Verbindet sich von unterwegs per WireGuard mit dem Heimnetz.', ['vpn', 'homelab']],
+  ['Hat eine Smartwatch und wertet die Daten selbst aus.', ['wearables', 'geräte']], ['Spielt gern Strategiespiele und baut kleine Spiele selbst.', ['spiele', 'interessen']],
+  ['Präsentationen hält er lieber mit wenigen Folien und Live-Demo.', ['praesentationen', 'schule']], ['Dokumentiert Projekte in Markdown im Repository.', ['doku', 'arbeitsweise']],
+  ['Lässt Agenten Aufgaben aufteilen und prüft die Ergebnisse selbst.', ['agenten', 'orchestrierung']], ['Nutzt Vorlagen der Schule für Berichte.', ['vorlage', 'schule']],
+  ['Automatisiert Wiederkehrendes mit kleinen Skripten.', ['automationen', 'tools']], ['Wohnt im Kanton Bern.', ['wohnort']],
+  ['Reflektiert am Freitag die Woche im Lernjournal.', ['reflexion', 'lernjournal']], ['Interessiert sich für Bildgenerierung mit Flux.', ['bildgenerierung', 'interessen']],
+  ['Kauft Hardware gebraucht und rüstet sie auf.', ['kauf', 'geräte']], ['Module der Schule: 293, 164 und 319 laufen gerade.', ['module', 'schule']],
+].map(([text, tags], i) => mem(`v${i}`, text, tags, null, i * 0.7, { source: i % 3 ? 'import' : 'auto' }));
+let memoryItems = params.get('gedaechtnis') === 'leer' ? [] : params.get('gedaechtnis') === 'viel' ? [...manyMemories(), mem('vp', 'Die Szene rendert mit WebGL und einem eigenen Shader.', ['webgl', 'schwarzes-loch'], M293, 1)] : [
   mem('m1', 'Lernt Informatik im zweiten Lehrjahr an der TF Bern.', ['ausbildung', 'tf bern'], null, 20, { source: 'hand' }),
   mem('m2', 'Mag kurze Antworten in Stichworten.', ['stil', 'antworten'], null, 2, { source: 'merken' }),
   mem('m3', 'Kennt Python gut, JavaScript erst wenig.', ['python', 'javascript', 'kenntnisse'], null, 6),
@@ -275,6 +289,16 @@ const memoryApi = {
   memoryAdd: async (v) => { const item = { id: `m${Date.now()}`, text: v.text, tags: (v.tags || []).map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 3), scope: v.scope, project: v.project, chat: null, source: 'hand', created: Date.now(), updated: Date.now() }; memoryItems = [item, ...memoryItems]; return { ok: true, item }; },
   memoryUpdate: async (id, v) => { const i = memoryItems.find((x) => x.id === id); Object.assign(i, { text: v.text, tags: (v.tags || []).map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 3), scope: v.scope, project: v.project, updated: Date.now() }); return { ok: true, item: i }; },
   memoryRemove: async (id) => { memoryItems = memoryItems.filter((x) => x.id !== id); return true; },
+  memoryImportRead: async (text) => {
+    await wait(700);
+    const lines = String(text).split('\n').map((l) => l.replace(/^\s*[-*•\d.)]+\s*/, '').trim()).filter((l) => l.length >= 8);
+    return { ok: true, byModel: true, items: lines.map((l, i) => ({ text: l, tags: [['ausbildung'], ['stil', 'antworten'], ['werkzeuge']][i % 3], known: memoryItems.some((m) => m.text === l) })) };
+  },
+  memoryImportSave: async (list) => {
+    for (const v of list) memoryItems = [...memoryItems, mem(`m${Date.now()}${Math.random()}`, v.text, v.tags, null, 0, { source: 'import', chat: null })];
+    emit('memory:changed', {});
+    return { ok: true, added: list.length, failed: 0 };
+  },
   memoryClear: async () => { if (!window.confirm('Alles vergessen?')) return false; memoryItems = []; return true; },
   setMemoryEnabled: async (on) => { state = { ...state, memory: !!on }; push(); },
   onMemoryChanged: on('memory:changed'),

@@ -154,6 +154,8 @@ export function install() {
   memoryUpdate: (id, patch) => call('memory:update', id, patch),
   memoryRemove: (id) => call('memory:remove', id),
   memoryClear: () => call('memory:clear'),
+  memoryImportRead: (text) => call('memory:import-read', text),
+  memoryImportSave: (items) => call('memory:import-save', items),
   setMemoryEnabled: (on) => call('memory:enable', on),
   onMemoryChanged: on('memory:changed'),
   skillsList: () => call('skills:list'),

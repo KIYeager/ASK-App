@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
 import { api } from '../api.js';
 import { baseName, formatTime } from '../lib/format.js';
-import { buildGraph, fit, layout, neighbours } from '../lib/graph.mjs';
+import { MAP, fit, mindmap, related, shorten } from '../lib/graph.mjs';
 import '../styles/knowledge.css';
 
 const same = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
@@ -112,7 +112,7 @@ function ItemPanel({ item, projects, folder, onChanged, onClose }) {
           <p className="mem-panel-text">{item.text}</p>
           {item.tags.length ? <div className="mem-tags">{item.tags.map((t) => <span key={t} className="mem-tag">{t}</span>)}</div> : null}
           <p className="muted small">
-            {item.source === 'merken' ? 'Gemerkt auf Wunsch' : item.source === 'hand' ? 'Eingetragen' : 'Automatisch gemerkt'}
+            {item.source === 'merken' ? 'Gemerkt auf Wunsch' : item.source === 'hand' ? 'Eingetragen' : item.source === 'import' ? 'Importiert' : 'Automatisch gemerkt'}
             {source && item.source !== 'hand' ? <> aus {item.chat && item.chatFolder ? (
               <button type="button" className="link" onClick={() => api().chatOpen(item.chatFolder, item.chat)}>{source}</button>
             ) : source}</> : null}
@@ -128,35 +128,45 @@ function ItemPanel({ item, projects, folder, onChanged, onClose }) {
   );
 }
 
-const R = { du: 20, projekt: 12, tag: 4.5, item: 5.5 };
+const TAGS_SHOWN = 10; // Schlagworte über der Karte, bis man «alle» wählt
 
+// Gedankenkarte: «Du» in der Mitte, ein Ast für «Über dich» und einer pro Projekt, jeder Eintrag als lesbare Zeile
+// (lib/graph.mjs). Ziehen verschiebt, das Mausrad zoomt; ein Schlagwort oben hebt seine Einträge hervor, beim
+// Darüberfahren leuchten die Einträge mit gemeinsamem Schlagwort.
 function MemoryNet({ items, projects, folder, selected, onSelect, onChanged }) {
-  const graph = useMemo(() => buildGraph(items, projects), [items, projects]);
-  const near = useMemo(() => neighbours(graph), [graph]);
-  const computed = useMemo(() => layout(graph), [graph]);
-  const [pos, setPos] = useState(computed);
+  const map = useMemo(() => mindmap(items, projects), [items, projects]);
   const [view, setView] = useState(null);
-  const [hover, setHover] = useState(null);
+  const [hover, setHover] = useState(null); // Kennung eines Eintrags
+  const [tag, setTag] = useState(null); // gewähltes Schlagwort
+  const [allTags, setAllTags] = useState(false);
   const box = useRef(null);
   const drag = useRef(null);
   const viewRef = useRef(view);
   viewRef.current = view;
+  const byId = useMemo(() => new Map(map.nodes.map((n) => [n.id, n])), [map]);
 
-  useEffect(() => { setPos(computed); }, [computed]);
   const fitView = () => {
     const r = box.current?.getBoundingClientRect();
-    if (r) setView(fit(computed, r.width, r.height));
+    if (r) setView(fit(map.extent, r.width, r.height, 30, 0.82)); // nie so klein, dass man die Einträge nicht mehr lesen kann
   };
   // Erster Ausschnitt, sobald die Fläche ihre Grösse hat; neue Einträge verschieben ihn nicht
-  useEffect(() => { if (!view) fitView(); }, [computed]);
+  useEffect(() => { if (!view) fitView(); }, [map]);
+  // Ein Schlagwort, das es nicht mehr gibt, nicht weiter als Filter halten
+  useEffect(() => { if (tag && !map.tags.some(([t]) => t === tag)) setTag(null); }, [map, tag]);
 
-  // Das Seitenfeld nimmt rechts 300 px weg: Ausschnitt um die Hälfte mitschieben, damit die Mitte bleibt
-  const panelOpen = useRef(false);
+  // Gewählter Eintrag bleibt ganz sichtbar: Das Seitenfeld nimmt rechts 300 px weg, und die Zeile kann am Rand liegen
   useEffect(() => {
-    const open = !!selected;
-    if (open !== panelOpen.current && view) setView((v) => ({ ...v, x: v.x + (open ? -150 : 150) }));
-    panelOpen.current = open;
-  }, [selected]);
+    const n = selected ? byId.get(`i:${selected}`) : null;
+    const r = box.current?.getBoundingClientRect();
+    const v = viewRef.current;
+    if (!n || !r || !v) return;
+    const left = (n.side > 0 ? n.x - 10 : n.x - n.width - 6) * v.k + v.x;
+    const right = (n.side > 0 ? n.x + n.width + 6 : n.x + 10) * v.k + v.x;
+    const y = n.y * v.k + v.y;
+    const dx = left < 12 ? 12 - left : right > r.width - 12 ? Math.max(12 - left, r.width - 12 - right) : 0;
+    const dy = y < 70 ? 70 - y : y > r.height - 40 ? r.height - 40 - y : 0;
+    if (dx || dy) setView({ ...v, x: v.x + dx, y: v.y + dy });
+  }, [selected, byId]);
 
   // Zoom mit dem Mausrad um den Zeiger (passiv: false, damit die Seite nicht scrollt)
   useEffect(() => {
@@ -169,7 +179,7 @@ function MemoryNet({ items, projects, folder, selected, onSelect, onChanged }) {
       const r = el.getBoundingClientRect();
       const mx = e.clientX - r.left;
       const my = e.clientY - r.top;
-      const k = Math.max(0.25, Math.min(3, v.k * Math.exp(-e.deltaY * 0.0015)));
+      const k = Math.max(0.3, Math.min(2.5, v.k * Math.exp(-e.deltaY * 0.0015)));
       setView({ k, x: mx - ((mx - v.x) / v.k) * k, y: my - ((my - v.y) / v.k) * k });
     };
     el.addEventListener('wheel', onWheel, { passive: false });
@@ -179,86 +189,110 @@ function MemoryNet({ items, projects, folder, selected, onSelect, onChanged }) {
   const zoom = (f) => {
     const r = box.current.getBoundingClientRect();
     const v = view;
-    const k = Math.max(0.25, Math.min(3, v.k * f));
+    if (!v) return;
+    const k = Math.max(0.3, Math.min(2.5, v.k * f));
     setView({ k, x: r.width / 2 - ((r.width / 2 - v.x) / v.k) * k, y: r.height / 2 - ((r.height / 2 - v.y) / v.k) * k });
   };
 
+  // Ziehen verschiebt die Karte; ein Klick ohne Ziehen wählt den Eintrag unter dem Zeiger oder hebt die Auswahl auf
   const down = (e, id = null) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     box.current.setPointerCapture?.(e.pointerId);
-    drag.current = { id, sx: e.clientX, sy: e.clientY, moved: false, view, start: id ? pos[id] : null };
+    drag.current = { id, sx: e.clientX, sy: e.clientY, moved: false, view };
   };
   const move = (e) => {
     const d = drag.current;
-    if (!d) return;
+    if (!d || !d.view) return;
     const dx = e.clientX - d.sx;
     const dy = e.clientY - d.sy;
-    if (!d.moved && Math.hypot(dx, dy) < 3) return;
+    if (!d.moved && Math.hypot(dx, dy) < 4) return;
     d.moved = true;
-    if (d.id) setPos((p) => ({ ...p, [d.id]: { x: d.start.x + dx / view.k, y: d.start.y + dy / view.k } }));
-    else setView({ ...d.view, x: d.view.x + dx, y: d.view.y + dy });
+    setView({ ...d.view, x: d.view.x + dx, y: d.view.y + dy });
   };
   const up = () => {
     const d = drag.current;
     drag.current = null;
     if (!d || d.moved) return;
-    const n = d.id && graph.nodes.find((x) => x.id === d.id);
-    if (n?.kind === 'item') onSelect(n.item.id);
-    else if (!d.id) onSelect(null);
+    onSelect(d.id);
   };
 
-  const lit = hover ? near.get(hover) : selected ? near.get(`i:${selected}`) : null;
+  const lit = hover ? related(items, hover) : tag ? new Set(items.filter((i) => (i.tags || []).includes(tag)).map((i) => i.id)) : null;
   const selItem = selected ? items.find((i) => i.id === selected) : null;
-  const hoverNode = hover ? graph.nodes.find((n) => n.id === hover) : null;
-  const tip = hoverNode?.kind === 'item' && view && pos[hover] ? { x: pos[hover].x * view.k + view.x, y: pos[hover].y * view.k + view.y, text: hoverNode.label } : null;
-  // «Du» und Einträge über dich neutral, damit sie sich von Projekten in TF Blau abheben
-  const fill = (n) => (n.kind === 'du' ? 'var(--text)' : n.kind === 'projekt' ? n.color || 'var(--dim)' : n.kind === 'tag' ? 'var(--pane)' : n.color || 'var(--muted)');
+  const hoverNode = hover ? byId.get(`i:${hover}`) : null;
+  const tip = hoverNode && view && !drag.current
+    ? { x: (hoverNode.x + hoverNode.side * 60) * view.k + view.x, y: (hoverNode.y - 12) * view.k + view.y, text: hoverNode.item.text, tags: hoverNode.item.tags || [] } : null;
+  const curve = (a, b) => { const mx = (a.x + b.x) / 2; return `M${a.x} ${a.y} C${mx} ${a.y} ${mx} ${b.y} ${b.x} ${b.y}`; };
+  const shownTags = allTags ? map.tags : map.tags.slice(0, TAGS_SHOWN);
 
   return (
     <div className="mem-net">
-      <div ref={box} id="mem-graph" className="mem-canvas" onPointerDown={(e) => down(e)} onPointerMove={move} onPointerUp={up} onPointerLeave={() => setHover(null)}>
+      <div ref={box} id="mem-graph" className="mem-canvas" onPointerDown={(e) => down(e)} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { drag.current = null; }}
+        onPointerLeave={() => setHover(null)}>
         {view ? (
-          <svg width="100%" height="100%" role="img" aria-label={`Netz mit ${items.length} Einträgen`}>
+          <svg width="100%" height="100%" role="group" aria-label={`Karte mit ${items.length} Einträgen`}>
             <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
-              {graph.links.map((l) => {
-                const a = pos[l.source];
-                const b = pos[l.target];
-                if (!a || !b) return null;
-                const on = lit && lit.has(l.source) && lit.has(l.target) && (l.source === hover || l.target === hover || l.source === `i:${selected}` || l.target === `i:${selected}` || !hover);
-                return <line key={`${l.source}-${l.target}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={`mem-link ${l.kind}${lit ? (on ? ' lit' : ' dim') : ''}`} />;
+              {map.links.map((l) => {
+                const a = byId.get(l.from);
+                const b = byId.get(l.to);
+                const on = !lit || l.kind === 'ast' || lit.has(b.item?.id);
+                return <path key={`${l.from}-${l.to}`} d={curve(a, b)} className={`mem-link ${l.kind}${on ? '' : ' dim'}`} style={l.color ? { stroke: l.color } : undefined} />;
               })}
-              {graph.nodes.map((n) => {
-                const p = pos[n.id];
-                if (!p) return null;
-                const dim = lit && !lit.has(n.id);
-                const isSel = n.kind === 'item' && n.item.id === selected;
+              {map.nodes.map((n) => {
+                if (n.kind === 'du') {
+                  return <g key={n.id} className="mem-node du"><circle r={24} /><text className="mem-label du" dy="0.35em" textAnchor="middle">Du</text></g>;
+                }
+                if (n.kind === 'gruppe') {
+                  const name = shorten(n.label, MAP.hubChars);
+                  const w = Math.max(64, name.length * 7.4 + 44);
+                  return (
+                    <g key={n.id} transform={`translate(${n.x} ${n.y})`} className={`mem-node gruppe${n.about ? ' about' : ''}`}>
+                      <title>{n.topic ? `Über dich, Thema «${n.label}»` : n.about ? 'Was ASK über dich weiss, für alle Projekte' : `Gilt nur im Projekt ${n.label}`}</title>
+                      <rect x={-w / 2} y={-14} width={w} height={28} rx={14} style={n.color ? { fill: n.color, stroke: n.color } : undefined} />
+                      <text className="mem-label gruppe" dy="0.35em" textAnchor="middle" x={-9}>{name}</text>
+                      <text className="mem-label count" dy="0.35em" textAnchor="end" x={w / 2 - 10}>{n.count}</text>
+                    </g>
+                  );
+                }
+                const dim = lit && !lit.has(n.item.id);
+                const isSel = n.item.id === selected;
+                const right = n.side > 0;
                 return (
-                  <g key={n.id} transform={`translate(${p.x} ${p.y})`} className={`mem-node ${n.kind}${dim ? ' dim' : ''}${isSel ? ' sel' : ''}`}
-                    onPointerDown={(e) => down(e, n.id)} onPointerEnter={() => setHover(n.id)} onPointerLeave={() => setHover((h) => (h === n.id ? null : h))}>
-                    {n.kind === 'item' ? <circle r={12} className="hit" /> : null}
-                    <circle r={R[n.kind]} style={{ fill: fill(n) }} />
-                    {n.kind === 'du' ? <text className="mem-label du" dy="0.35em" textAnchor="middle">Du</text> : null}
-                    {n.kind === 'projekt' ? <text className="mem-label projekt" y={R.projekt + 14} textAnchor="middle">{n.label.length > 26 ? `${n.label.slice(0, 25)}…` : n.label}</text> : null}
-                    {n.kind === 'tag' ? <text className="mem-label tag" x={8} dy="0.35em">{n.label}</text> : null}
+                  <g key={n.id} transform={`translate(${n.x} ${n.y})`} className={`mem-node item${dim ? ' dim' : ''}${isSel ? ' sel' : ''}${hover === n.item.id ? ' hover' : ''}`}
+                    role="button" tabIndex={0} aria-label={n.item.text} aria-pressed={isSel}
+                    onPointerDown={(e) => down(e, n.item.id)} onPointerEnter={() => setHover(n.item.id)} onPointerLeave={() => setHover((h) => (h === n.item.id ? null : h))}
+                    onFocus={() => setHover(n.item.id)} onBlur={() => setHover((h) => (h === n.item.id ? null : h))}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(n.item.id); } }}>
+                    <rect className="hit" x={right ? -8 : -n.width - 4} y={-13} width={n.width + 12} height={26} rx={8} />
+                    <circle r={4.5} style={n.color ? { fill: n.color } : undefined} />
+                    <text className="mem-label item" dy="0.35em" x={right ? 12 : -12} textAnchor={right ? 'start' : 'end'}>
+                      {n.label}
+                    </text>
                   </g>
                 );
               })}
             </g>
           </svg>
         ) : null}
-        {tip ? <div className="mem-tip" style={{ left: tip.x, top: tip.y }}>{tip.text}</div> : null}
-        <div className="mem-zoom">
-          <button type="button" className="icon-btn" aria-label="Vergrössern" onClick={() => zoom(1.25)} onPointerDown={(e) => e.stopPropagation()}><Icon name="plus" size={15} /></button>
-          <button type="button" className="icon-btn" aria-label="Verkleinern" onClick={() => zoom(0.8)} onPointerDown={(e) => e.stopPropagation()}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M5 12h14" /></svg></button>
-          <button type="button" className="icon-btn" aria-label="Alles zeigen" onClick={() => { setPos(computed); fitView(); }} onPointerDown={(e) => e.stopPropagation()}><Icon name="expand" size={14} /></button>
+        {tip ? <div className="mem-tip" style={{ left: tip.x, top: tip.y }}>{tip.text}{tip.tags.length ? <span className="mem-tip-tags">{tip.tags.map((t) => `#${t}`).join(' ')}</span> : null}</div> : null}
+        {map.tags.length ? (
+          <div className="mem-tagbar" onPointerDown={(e) => e.stopPropagation()}>
+            <span className="mem-tagbar-label">Schlagworte</span>
+            {shownTags.map(([t, n]) => (
+              <button key={t} type="button" className={`mem-chip${tag === t ? ' on' : ''}`} aria-pressed={tag === t} title={`${n} ${n === 1 ? 'Eintrag' : 'Einträge'} mit «${t}» hervorheben`}
+                onClick={() => setTag(tag === t ? null : t)}>{t}<span>{n}</span></button>
+            ))}
+            {map.tags.length > TAGS_SHOWN ? (
+              <button type="button" className="mem-chip more" onClick={() => setAllTags(!allTags)}>{allTags ? 'weniger' : `+${map.tags.length - TAGS_SHOWN}`}</button>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="mem-zoom" onPointerDown={(e) => e.stopPropagation()}>
+          <button type="button" className="icon-btn" title="Vergrössern" aria-label="Vergrössern" onClick={() => zoom(1.25)}><Icon name="plus" size={15} /></button>
+          <button type="button" className="icon-btn" title="Verkleinern" aria-label="Verkleinern" onClick={() => zoom(0.8)}><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M5 12h14" /></svg></button>
+          <button type="button" className="icon-btn" title="Alles zeigen" aria-label="Alles zeigen" onClick={fitView}><Icon name="expand" size={14} /></button>
         </div>
-        <div className="mem-legend" aria-hidden="true">
-          <span><i className="dot" style={{ background: 'var(--text)' }} />Du</span>
-          <span><i className="dot" style={{ background: 'var(--acc)' }} />Projekt</span>
-          <span><i className="dot ring" />Schlagwort</span>
-          <span><i className="dot small" style={{ background: 'var(--muted)' }} />Eintrag</span>
-        </div>
+        <div className="mem-legend" aria-hidden="true">Klick: Eintrag öffnen · Ziehen: verschieben · Mausrad: zoomen</div>
       </div>
       {selItem ? <ItemPanel item={selItem} projects={projects} folder={folder} onChanged={onChanged} onClose={() => onSelect(null)} /> : null}
     </div>
@@ -305,7 +339,76 @@ function MemoryList({ items, projects, folder, adding, setAdding, onChanged }) {
   );
 }
 
+// Import aus einer anderen KI (ENTSCHEIDE E78): Text einfügen, ASK macht Vorschläge, die Person wählt aus
+function MemoryImport({ onDone, onCancel }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [found, setFound] = useState(null); // { items: [{ text, tags, known, on }], byModel }
+  const [error, setError] = useState('');
+  const read = async () => {
+    setBusy(true); setError('');
+    let res;
+    try { res = await api().memoryImportRead(text); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
+    setBusy(false);
+    if (!res?.ok) { setError(res?.reason || 'Das hat nicht geklappt.'); return; }
+    if (!res.items.length) { setError('Im Text hat ASK nichts gefunden, was sich als Eintrag eignet.'); return; }
+    setFound({ byModel: res.byModel, items: res.items.map((i) => ({ ...i, on: !i.known })) });
+  };
+  const save = async () => {
+    const chosen = found.items.filter((i) => i.on).map(({ text: t, tags }) => ({ text: t, tags }));
+    setBusy(true); setError('');
+    let res;
+    try { res = await api().memoryImportSave(chosen); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
+    setBusy(false);
+    if (!res?.ok) { setError(res?.reason || 'Nicht gespeichert.'); return; }
+    onDone(res);
+  };
+  const toggle = (i) => setFound({ ...found, items: found.items.map((x, j) => (j === i ? { ...x, on: !x.on } : x)) });
+  const count = found ? found.items.filter((i) => i.on).length : 0;
+  if (!found) {
+    return (
+      <div className="mem-import">
+        <p><strong>Gedächtnis aus einer anderen KI übernehmen</strong></p>
+        <p className="muted">Frag Claude, ChatGPT oder eine andere KI: «Liste alles auf, was du über mich gespeichert hast, ein Punkt pro Zeile.» Kopiere die Antwort und füge sie hier ein. ASK macht daraus Einträge; du wählst danach aus, was übernommen wird.</p>
+        <textarea id="mem-import-text" value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} autoFocus placeholder={'- Lernt Informatik im zweiten Lehrjahr\n- Mag kurze Antworten mit einem Beispiel\n- Arbeitet mit Windows 11 und VS Code'} aria-label="Exportierter Text" />
+        {error ? <p className="error" role="alert">{error}</p> : <p className="muted small">Der Text geht zur Auswertung an das Modell in ASK. Füge nichts Vertrauliches ein (Passwörter, Gesundheit, Noten).</p>}
+        <div className="mem-form-btns">
+          <button type="button" className="btn small" onClick={onCancel}>Abbrechen</button>
+          <button type="button" id="mem-import-read" className="btn small primary" disabled={busy || text.trim().length < 10} onClick={read}>{busy ? 'ASK liest …' : 'Auswerten'}</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="mem-import">
+      <p><strong>{found.items.length === 1 ? '1 Vorschlag' : `${found.items.length} Vorschläge`}</strong> <span className="muted">{found.byModel ? 'Wähle aus, was ASK sich merken soll.' : 'ASK war nicht erreichbar: Jede Zeile ist ein Vorschlag, ohne Schlagworte.'}</span></p>
+      <ul id="mem-import-list" className="mem-import-list">
+        {found.items.map((i, n) => (
+          <li key={n} className={i.on ? 'on' : ''}>
+            <label>
+              <input type="checkbox" checked={i.on} onChange={() => toggle(n)} />
+              <span className="mem-item">
+                <span className="mem-item-text">{i.text}</span>
+                <span className="mem-item-meta">{i.tags.map((t) => <span key={t} className="mem-tag">{t}</span>)}{i.known ? <span className="muted">schon vorhanden</span> : null}</span>
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      {error ? <p className="error" role="alert">{error}</p> : null}
+      <div className="mem-form-btns">
+        <button type="button" className="btn small" onClick={() => setFound({ ...found, items: found.items.map((x) => ({ ...x, on: count === 0 })) })}>{count === 0 ? 'Alle wählen' : 'Keine wählen'}</button>
+        <span className="spacer" />
+        <button type="button" className="btn small" onClick={() => { setFound(null); setError(''); }}>Zurück</button>
+        <button type="button" id="mem-import-save" className="btn small primary" disabled={busy || !count} onClick={save}>{busy ? 'Speichert …' : count === 1 ? '1 Eintrag übernehmen' : `${count} Einträge übernehmen`}</button>
+      </div>
+    </div>
+  );
+}
+
 export function MemoryDialog({ state, onClose }) {
+  const [importing, setImporting] = useState(false);
+  const [note, setNote] = useState('');
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('netz');
   const [selected, setSelected] = useState(null);
@@ -323,7 +426,7 @@ export function MemoryDialog({ state, onClose }) {
   const changed = (item) => { load(); if (item === null) setSelected(null); };
   const head = (
     <div className="segmented" role="tablist" aria-label="Ansicht">
-      {[['netz', 'Netz'], ['liste', 'Liste']].map(([v, label]) => (
+      {[['netz', 'Karte'], ['liste', 'Liste']].map(([v, label]) => (
         <button key={v} type="button" role="tab" id={`mem-tab-${v}`} aria-selected={tab === v} className={tab === v ? 'on' : ''} onClick={() => setTab(v)}>{label}</button>
       ))}
     </div>
@@ -331,10 +434,11 @@ export function MemoryDialog({ state, onClose }) {
   return (
     <Shell id="dlg-memory" title="Gedächtnis" className="mem-dialog" head={head} onClose={onClose} actions={(
       <>
-        <span className="muted small mem-count">{items.length === 1 ? '1 Eintrag' : `${items.length} Einträge`} · nur auf diesem Laptop</span>
+        <span className="muted small mem-count" role="status">{note || `${items.length === 1 ? '1 Eintrag' : `${items.length} Einträge`} · nur auf diesem Laptop`}</span>
         <span className="spacer" />
         {items.length ? <button type="button" id="mem-clear" className="btn" onClick={async () => { if (await api().memoryClear()) { setSelected(null); load(); } }}>Alles vergessen</button> : null}
-        <button type="button" id="mem-new" className="btn" onClick={() => { setTab('liste'); setAdding(true); }}><Icon name="plus" size={14} /> Neu</button>
+        <button type="button" id="mem-import" className="btn" title="Gedächtnis aus Claude, ChatGPT oder einer anderen KI übernehmen" onClick={() => { setNote(''); setImporting(true); }}><Icon name="down" size={14} /> Importieren …</button>
+        <button type="button" id="mem-new" className="btn" onClick={() => { setImporting(false); setTab('liste'); setAdding(true); }}><Icon name="plus" size={14} /> Neu</button>
         <button type="button" className="btn primary" onClick={onClose}>Fertig</button>
       </>
     )}>
@@ -344,12 +448,21 @@ export function MemoryDialog({ state, onClose }) {
           <button type="button" className="btn small" onClick={async () => { await api().setMemoryEnabled(true); load(); }}>Einschalten</button>
         </div>
       ) : null}
-      {!data ? <p className="muted">Lädt …</p> : !items.length && !adding ? (
+      {importing ? (
+        <MemoryImport onCancel={() => setImporting(false)} onDone={(res) => {
+          setImporting(false);
+          setNote(`${res.added === 1 ? '1 Eintrag' : `${res.added} Einträge`} übernommen${res.failed ? `, ${res.failed} nicht (zu kurz oder heikel)` : ''}`);
+          load();
+        }} />
+      ) : !data ? <p className="muted">Lädt …</p> : !items.length && !adding ? (
         <div className="mem-empty">
           <div className="mem-empty-mark"><span /><span /><span /></div>
           <p><strong>Noch nichts gemerkt</strong></p>
           <p className="muted">Nach einem Auftrag merkt sich ASK, was auch später nützt: wie du Antworten magst, was du kannst, was in deinen Projekten gilt. Sag «merk dir …» oder trag selbst etwas ein.</p>
-          <button type="button" className="btn" onClick={() => { setTab('liste'); setAdding(true); }}><Icon name="plus" size={14} /> Eintrag hinzufügen</button>
+          <div className="mem-empty-btns">
+            <button type="button" className="btn" onClick={() => { setTab('liste'); setAdding(true); }}><Icon name="plus" size={14} /> Eintrag hinzufügen</button>
+            <button type="button" className="btn" onClick={() => setImporting(true)}><Icon name="down" size={14} /> Aus einer anderen KI importieren …</button>
+          </div>
         </div>
       ) : tab === 'netz' ? (
         <MemoryNet items={items} projects={projects} folder={folder} selected={selected} onSelect={setSelected} onChanged={changed} />

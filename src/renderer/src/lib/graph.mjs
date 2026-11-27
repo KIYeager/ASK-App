@@ -1,156 +1,134 @@
-// Netz des Gedächtnisses (ENTSCHEIDE E50): Knoten «Du», Projekte, Schlagworte und Einträge, verbunden wie ein
-// Mind-Web. Eigene kleine kräftebasierte Anordnung ohne Bibliothek: gleiche Daten ergeben immer dasselbe Bild
-// (Zufall mit festem Startwert), sie rechnet eine feste Zahl Schritte und hält dann an.
+// Karte des Gedächtnisses (ENTSCHEIDE E50, neu gezeichnet in E78): «Du» in der Mitte, ein Ast für «Über dich» und
+// einer pro Projekt, daran jeder Eintrag als lesbare Zeile. Die frühere Anordnung mit Kräften zeigte die Einträge
+// nur als Punkte; lesen konnte man erst beim Darüberfahren. Reine Funktionen ohne DOM (node --test).
 
-const DU = 'du';
 const sameFolder = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
 const baseName = (p) => String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
 
-// Knoten und Kanten aus Einträgen und Projekten. Projekte ohne Einträge erscheinen nicht.
-export function buildGraph(items = [], projects = []) {
-  const nodes = [{ id: DU, kind: 'du', label: 'Du' }];
-  const links = [];
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const node = (n) => { if (!byId.has(n.id)) { byId.set(n.id, n); nodes.push(n); } return byId.get(n.id); };
-  for (const item of items) {
-    let anchor = DU;
-    if (item.scope === 'projekt' && item.project) {
-      const p = projects.find((x) => sameFolder(x.folder, item.project));
-      const id = `p:${String(item.project).toLowerCase()}`;
-      if (!byId.has(id)) {
-        node({ id, kind: 'projekt', label: p?.name || baseName(item.project), color: p?.color || '', folder: item.project });
-        links.push({ source: id, target: DU, kind: 'projekt' });
-      }
-      anchor = id;
-    }
-    const id = `i:${item.id}`;
-    node({ id, kind: 'item', label: item.text, item, color: anchor === DU ? '' : byId.get(anchor).color });
-    links.push({ source: id, target: anchor, kind: 'anker' });
-    for (const tag of item.tags || []) {
-      const tid = `t:${tag}`;
-      node({ id: tid, kind: 'tag', label: tag });
-      links.push({ source: id, target: tid, kind: 'tag' });
-    }
+export const MAP = {
+  row: 30, // Höhe einer Zeile mit einem Eintrag
+  gap: 30, // Abstand zwischen zwei Ästen derselben Seite
+  hubX: 150, // Abstand der Äste von der Mitte
+  itemX: 265, // Abstand der Einträge von der Mitte
+  hubChars: 18, // so viele Zeichen des Namens stehen im Ast
+  split: 9, // hat «Über dich» mehr Einträge, wird es nach Themen (häufigste Schlagworte) in mehrere Äste geteilt
+  // So viele Zeichen eines Eintrags stehen in der Karte (der ganze Text beim Darüberfahren und im Seitenfeld). Mit
+  // den Abständen oben passen beide Seiten bei üblicher Fenstergrösse in lesbarer Schrift nebeneinander.
+  chars: 40,
+  charW: 6.5, // geschätzte Breite eines Zeichens der Beschriftung in px
+};
+
+export const shorten = (text, max = MAP.chars) => {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+};
+
+// Einträge nach Themen: immer das Schlagwort, das unter den übrigen am häufigsten ist (mindestens zweimal); was
+// kein gemeinsames Schlagwort hat, kommt zu «Weiteres». So wird aus einer langen Spalte ein Bild mit Ästen.
+function byTopic(list) {
+  let rest = [...list];
+  const out = [];
+  while (rest.length) {
+    const count = new Map();
+    for (const i of rest) for (const t of i.tags || []) count.set(t, (count.get(t) || 0) + 1);
+    const best = [...count.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'de'))[0];
+    if (!best || best[1] < 2) break;
+    out.push({ tag: best[0], items: rest.filter((i) => (i.tags || []).includes(best[0])) });
+    rest = rest.filter((i) => !(i.tags || []).includes(best[0]));
   }
-  return { nodes, links };
-}
-
-// Nachbarn je Knoten (für das Hervorheben beim Darüberfahren)
-export function neighbours(graph) {
-  const map = new Map(graph.nodes.map((n) => [n.id, new Set([n.id])]));
-  for (const l of graph.links) {
-    map.get(l.source)?.add(l.target);
-    map.get(l.target)?.add(l.source);
-  }
-  return map;
-}
-
-function hash(text) {
-  let h = 2166136261;
-  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return h >>> 0;
-}
-
-// Zufallszahlen mit Startwert (mulberry32)
-export function seeded(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-const CHARGE = { du: 3200, projekt: 2000, tag: 1300, item: 520 };
-const LENGTH = { projekt: 240, anker: 95, tag: 80 };
-const STRENGTH = { projekt: 0.08, anker: 0.06, tag: 0.035 };
-
-// Positionen { id: { x, y } } um «Du» bei (0, 0). Feste Zahl Schritte, danach steht das Bild.
-export function layout(graph, { iterations } = {}) {
-  const { nodes, links } = graph;
-  const n = nodes.length;
-  const rand = seeded(hash(nodes.map((x) => x.id).sort().join('|')));
-  const steps = iterations ?? (n > 300 ? 180 : n > 120 ? 260 : 320);
-  const index = new Map(nodes.map((x, i) => [x.id, i]));
-  const x = new Float64Array(n);
-  const y = new Float64Array(n);
-  const vx = new Float64Array(n);
-  const vy = new Float64Array(n);
-  const q = nodes.map((nd) => CHARGE[nd.kind] || 400);
-  // Beschriftete Knoten brauchen seitlich mehr Platz: Abstand in x zählt dort weniger (Ellipse statt Kreis)
-  const wide = nodes.map((nd) => nd.kind === 'tag' || nd.kind === 'projekt' || nd.kind === 'du');
-  // Start: Projekte auf einem Kreis, alles andere zufällig in der Nähe seines Ankers
-  const projects = nodes.filter((nd) => nd.kind === 'projekt');
-  const anchorOf = new Map(links.filter((l) => l.kind === 'anker').map((l) => [l.source, l.target]));
-  nodes.forEach((nd, i) => {
-    if (nd.kind === 'du') return;
-    if (nd.kind === 'projekt') {
-      const k = projects.indexOf(nd);
-      const angle = (k / Math.max(projects.length, 1)) * Math.PI * 2 - Math.PI / 2 + 0.4;
-      x[i] = Math.cos(angle) * 220; y[i] = Math.sin(angle) * 220;
-      return;
-    }
-    const a = index.get(anchorOf.get(nd.id));
-    const cx = a === undefined ? 0 : x[a];
-    const cy = a === undefined ? 0 : y[a];
-    const angle = rand() * Math.PI * 2;
-    const r = 60 + rand() * 120;
-    x[i] = cx + Math.cos(angle) * r; y[i] = cy + Math.sin(angle) * r;
-  });
-  const edges = links.map((l) => [index.get(l.source), index.get(l.target), LENGTH[l.kind] || 80, STRENGTH[l.kind] || 0.05]).filter(([a, b]) => a !== undefined && b !== undefined);
-  for (let step = 0; step < steps; step++) {
-    const alpha = 1 - step / steps;
-    // Abstossung zwischen allen Knoten
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        let dx = x[j] - x[i];
-        let dy = y[j] - y[i];
-        if (wide[i] || wide[j]) dx *= 0.6;
-        let d2 = dx * dx + dy * dy;
-        if (d2 < 1) { dx = (rand() - 0.5) || 0.1; dy = (rand() - 0.5) || 0.1; d2 = dx * dx + dy * dy; }
-        if (d2 > 250000) continue; // weiter als 500 px: vernachlässigbar
-        const f = (Math.sqrt(q[i] * q[j]) / d2) * alpha;
-        const d = Math.sqrt(d2);
-        const fx = (dx / d) * f;
-        const fy = (dy / d) * f;
-        vx[i] -= fx; vy[i] -= fy; vx[j] += fx; vy[j] += fy;
-      }
-    }
-    // Federn entlang der Kanten
-    for (const [a, b, len, k] of edges) {
-      const dx = x[b] - x[a];
-      const dy = y[b] - y[a];
-      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      const f = (d - len) * k * alpha;
-      const fx = (dx / d) * f;
-      const fy = (dy / d) * f;
-      vx[a] += fx; vy[a] += fy; vx[b] -= fx; vy[b] -= fy;
-    }
-    for (let i = 0; i < n; i++) {
-      if (nodes[i].kind === 'du') { vx[i] = 0; vy[i] = 0; continue; } // «Du» bleibt in der Mitte
-      vx[i] -= x[i] * 0.006 * alpha; // leichter Zug zur Mitte, damit nichts davonfliegt
-      vy[i] -= y[i] * 0.006 * alpha;
-      vx[i] *= 0.55; vy[i] *= 0.55;
-      const sp = Math.hypot(vx[i], vy[i]);
-      if (sp > 40) { vx[i] *= 40 / sp; vy[i] *= 40 / sp; }
-      x[i] += vx[i]; y[i] += vy[i];
-    }
-  }
-  const out = {};
-  nodes.forEach((nd, i) => { out[nd.id] = { x: Math.round(x[i] * 10) / 10, y: Math.round(y[i] * 10) / 10 }; });
+  if (rest.length) out.push({ tag: '', items: rest });
   return out;
 }
 
+// Gruppen: zuerst «Über dich», dann die Projekte in der Reihenfolge der Projektliste; ohne Einträge keine Gruppe
+function groupsOf(items, projects) {
+  const groups = [];
+  const about = items.filter((i) => i.scope !== 'projekt' || !i.project);
+  if (about.length > MAP.split) {
+    const topics = byTopic(about);
+    // Nur aufteilen, wenn es wirklich Themen gibt (sonst bliebe ein einziger Ast «Weiteres»)
+    if (topics.length > 1) for (const t of topics) groups.push({ id: `g:du:${t.tag}`, label: t.tag || 'Weiteres', color: '', about: true, topic: true, items: t.items });
+    else groups.push({ id: 'g:du', label: 'Über dich', color: '', about: true, items: about });
+  } else if (about.length) groups.push({ id: 'g:du', label: 'Über dich', color: '', about: true, items: about });
+  const rest = items.filter((i) => i.scope === 'projekt' && i.project);
+  const order = [...projects.map((p) => p.folder), ...rest.map((i) => i.project)];
+  const seen = new Set();
+  for (const folder of order) {
+    const key = String(folder || '').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const list = rest.filter((i) => sameFolder(i.project, folder));
+    if (!list.length) continue;
+    const p = projects.find((x) => sameFolder(x.folder, folder));
+    groups.push({ id: `g:${key}`, label: p?.name || baseName(folder), color: p?.color || '', about: false, folder, items: list });
+  }
+  // Neueste Einträge zuoberst
+  for (const g of groups) g.items = [...g.items].sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  return groups;
+}
+
+// Karte: { nodes, links, tags, extent }.
+// nodes: { id, kind: 'du' | 'gruppe' | 'item', x, y, side (1 rechts, -1 links), label, color, item?, group?, count? }
+// links: { from, to, kind: 'ast' | 'zweig', color }; tags: [[Schlagwort, Anzahl]], häufigste zuerst
+// extent: Punkte, die der Ausschnitt zeigen muss (mit dem Platz für die Beschriftungen)
+export function mindmap(items = [], projects = []) {
+  const groups = groupsOf(items, projects);
+  const height = (g) => g.items.length * MAP.row;
+  // Auf beide Seiten verteilen, sodass sie ähnlich hoch werden: «Über dich» rechts, dann die grössten zuerst
+  const sides = { 1: [], '-1': [] };
+  const total = { 1: 0, '-1': 0 };
+  const sorted = [...groups].sort((a, b) => (b.about - a.about) || (height(b) - height(a)));
+  for (const g of sorted) {
+    const side = groups.length > 1 && total[-1] < total[1] ? -1 : 1;
+    sides[side].push(g);
+    total[side] += height(g) + MAP.gap;
+  }
+  const nodes = [{ id: 'du', kind: 'du', x: 0, y: 0, side: 0, label: 'Du' }];
+  const links = [];
+  const extent = [{ x: -40, y: -40 }, { x: 40, y: 40 }];
+  for (const side of [1, -1]) {
+    // In der Reihenfolge der Gruppen (nicht nach Grösse), damit ein Projekt seinen Platz behält, wenn Einträge dazukommen
+    const list = groups.filter((g) => sides[side].includes(g));
+    let y = -(list.reduce((n, g) => n + height(g), 0) + MAP.gap * Math.max(0, list.length - 1)) / 2;
+    for (const g of list) {
+      const h = height(g);
+      nodes.push({ id: g.id, kind: 'gruppe', x: side * MAP.hubX, y: y + h / 2, side, label: g.label, color: g.color, about: g.about, topic: !!g.topic, count: g.items.length });
+      links.push({ from: 'du', to: g.id, kind: 'ast', color: g.color });
+      g.items.forEach((item, i) => {
+        const id = `i:${item.id}`;
+        const iy = y + MAP.row / 2 + i * MAP.row;
+        const label = shorten(item.text);
+        const width = 16 + label.length * MAP.charW; // Punkt und Text
+        nodes.push({ id, kind: 'item', x: side * MAP.itemX, y: iy, side, label, width, color: g.color, item, group: g.id });
+        links.push({ from: g.id, to: id, kind: 'zweig', color: g.color });
+        extent.push({ x: side * (MAP.itemX + width), y: iy });
+      });
+      extent.push({ x: side * MAP.hubX, y: y - 6 }, { x: side * MAP.hubX, y: y + h + 6 });
+      y += h + MAP.gap;
+    }
+  }
+  const count = new Map();
+  for (const item of items) for (const t of item.tags || []) count.set(t, (count.get(t) || 0) + 1);
+  const tags = [...count.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'de'));
+  return { nodes, links, tags, extent };
+}
+
+// Einträge, die mit diesem verwandt sind: gleiches Schlagwort (für das Hervorheben beim Darüberfahren)
+export function related(items, id) {
+  const me = items.find((i) => i.id === id);
+  const tags = new Set(me?.tags || []);
+  return new Set(items.filter((i) => i.id === id || (i.tags || []).some((t) => tags.has(t))).map((i) => i.id));
+}
+
 // Ausschnitt, der alle Knoten zeigt: Verschiebung und Zoom für eine Fläche width × height
-export function fit(positions, width, height, pad = 60) {
+// minK: kleinster Zoom (die Karte bleibt lesbar; was nicht hineinpasst, erreicht man durch Ziehen)
+export function fit(positions, width, height, pad = 60, minK = 0.35) {
   const pts = Object.values(positions);
   if (!pts.length || !width || !height) return { x: width / 2 || 0, y: height / 2 || 0, k: 1 };
   const minX = Math.min(...pts.map((p) => p.x)) - pad;
   const maxX = Math.max(...pts.map((p) => p.x)) + pad;
   const minY = Math.min(...pts.map((p) => p.y)) - pad;
   const maxY = Math.max(...pts.map((p) => p.y)) + pad;
-  const k = Math.max(0.35, Math.min(1.15, Math.min(width / (maxX - minX), height / (maxY - minY))));
+  const k = Math.max(minK, Math.min(1.15, Math.min(width / (maxX - minX), height / (maxY - minY))));
   return { x: width / 2 - ((minX + maxX) / 2) * k, y: height / 2 - ((minY + maxY) / 2) * k, k };
 }

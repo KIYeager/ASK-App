@@ -1867,6 +1867,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             "chat:move" => ("Chat verschieben?".into(), if paths::is_free_dir(&sarg(a, 2)) { "Zu den Chats ohne Projekt".into() } else { sarg(a, 2) }),
             "skills:save" => ("Skill speichern?".into(), str_of(&arg(a, 0), "name")),
             "skills:enable" if on(1) => ("Mitgelieferten Skill einschalten?".into(), sarg(a, 0)),
+            "memory:import-save" => ("Einträge ins Gedächtnis importieren?".into(), format!("{} Einträge", arg(a, 0).as_array().map(Vec::len).unwrap_or(0))),
             "memory:add" | "memory:update" => ("Eintrag im Gedächtnis speichern?".into(), crate::util::take_chars(&str_of(&arg(a, if channel == "memory:add" { 0 } else { 1 }), "text"), 300)),
             "mods:enable" if on(1) => ("Mod einschalten?".into(), sarg(a, 0)),
             "catalog:install" => (format!("Aus dem Katalog hinzufügen: {}?", sarg(a, 2)), sarg(a, 0)),
