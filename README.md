@@ -69,6 +69,7 @@ Neue Versionen baut GitHub, nicht der eigene Rechner. Normalerweise entsteht ein
 Nur vor dem allerersten Release nötig.
 
 1. **Release-Repository anlegen.** Auf GitHub «New repository», Owner `KIYeager`, Name `ASK-Releases`, **Public**, Häkchen bei «Add a README file» (ein leeres Repository nimmt keine Releases an). Danach den Inhalt von [docs/ASK-Releases-README.md](docs/ASK-Releases-README.md) als README einfügen: Er erklärt den Lernenden, was sie herunterladen sollen.
+1a. **Download-Seite einschalten.** In ASK-Releases: Settings, Pages, bei «Build and deployment» Source «Deploy from a branch», Branch `main`, Ordner `/docs`, «Save». Danach in ASK-App unter Actions den Workflow «Download-Seite» mit «Run workflow» einmal von Hand starten; er legt `docs/index.html` in ASK-Releases ab. Nach ein bis zwei Minuten steht die Seite unter https://kiyeager.github.io/ASK-Releases/. Später schreibt der Release-Workflow sie bei jeder normalen Version selbst neu (ENTSCHEIDE E63).
 2. **Token anlegen.** GitHub, Profilbild, Settings, Developer settings, Personal access tokens, Fine-grained tokens, «Generate new token»:
    - Resource owner: `KIYeager`
    - Repository access: «Only select repositories», nur `ASK-Releases`
@@ -149,9 +150,11 @@ Im Reiter «Actions» den roten Lauf öffnen; der Schritt mit dem roten Kreuz ne
 
 ## Installation
 
-Für die Lernenden gibt es einen festen Link, der immer auf die neueste Version zeigt:
+Für die Lernenden gibt es eine Download-Seite mit der neuesten Version, ihren Neuerungen und einer Anleitung für die Warnung von Windows:
 
-https://github.com/KIYeager/ASK-Releases/releases/latest/download/ASK-Setup.exe
+https://kiyeager.github.io/ASK-Releases/
+
+Die Seite schreibt der Workflow «Download-Seite» nach jeder normalen Version neu, Beta-Versionen ändern sie nicht (ENTSCHEIDE E63). Wer die Datei ohne Seite will, nimmt den festen Link, der immer auf die neueste Version zeigt: https://github.com/KIYeager/ASK-Releases/releases/latest/download/ASK-Setup.exe
 
 `ASK-Setup.exe` ausführen. Die Installation läuft pro Nutzer nach `%LOCALAPPDATA%\ASK`, ohne Admin-Rechte, und legt Verknüpfungen im Startmenü und auf dem Desktop an. Python, Bibliotheken und Anleitungen sind dabei; die Lernenden müssen nichts installieren. Python liegt in der App als ein einziges Archiv; beim ersten Start entpackt ASK es nach `%LOCALAPPDATA%\ASK-Desktop\python\<Fassung>` (unten in der Statuszeile «Python wird eingerichtet (einmalig) … 40 %», je nach Laptop und Virenscanner einige Minuten). Danach startet ASK direkt, und ein Update entpackt Python nur neu, wenn sich Python selbst geändert hat (ENTSCHEIDE E39). Eine frühere Electron-Fassung von ASK entfernt der Installer selbst; Einstellungen, Chats und die Verbindung mit GitHub bleiben, bei ASK meldet man sich einmal neu an (ENTSCHEIDE E60). Deinstallieren über Einstellungen, Apps; das entpackte Python wird dabei entfernt. Einstellungen bleiben in `%APPDATA%\ASK`, Laufzeitdaten in `%LOCALAPPDATA%\ASK-Desktop`.
 
