@@ -79,6 +79,28 @@ pub fn goal_tool() -> Value {
     })
 }
 
+/// Werkzeug denkaufwand (ENTSCHEIDE E62): Bei «Automatisch» wählt das Modell selbst, wie gründlich es die
+/// nächsten Schritte überlegt. Jeder Auftrag beginnt bei «mittel».
+pub const EFFORT_TOOL: &str = "denkaufwand";
+pub const AUTO_START_EFFORT: &str = "mittel";
+pub fn effort_tool() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": EFFORT_TOOL,
+            "description": "Stellt ein, wie gründlich du die nächsten Schritte dieses Auftrags überlegst. Jeder Auftrag beginnt bei «mittel». Wähle «maximal» für schwierige Schritte (Fehlersuche, Aufbau eines Programms, knifflige Logik, Beweise, lange Texte genau prüfen) und «tief» für einfache, mechanische Schritte (Dateien umbenennen, kurze Antworten, Formatieren). Gilt ab der nächsten Antwort bis zum Ende des Auftrags oder bis du es wieder änderst. Nicht bei jedem Schritt wechseln.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "stufe": { "type": "string", "enum": ["tief", "mittel", "maximal"], "description": "tief, mittel oder maximal" },
+                    "grund": { "type": "string", "description": "Warum, in wenigen Wörtern" },
+                },
+                "required": ["stufe"],
+            },
+        },
+    })
+}
+
 /// Werkzeug frage_stellen: Das Modell fragt die Person im Chat und wartet auf die Antwort (wie
 /// AskUserQuestion in Claude Code). Die App zeigt die Frage mit Antworten zum Anklicken und einem Feld
 /// für eine eigene Antwort; auch eine Eingabe im normalen Eingabefeld gilt als Antwort.
@@ -119,8 +141,8 @@ pub fn plan_tool() -> Value {
 }
 
 /// Werkzeuge, die im Planmodus erlaubt sind: nichts, was den Ordner oder etwas ausserhalb verändert
-const PLAN_ALLOWED: [&str; 16] = ["read_file", "list_files", "find_files", "search_text", "view_file", "web_search", "web_fetch", HELPER,
-    "chat_search", "chat_read", "github_status", "server_liste", "skill_lesen", "update_tasks", "frage_stellen", "plan_vorlegen"];
+const PLAN_ALLOWED: [&str; 17] = ["read_file", "list_files", "find_files", "search_text", "view_file", "web_search", "web_fetch", HELPER,
+    "chat_search", "chat_read", "github_status", "server_liste", "skill_lesen", "update_tasks", "frage_stellen", "plan_vorlegen", EFFORT_TOOL];
 const PLAN_PROMPT: &str = "\n\n# Planmodus\nDie Person will zuerst einen Plan sehen. Ändere nichts: keine Befehle, keine Dateien schreiben. Sieh dir mit den Lese- und Suchwerkzeugen an, was du brauchst, frag bei Unklarem mit frage_stellen, und lege dann mit plan_vorlegen einen kurzen, konkreten Plan vor (Schritte, betroffene Dateien). Danach hörst du auf.";
 
 /// Verbindung zu ASK weg oder ASK kurz überlastet: so lange warten und nochmals versuchen (Sekunden)
@@ -565,6 +587,8 @@ struct Inner {
     allowed: HashSet<String>,
     reviewed_safe: HashSet<String>,
     made_this_turn: HashSet<String>,
+    /// Denkaufwand, den das Modell bei «Automatisch» für diesen Auftrag gewählt hat (leer: noch nichts)
+    auto_effort: String,
     text_mode_for: HashSet<String>,
     no_images_for: HashSet<String>,
     tight_for: HashSet<String>,
@@ -626,6 +650,7 @@ impl Agent {
                 allowed: HashSet::new(),
                 reviewed_safe: HashSet::new(),
                 made_this_turn: HashSet::new(),
+                auto_effort: String::new(),
                 text_mode_for: HashSet::new(),
                 no_images_for: HashSet::new(),
                 tight_for: HashSet::new(),
@@ -1137,6 +1162,7 @@ impl Agent {
             let mut g = self.inner.lock();
             g.turn_sources = Some(TurnSources::default()); // web_fetch und web_search in diesem Auftrag
             g.made_this_turn = HashSet::new();
+            g.auto_effort = String::new(); // «Automatisch»: jeder Auftrag beginnt bei «mittel»
         }
         let signal = Signal::new();
         *self.controller.lock() = Some(signal.clone());
@@ -1236,6 +1262,9 @@ impl Agent {
         specs.push(helper_tool());
         if goal.is_some() {
             specs.push(goal_tool());
+        }
+        if (self.o.get_thinking)() == "standard" {
+            specs.push(effort_tool());
         }
         if plan {
             specs.push(plan_tool());
@@ -1406,6 +1435,8 @@ impl Agent {
                 )
             } else if name == "goal_done" {
                 self.finish_goal(&arguments)
+            } else if name == EFFORT_TOOL {
+                self.set_effort(&arguments)
             } else if name == "frage_stellen" {
                 self.ask_question(call, signal).await
             } else if let Some((batch, k)) = helper_runs.get(&id) {
@@ -1503,7 +1534,7 @@ impl Agent {
                 messages,
                 tools: if text_mode { None } else { Some(specs.to_vec()) },
                 web_search,
-                thinking: (self.o.get_thinking)(),
+                thinking: self.thinking(),
                 signal: Some(signal.clone()),
                 on_delta: Some(on_delta),
             })
@@ -1546,6 +1577,34 @@ impl Agent {
             panel: false,
         };
         run_tool(self.o.terminal.as_deref(), name, &Value::String(arguments.to_string()), &ctx).await
+    }
+
+    /// Denkaufwand für die nächste Anfrage: die Einstellung, bei «Automatisch» die Wahl des Modells
+    /// in diesem Auftrag (anfangs «mittel»)
+    pub fn thinking(&self) -> String {
+        let setting = (self.o.get_thinking)();
+        if setting != "standard" {
+            return setting;
+        }
+        let chosen = self.inner.lock().auto_effort.clone();
+        if chosen.is_empty() { AUTO_START_EFFORT.to_string() } else { chosen }
+    }
+
+    /// Werkzeug denkaufwand: Wahl des Modells bei «Automatisch»
+    fn set_effort(&self, raw_args: &str) -> ToolResult {
+        if (self.o.get_thinking)() != "standard" {
+            return ToolResult::new(false, "Der Denkaufwand ist von der Person fest eingestellt.", "fest eingestellt");
+        }
+        let args = serde_json::from_str::<Value>(if raw_args.is_empty() { "{}" } else { raw_args }).unwrap_or(Value::Null);
+        let level = js_string(&args["stufe"]).to_lowercase();
+        let level = if level == "hoch" { "maximal".to_string() } else { level };
+        if !["tief", "mittel", "maximal"].contains(&level.as_str()) {
+            return ToolResult::new(false, "Unbekannte Stufe. Erlaubt: tief, mittel, maximal.", "unbekannte Stufe");
+        }
+        self.inner.lock().auto_effort = level.clone();
+        self.event(json!({ "type": "effort", "level": level }));
+        let name = match level.as_str() { "tief" => "Tief", "maximal" => "Maximal", _ => "Mittel" };
+        ToolResult::new(true, format!("Denkaufwand für die nächsten Schritte: {level}."), name)
     }
 
     /// Werkzeug goal_done: Ziel als erreicht markieren
@@ -1888,7 +1947,7 @@ impl Agent {
         let deps = HelperDeps {
             ask: self.o.ask.clone(),
             model: if helper_model.is_empty() { (self.o.get_model)() } else { helper_model },
-            thinking: (self.o.get_thinking)(),
+            thinking: self.thinking(),
             terminal: self.o.terminal.clone(),
             web: self.o.web.clone(),
             folder: (self.o.get_folder)(),
@@ -2872,6 +2931,30 @@ mod tests {
         assert_eq!(goal["summary"], "Alles fertig");
         assert_eq!(t.ask.requests().len(), 3);
         assert!(t.agent.messages().iter().any(|m| m["role"] == "user" && m["auto"] == true && m["content"] == GOAL_NUDGE));
+    }
+
+    #[tokio::test]
+    async fn automatisch_das_modell_waehlt_den_denkaufwand_selbst() {
+        let ask = Fake::new(vec![
+            calls(vec![call("e", "denkaufwand", json!({ "stufe": "maximal", "grund": "kniffliger Fehler" }))]),
+            text("Gefunden."),
+        ]);
+        let t = make(ask, |o| o.get_thinking = Arc::new(|| "standard".to_string()));
+        t.send("Such den Fehler").await;
+        let reqs = t.ask.requests();
+        let names = |r: &ChatRequest| r.tools.clone().unwrap_or_default().iter().map(|s| js_string(&s["function"]["name"])).collect::<Vec<_>>();
+        assert!(names(&reqs[0]).contains(&"denkaufwand".to_string()), "bei «Automatisch» angeboten");
+        assert_eq!(reqs.iter().map(|r| r.thinking.clone()).collect::<Vec<_>>(), vec!["mittel", "maximal"], "beginnt bei mittel, dann die Wahl");
+        // nächster Auftrag beginnt wieder bei mittel
+        t.send("Und jetzt?").await;
+        assert_eq!(t.ask.requests().last().unwrap().thinking, "mittel");
+
+        // fest eingestellt: kein Werkzeug, die Einstellung gilt
+        let fixed = make(Fake::new(vec![text("Ok")]), |o| o.get_thinking = Arc::new(|| "tief".to_string()));
+        fixed.send("Hallo").await;
+        let r = fixed.ask.requests();
+        assert!(!names(&r[0]).contains(&"denkaufwand".to_string()));
+        assert_eq!(r[0].thinking, "tief");
     }
 
     #[tokio::test]

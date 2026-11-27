@@ -45,7 +45,7 @@ function Todo({ tasks, open, onToggle }) {
 
 // Was die Stufen bedeuten, in einer Zeile unter dem Regler. ASK kennt nur low, medium und xhigh (ENTSCHEIDE E62).
 const THINK_INFO = {
-  standard: 'Das Modell entscheidet selbst, wie lange es überlegt.',
+  standard: 'Das Modell wählt selbst: Mittel zum Start, Maximal für Schwieriges, Tief für Einfaches.',
   tief: 'Schnelle Antworten, kaum Überlegen.',
   mittel: 'Ausgewogen, passt für die meisten Aufträge.',
   maximal: 'So gründlich wie möglich, deutlich langsamer.',
@@ -185,7 +185,7 @@ function ThinkSlider({ auto, pos, onPick }) {
   );
 }
 
-function ThinkPicker({ level, onChange }) {
+function ThinkPicker({ level, autoLevel = '', onChange }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -200,12 +200,13 @@ function ThinkPicker({ level, onChange }) {
   const auto = !THINK_STEPS.includes(level);
   const idx = THINK_STEPS.indexOf(level);
   const pos = idx < 0 ? 1 : idx; // Automatisch: Regler bei «Mittel», aber grau
+  const autoStep = autoLevel ? THINK_STEPS.indexOf(autoLevel) : -1; // während eines Auftrags: Wahl des Modells
   const pick = (i) => { const next = THINK_STEPS[Math.min(LAST_STEP, Math.max(0, i))]; if (next !== level) onChange(next); };
   return (
     <div className="think-wrap" ref={ref}>
       <button type="button" id="think-btn" className={`chip think-chip${!auto ? ' on' : ''}`} data-step={auto ? -1 : idx}
         onClick={() => setOpen(!open)} title="Denkaufwand des Modells (/denken)" aria-expanded={open}>
-        <Bulb step={auto ? -1 : idx} /> <span id="think-label" className="chip-label">{auto ? 'Standard' : THINK_NAMES[level]}</span>
+        <Bulb step={auto ? autoStep : idx} /> <span id="think-label" className="chip-label">{auto ? (autoLevel ? `Auto · ${THINK_NAMES[autoLevel]}` : 'Auto') : THINK_NAMES[level]}</span>
       </button>
       {open ? (
         <div id="think-pop" className={`popover think-pop${auto ? ' auto' : ''}`} role="dialog" aria-label="Denkaufwand">
@@ -274,7 +275,7 @@ function mentionAt(text, caret) {
 
 const Composer = forwardRef(function Composer(props, ref) {
   const { state, running, block, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
-    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode } = props;
+    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode, autoEffort } = props;
   const [text, setText] = useState('');
   const [pending, setPending] = useState([]); // neue Anhänge { name, type, size, data, url }
   const [kept, setKept] = useState([]); // schon gespeicherte Anhänge einer zurückgenommenen Eingabe { path, name, image }
@@ -620,7 +621,7 @@ const Composer = forwardRef(function Composer(props, ref) {
               title={!state.webSearchAvailable ? 'Websuche ist in ASK für dein Konto nicht freigegeben' : state.webSearch ? 'Websuche an: ASK sucht vor der Antwort im Web (/web)' : 'Websuche aus (/web)'}>
               <Icon name="globe" size={14} /> <span className="chip-label">Web</span>
             </button>
-            <ThinkPicker level={state.thinking || 'standard'} onChange={setThinking} />
+            <ThinkPicker level={state.thinking || 'standard'} autoLevel={autoEffort} onChange={setThinking} />
             <ModePicker mode={mode} onChange={setMode} />
             <span className="spacer" />
             {context?.tokens > 0 ? (

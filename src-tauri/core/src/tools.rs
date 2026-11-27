@@ -1851,6 +1851,12 @@ pub fn describe(name: &str, args: &Value) -> Described {
     if name == "goal_done" {
         return Described { label: "Ziel erreicht".into(), detail: String::new() }; // Werkzeug der Arbeitsschleife (agent.js)
     }
+    if name == "denkaufwand" {
+        let level = args.get("stufe").map(js_string).unwrap_or_default();
+        let reason = args.get("grund").map(js_string).unwrap_or_default();
+        let detail = if reason.is_empty() { level } else { format!("{level}: {reason}") };
+        return Described { label: "Denkaufwand".into(), detail: take_chars(&detail, 200) }; // Werkzeug der Arbeitsschleife (ENTSCHEIDE E62)
+    }
     let tool = find_tool(name);
     let detail = if tool.is_some() { describe_detail(name, args) } else { String::new() };
     Described {
