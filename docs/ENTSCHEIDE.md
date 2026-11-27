@@ -528,7 +528,7 @@ Jetzt wieder so: eigene Vorlage `src-tauri/windows/installer.nsi` (Kopie der Vor
 
 Das Plugin kommt wie bei electron-builder aus `nsis-resources-3.4.1` (electron-builder-binaries) mit derselben Prüfsumme; `scripts/nsis-plugins.js` lädt es beim Bauen nach `src-tauri/windows/plugins/` (nicht im Repository). Fehlt es, baut der Installer trotzdem, dann mit der Fortschrittsseite von NSIS.
 
-Geprüft mit dem Workflow «Installer-Vorschau»: baut den Installer, installiert ASK auf einem Windows-Runner neu und als Update und nimmt dabei Bildschirmfotos auf (Artefakt «installer-bilder»).
+Geprüft mit dem Workflow «Installer-Vorschau»: baut den Installer, installiert ASK auf einem Windows-Runner neu und als Update und nimmt dabei Bildschirmfotos auf (Artefakt «installer-bilder»). Er läuft nur auf Wunsch (Label «installer-vorschau» oder «Run workflow»).
 
 Nicht gewählt: Fenster von NSIS nur umgestalten (Knöpfe und Details ausblenden; bleibt das grosse Fenster); eigene Seite mit nsDialogs (Fortschritt müsste selbst nachgebildet werden); Updates ganz ohne Fenster (Lernende sehen dann nicht, dass etwas passiert).
 
@@ -551,6 +551,7 @@ Jetzt:
 - Der Release-Build in der CI läuft nur noch auf `main` (nach dem Merge). In PRs prüfen Tests und Clippy das Kompilieren.
 - Ein gemeinsamer Rust-Zwischenspeicher unter Windows (`shared-key: windows`): Die CI auf `main` füllt ihn mit Debug- und Release-Build, Release-Workflow und Installer-Vorschau lesen ihn nur. Die Umgebungsvariablen oben stehen darum in allen drei Workflows gleich, sonst passt der Schlüssel nicht.
 - Der Release nach einem Merge lässt «Lint und Tests» aus; die CI hat sie im PR bestanden (Pflicht vor dem Merge). Ein Tag von Hand prüft weiterhin.
+- Die Installer-Vorschau (E64) läuft nur auf Wunsch: von Hand oder mit dem Label «installer-vorschau» am PR. Sie ist kein Pflicht-Check.
 
 Nicht geändert: `lto = true` und `codegen-units = 1` im Release-Profil (kleinere EXE); «thin» LTO wäre beim Bauen schneller, die EXE etwas grösser.
 
