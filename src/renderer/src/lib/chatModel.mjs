@@ -141,7 +141,8 @@ export function fromTranscript(items, running = false) {
   let turn = null;
   for (const item of items || []) {
     if (item.role === 'auto') m = add(m, { k: 'auto' });
-    else if (item.role === 'undo') m = add(m, { k: 'notice', icon: 'undo', text: item.text });
+    else if (item.role === 'undo') m = add(m, { k: 'notice', icon: 'undo', text: item.text, redo: item.redo || null, redone: !!item.redone });
+    else if (item.role === 'redo') m = add(m, { k: 'notice', icon: 'redo', redoNote: true, text: item.text });
     // Gespeicherte Hinweise und Fehler eines Auftrags (auch «ab hier zusammengefasst»): Wer den Chat später öffnet,
     // sieht, warum ein Auftrag aufgehört hat
     else if (item.role === 'notice') m = add(m, { k: 'notice', text: item.text || '' });
@@ -238,7 +239,19 @@ export function applyEvent(model, ev) {
       // Rückgängig bis zu diesem Auftrag: auch die Änderungen danach sind weg
       const from = model.entries.findIndex((e) => e.k === 'changes' && e.snapshot === ev.snapshot);
       const entries = model.entries.map((e, i) => (e.k === 'changes' && from >= 0 && i >= from ? { ...e, undone: true } : e));
-      return add({ ...model, entries }, { k: 'notice', icon: 'undo', text: ev.text });
+      return add({ ...model, entries }, { k: 'notice', icon: 'undo', text: ev.text, redo: ev.redo || null, redone: false });
+    }
+    case 'redo': {
+      // Rückgängig zurückgenommen: dessen Aufträge gelten wieder, Aufträge seither sind rückgängig gemacht
+      const back = new Set(ev.snapshots || []);
+      const later = new Set(ev.later || []);
+      const entries = model.entries.map((e) => {
+        if (e.k === 'changes' && back.has(e.snapshot)) return { ...e, undone: false };
+        if (e.k === 'changes' && later.has(e.snapshot)) return { ...e, undone: true };
+        if (e.k === 'notice' && e.redo && e.redo === ev.redo) return { ...e, redone: true };
+        return e;
+      });
+      return add({ ...model, entries }, { k: 'notice', icon: 'redo', redoNote: true, text: ev.text });
     }
     case 'retry': {
       // Verbindung weg: halbe Antwort verwerfen, ein Hinweis, der beim nächsten Versuch nachgeführt wird
@@ -271,6 +284,17 @@ export function applyEvent(model, ev) {
 }
 
 // Letzte Aufgabenliste des Chats (update_tasks), solange noch etwas offen ist
+// Das Rückgängig, das sich noch zurücknehmen lässt: nur das letzte, und nur solange es nicht schon
+// zurückgenommen ist (sonst stimmten die Markierungen der Aufträge nicht mehr)
+export function redoable(model) {
+  for (let i = model.entries.length - 1; i >= 0; i--) {
+    const e = model.entries[i];
+    if (e.k === 'notice' && e.redoNote) return null;
+    if (e.k === 'notice' && e.icon === 'undo' && 'redo' in e) return e.redo && !e.redone ? e.redo : null;
+  }
+  return null;
+}
+
 export function lastTasks(model) {
   for (let i = model.entries.length - 1; i >= 0; i--) {
     const e = model.entries[i];

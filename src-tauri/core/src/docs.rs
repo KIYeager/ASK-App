@@ -66,7 +66,7 @@ pub fn doc_rel(input: &str) -> Result<String> {
     if p.is_empty() {
         bail!("Kein Doc angegeben.");
     }
-    let mut rel = if p.len() >= 5 && p[..5].eq_ignore_ascii_case("docs/") { format!("{DIR}/{}", &p[5..]) } else { format!("{DIR}/{p}") };
+    let mut rel = if p.get(..5).is_some_and(|h| h.eq_ignore_ascii_case("docs/")) { format!("{DIR}/{}", &p[5..]) } else { format!("{DIR}/{p}") };
     if !rel.to_lowercase().ends_with(".md") {
         rel.push_str(".md");
     }
@@ -227,9 +227,13 @@ pub fn read(folder: &str, rel: &str) -> Result<Value> {
 pub fn save(folder: &str, rel: &str, content: &str, base: Option<&str>) -> Result<Value> {
     let rel = doc_rel(rel)?;
     // Geteiltes Doc (E82): gegen den Stand `base` vergleichen und mit den Änderungen der anderen zusammenführen
+    // (ohne die Sperre unten, weil das übers Netz gehen kann)
     if let Some(r) = crate::docsync::save(folder, &rel, &content.replace("\r\n", "\n"), base.filter(|b| !b.is_empty())) {
         return r;
     }
+    // Prüfen und Schreiben ohne Lücke: Sonst konnten Speichern der Oberfläche und doc_bearbeiten gleichzeitig
+    // die Prüfung bestehen, und der Letzte überschrieb still den anderen
+    let _guard = DOCS_LOCK.lock();
     let p = full_path(folder, &rel)?;
     let content = content.replace("\r\n", "\n");
     if let Some(base) = base.filter(|b| !b.is_empty()) {
@@ -244,6 +248,8 @@ pub fn save(folder: &str, rel: &str, content: &str, base: Option<&str>) -> Resul
     write_atomic(&p, &content)?;
     Ok(json!({ "ok": true, "path": rel, "hash": hash(&content), "modified": modified_ms(&p), "title": title_of(&content, &rel) }))
 }
+
+static DOCS_LOCK: Mutex<()> = Mutex::new(());
 
 /// Neues Doc mit Titel; der Inhalt beginnt immer mit «# Titel». Liefert den Pfad.
 pub fn create(folder: &str, title: &str, content: &str) -> Result<String> {
@@ -298,8 +304,13 @@ fn load_comments(folder: &str) -> serde_json::Map<String, Value> {
 fn with_comments<T>(folder: &str, f: impl FnOnce(&mut serde_json::Map<String, Value>) -> Result<T>) -> Result<T> {
     let _guard = COMMENTS_LOCK.lock();
     let mut all = load_comments(folder);
-    let out = f(&mut all)?;
+    // Unlesbare Datei: zur Seite legen statt mit einer leeren Liste zu überschreiben (alle Kommentare wären weg)
     let file = comments_file(folder);
+    if all.is_empty() && std::fs::read_to_string(&file).is_ok_and(|t| !t.trim().is_empty() && serde_json::from_str::<Value>(&t).map_or(true, |v| !v.is_object())) {
+        let aside = file.with_extension(format!("kaputt-{}.json", now_ms()));
+        std::fs::rename(&file, &aside)?;
+    }
+    let out = f(&mut all)?;
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -628,6 +639,7 @@ fn run_inner(name: &str, a: &Value, ctx: &ToolCtx, folder: &str) -> Result<ToolR
             if next == current {
                 return Ok(ToolResult::new(true, "Keine Änderung: Das Doc steht schon so.", "unverändert"));
             }
+            // gegen den gelesenen Stand: Hat die Person inzwischen gespeichert, nichts überschreiben
             let saved = save(folder, &rel, &next, Some(&hash(&current)))?;
             if saved["conflict"] == true {
                 bail!("Das Doc hat sich gerade geändert (die Person schreibt). Lies es mit doc_lesen nochmals und ändere dann.");
@@ -855,6 +867,9 @@ mod tests {
         assert_eq!(doc_rel("docs/bericht.md").unwrap(), "docs/bericht.md");
         assert_eq!(doc_rel(".\\Docs\\a\\b.md").unwrap(), "docs/a/b.md");
         assert_eq!(doc_rel("/docs/x").unwrap(), "docs/x.md");
+        // Umlaut oder ß über Byte 5: kein Absturz beim Vergleich mit «docs/»
+        assert_eq!(doc_rel("Straße").unwrap(), "docs/Straße.md");
+        assert_eq!(doc_rel("Größe").unwrap(), "docs/Größe.md");
         for bad in ["", "docs/../geheim.md", "..\\x", "docs/a:b.md", "C:/x.md", "docs/.md"] {
             assert!(doc_rel(bad).is_err(), "{bad}");
         }
@@ -928,6 +943,14 @@ mod tests {
         assert!(threads(&f, &rel).is_empty());
         // Kommentare liegen nicht im Projektordner
         assert!(walkdir::WalkDir::new(&proj).into_iter().flatten().all(|e| !e.path().to_string_lossy().ends_with(".json")));
+        // unlesbare Kommentardatei: zur Seite gelegt, nicht überschrieben
+        let file = comments_file(&f);
+        std::fs::write(&file, "{ kaputt").unwrap();
+        add_comment(&f, &rel, "Liebe Lea", "Neu").unwrap();
+        let aside: Vec<String> = std::fs::read_dir(file.parent().unwrap()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.contains(".kaputt-")).collect();
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        assert_eq!(std::fs::read_to_string(file.with_file_name(&aside[0])).unwrap(), "{ kaputt");
+        assert_eq!(threads(&f, &rel).len(), 1);
     }
 
     #[tokio::test]

@@ -384,7 +384,10 @@ impl Snapshots {
                 let file = stand.files.get(rel).ok_or_else(|| anyhow!(DAMAGED))?;
                 std::fs::copy(self.object_path(&file.hash)?, &target)?;
                 let t = UNIX_EPOCH + Duration::try_from_secs_f64((file.mtime / 1000.0).max(0.0)).unwrap_or_default();
-                std::fs::OpenOptions::new().write(true).open(&target)?.set_modified(t)?;
+                // Inhalt ist zurück; scheitert nur das Datum, gilt die Datei trotzdem als wiederhergestellt
+                if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&target) {
+                    let _ = f.set_modified(t);
+                }
                 Ok(())
             })();
             if restored.is_err() {

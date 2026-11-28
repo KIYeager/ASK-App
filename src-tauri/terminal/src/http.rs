@@ -180,10 +180,11 @@ struct Query(Vec<(String, String)>);
 
 impl Query {
     fn parse(raw: Option<&str>) -> Query {
-        // wie NormalizeNullQueryMiddleware: Parameter mit dem Wert «null» gelten als nicht gesetzt
+        // wie NormalizeNullQueryMiddleware: Parameter mit dem Wert «null» gelten als nicht gesetzt, ausser
+        // Suchbegriffe: sonst liesse sich im Code nicht nach «null» suchen
         let pairs = url::form_urlencoded::parse(raw.unwrap_or("").as_bytes())
             .map(|(k, v)| (k.into_owned(), v.into_owned()))
-            .filter(|(_, v)| !v.eq_ignore_ascii_case("null"))
+            .filter(|(k, v)| matches!(k.as_str(), "query" | "pattern") || !v.eq_ignore_ascii_case("null"))
             .collect();
         Query(pairs)
     }

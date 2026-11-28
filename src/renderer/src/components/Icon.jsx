@@ -27,6 +27,7 @@ const PATHS = {
   pen: <path d="M4 20h4L19 9l-4-4L4 16z" />,
   marker: <><path d="M9 14l-4 4h5l2-2" /><path d="M9 14l7.5-7.5a2 2 0 0 1 2.8 0l.2.2a2 2 0 0 1 0 2.8L12 17l-3-3z" /><path d="M4 21h16" /></>,
   undo: <><path d="M9 14 4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-3" /></>,
+  redo: <><path d="m15 14 5-5-5-5" /><path d="M20 9H10a6 6 0 0 0 0 12h3" /></>,
   down: <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />,
   browser: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /></>,
   panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></>,

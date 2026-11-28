@@ -239,9 +239,13 @@ function escText(t) {
   return t.replace(/[\\`*[\]]/g, '\\$&').replace(/~~/g, '\\~\\~')
     .replace(/(^|[^\p{L}\p{N}])_/gu, '$1\\_').replace(/_(?=[^\p{L}\p{N}]|$)/gu, '\\_');
 }
-// Am Anfang eines Absatzes: nichts, was wie Überschrift, Liste, Zitat oder Tabelle aussieht
-function escStart(t) {
+// Am Anfang eines Absatzes und nach jedem Zeilenumbruch darin («\⏎»): nichts, was wie Überschrift, Liste,
+// Zitat oder Tabelle aussieht
+function escLine(t) {
   return t.replace(/^(\s*)(#{1,6} |>|[-+] |\|)/, (m, sp, x) => `${sp}\\${x}`).replace(/^(\s*\d{1,9})([.)]) /, '$1\\$2 ');
+}
+function escStart(t) {
+  return t.split('\\\n').map(escLine).join('\\\n');
 }
 
 function wrap(inner, mark) {

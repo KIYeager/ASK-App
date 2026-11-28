@@ -91,6 +91,11 @@ fn split_lines(text: &str) -> Vec<&str> {
     out
 }
 
+/// Dateien über dieser Grösse durchsucht grep nicht
+const GREP_MAX_BYTES: u64 = 20 * 1024 * 1024;
+/// Dateien über dieser Grösse liest read nicht als Ganzes (das Modell sieht ohnehin nur einen Ausschnitt)
+const READ_MAX_BYTES: u64 = 200 * 1024 * 1024;
+
 /// Start und Ende (Byteposition) des Zeilenbereichs wie `line_range_offsets`
 fn line_range_offsets(text: &str, start_line: Option<u32>, end_line: Option<u32>) -> (usize, usize) {
     let start_boundary = start_line.unwrap_or(1).saturating_sub(1) as usize;
@@ -120,18 +125,33 @@ fn read_text(path: &Path) -> std::io::Result<Result<String, std::str::Utf8Error>
     Ok(std::str::from_utf8(&bytes).map(|s| s.replace("\r\n", "\n").replace('\r', "\n")))
 }
 
-/// Text schreiben wie Python im Textmodus (unter Windows wird aus «\n» «\r\n»)
+/// Text schreiben wie Python im Textmodus (unter Windows wird aus «\n» «\r\n»). Erst in eine Datei daneben,
+/// dann umbenennen: Bricht das Schreiben ab (Absturz, Disk voll), bleibt die alte Datei ganz statt leer.
+/// Lässt sich nicht umbenennen (Datei in einem Programm offen) oder ist das Ziel eine Verknüpfung: direkt schreiben.
 fn write_text(path: &Path, content: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)?;
         }
     }
-    if cfg!(windows) {
-        std::fs::write(path, content.replace('\n', "\r\n"))
-    } else {
-        std::fs::write(path, content)
+    let data = if cfg!(windows) { content.replace('\n', "\r\n") } else { content.to_string() };
+    let link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if link || name.is_empty() {
+        return std::fs::write(path, data);
     }
+    let tmp = path.with_file_name(format!(".{name}.{:06x}.ask-tmp", rand::random::<u32>() & 0xff_ffff));
+    if std::fs::write(&tmp, &data).is_ok() {
+        // Rechte der bisherigen Datei behalten (z. B. ausführbar unter Linux)
+        if let Ok(meta) = std::fs::metadata(path) {
+            let _ = std::fs::set_permissions(&tmp, meta.permissions());
+        }
+        if std::fs::rename(&tmp, path).is_ok() {
+            return Ok(());
+        }
+    }
+    let _ = std::fs::remove_file(&tmp);
+    std::fs::write(path, data)
 }
 
 /// `repr()` eines Strings wie in Python (für Fehlermeldungen)
@@ -330,6 +350,10 @@ impl FileApi {
             return Err(ApiError::new(404, "File not found"));
         }
         let shown = target.to_string_lossy().to_string();
+        let size = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+        if size > READ_MAX_BYTES {
+            return Err(ApiError::new(413, format!("File too large to read as text ({} MB). Read it in parts with Python instead.", size / (1024 * 1024))));
+        }
         match read_text(&target) {
             Err(e) => return Err(ApiError::new(400, os_error_text(&e, &target))),
             Ok(Ok(text)) => return Ok(ReadResult::Json(text_response(&shown, &text, start_line, end_line))),
@@ -373,6 +397,7 @@ impl FileApi {
         for chunk in replacements {
             let ranged = chunk.start_line.is_some() || chunk.end_line.is_some();
             let (start, end) = if ranged { line_range_offsets(&content, chunk.start_line, chunk.end_line) } else { (0, content.len()) };
+            let end = end.max(start); // end_line vor start_line: leerer Bereich statt Absturz beim Schneiden
             let region = &content[start..end];
             let count = if chunk.target.is_empty() { region.chars().count() + 1 } else { region.matches(chunk.target.as_str()).count() };
             if count == 0 {
@@ -481,6 +506,11 @@ impl FileApi {
             if *truncated {
                 return;
             }
+            // Sehr grosse Dateien (Videos, Logs, Datenbanken) nicht ganz in den Speicher laden: Text zum Durchsuchen
+            // sind sie selten, und eine einzige würde die Suche über den ganzen Ordner lahmlegen
+            if std::fs::metadata(file).is_ok_and(|m| m.len() > GREP_MAX_BYTES) {
+                return;
+            }
             let Ok(bytes) = std::fs::read(file) else { return };
             // wie Python: bis zur ersten ungültigen UTF-8-Folge lesen, danach gilt die Datei als Binärdatei
             let text = match std::str::from_utf8(&bytes) {
@@ -570,6 +600,9 @@ mod tests {
     fn schreiben_lesen_ersetzen() {
         let (_b, api) = api();
         let r = api.write("ausgabe/test.txt", "Grüsse\nzwei\n").unwrap();
+        api.write("ausgabe/test.txt", "Grüsse\nzwei\n").unwrap(); // überschreiben: über eine Datei daneben
+        let left: Vec<_> = std::fs::read_dir(_b.path().join("Arbeitsordner Prüfung").join("ausgabe")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("test.txt")], "keine Zwischendatei bleibt liegen");
         assert_eq!(r["size"], "Grüsse\nzwei\n".len());
         let ReadResult::Json(v) = api.read("ausgabe/test.txt", None, None).unwrap() else { panic!() };
         assert_eq!(v["content"], "Grüsse\nzwei\n");
@@ -584,6 +617,10 @@ mod tests {
         api.replace("m.txt", &[rep("a", "b", true)]).unwrap();
         let ReadResult::Json(v) = api.read("m.txt", None, None).unwrap() else { panic!() };
         assert_eq!(v["content"], "b b");
+        // end_line vor start_line: Meldung «nicht gefunden» statt Absturz
+        api.write("z.txt", "a\nb\nc\nd\n").unwrap();
+        let ranged = Replacement { target: "c".into(), replacement: "x".into(), start_line: Some(3), end_line: Some(1), ..Default::default() };
+        assert_eq!(api.replace("z.txt", &[ranged]).unwrap_err().status, 400);
     }
 
     #[test]
@@ -639,6 +676,15 @@ mod tests {
         let s = api.grep("hallo", ".", false, true, &[], true, 1).unwrap();
         assert_eq!(s["truncated"], true);
         assert_eq!(api.grep("(", ".", true, false, &[], true, 5).unwrap_err().status, 400);
+        // sehr grosse Dateien: grep überspringt sie, read lehnt sie ab (Dateien mit Lücken, kosten keinen Platz)
+        let work = _b.path().join("Arbeitsordner Prüfung");
+        let big = std::fs::File::create(work.join("sub/gross.log")).unwrap();
+        big.set_len(GREP_MAX_BYTES + 1).unwrap();
+        std::fs::OpenOptions::new().write(true).open(work.join("sub/gross.log")).map(|mut f| { use std::io::Write; f.write_all(b"hallo\n").unwrap(); }).unwrap();
+        let s = api.grep("hallo", ".", false, true, &[], true, 50).unwrap();
+        assert_eq!(s["matches"].as_array().unwrap().len(), 2, "{s}");
+        std::fs::File::create(work.join("riesig.txt")).unwrap().set_len(READ_MAX_BYTES + 1).unwrap();
+        assert_eq!(api.read("riesig.txt", None, None).err().unwrap().status, 413);
     }
 
     #[test]

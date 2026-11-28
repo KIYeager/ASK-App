@@ -199,18 +199,24 @@ export function PreviewBody({ entry, big = false }) {
   const [p, setP] = useState(null);
   const [status, setStatus] = useState('');
   const [pdf, setPdf] = useState(null);
+  const shown = useRef(null); // Datei, die gerade gezeigt wird
   // Office-Datei als PDF zeigen (preview: ein aktuelles PDF von früher genügt). alive: Ergebnis einer anderen
-  // Datei nicht mehr anzeigen, wenn inzwischen eine andere gewählt ist.
-  const showPdf = async (path, preview, alive = () => true) => {
+  // Datei nicht mehr anzeigen, wenn inzwischen eine andere gewählt ist (ohne Angabe: dieselbe Datei wie beim Klick).
+  const showPdf = async (path, preview, alive = () => shown.current === path) => {
     setStatus(preview ? 'Vorschau wird mit Office erstellt …' : 'Wird mit Office in PDF umgewandelt …');
-    const res = await api().toPdf(path, preview);
-    if (!alive()) return;
-    if (!res.ok) { setStatus(res.fehler || 'Umwandeln nicht möglich.'); return; }
-    const r = await api().preview(res.path);
-    if (alive()) { setStatus(''); setPdf(r.url); }
+    try {
+      const res = await api().toPdf(path, preview);
+      if (!alive()) return;
+      if (!res.ok) { setStatus(res.fehler || 'Umwandeln nicht möglich.'); return; }
+      const r = await api().preview(res.path);
+      if (alive()) { setStatus(''); setPdf(r.url); }
+    } catch (err) {
+      if (alive()) setStatus(`Umwandeln nicht möglich: ${err?.message || err}`);
+    }
   };
   useEffect(() => {
     let alive = true;
+    shown.current = entry?.path ?? null;
     setP(null); setPdf(null); setStatus('');
     if (entry) {
       api().preview(entry.path).then((r) => {
@@ -218,7 +224,7 @@ export function PreviewBody({ entry, big = false }) {
         setP(r);
         // Verweis auf eine Folie (Quellen, E84): Präsentation gleich als PDF zeigen, damit die Seite stimmt
         if (r.kind === 'office' && (r.auto || (entry.seite && /\.pptx$/i.test(entry.path))) && /\.(docx|xlsx|pptx)$/i.test(entry.path)) showPdf(entry.path, true, () => alive);
-      });
+      }).catch(() => { if (alive) setP({ kind: 'error' }); });
     }
     return () => { alive = false; };
   }, [entry?.path, entry?.modified]);
@@ -228,11 +234,14 @@ export function PreviewBody({ entry, big = false }) {
   // Seite aus einem Verweis (Quellen, E84): der PDF-Betrachter von WebView2 springt mit #page=N dorthin
   const page = entry.seite ? `#page=${entry.seite}` : '';
   const frameKey = `${entry.path}|${entry.seite || ''}|${entry.opened || ''}`;
-  if (pdf) return <iframe key={frameKey} className={`preview-frame${big ? ' big' : ''}`} src={`${pdf}?t=${Date.now()}${page}`} title={entry.name} />;
+  // feste Adresse (nicht Date.now()): sonst lädt das PDF bei jedem Neuzeichnen neu, beim Streamen alle 80 ms;
+  // ein neuer Verweis lädt über frameKey neu
+  if (pdf) return <iframe key={frameKey} className={`preview-frame${big ? ' big' : ''}`} src={`${pdf}?t=${v}${page}`} title={entry.name} />;
   if (p.kind === 'image') return <div className="preview-image"><img src={`${p.url}${p.url.includes('?') ? '&' : '?'}t=${v}`} alt={entry.name} /></div>;
   if (p.kind === 'pdf') return <iframe key={frameKey} className={`preview-frame${big ? ' big' : ''}`} src={`${p.url}?t=${v}${page}`} title={entry.name} />;
   if (p.kind === 'text') return <pre className="preview-text">{p.text + (p.truncated ? '\n\n… (gekürzt)' : '')}</pre>;
   if (p.kind === 'missing') return <div className="panel-empty">Die Datei ist nicht mehr vorhanden.</div>;
+  if (p.kind === 'error') return <div className="panel-empty">Die Vorschau liess sich nicht laden.</div>;
   const office = p.kind === 'office';
   return (
     <div className="preview-office">

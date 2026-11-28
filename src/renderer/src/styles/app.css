@@ -1431,3 +1431,14 @@ button.docs-quote:hover { filter: brightness(.97); }
 .msg.btw .btw-wait { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 .msg.btw .btw-error { color: var(--bad); font-size: 13px; }
 
+/* Absturzschutz (components/Crash.jsx): Karte statt leeres Fenster, kurzer Hinweis an einer einzelnen Stelle */
+.crash { height: 100%; display: grid; place-items: center; padding: 24px; background: var(--bg, var(--pane)); color: var(--text); }
+.crash-card { max-width: 460px; display: grid; gap: 12px; justify-items: start; }
+.crash-card h1 { font-size: 20px; margin: 4px 0 0; }
+.crash-card p { margin: 0; line-height: 1.5; }
+.crash-msg { font-family: ui-monospace, Consolas, monospace; font-size: 12px; padding: 8px 10px; border-radius: 8px; background: var(--hover); width: 100%; overflow-wrap: anywhere; }
+.crash-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.crash-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* «Wiederherstellen» beim letzten Rückgängig: wie «Rückgängig» bei den Änderungen */
+.msg.notice .redo-btn { margin-left: auto; flex: none; color: var(--text); align-self: center; }
+.msg.notice .redo-btn:hover { background: var(--hover); }

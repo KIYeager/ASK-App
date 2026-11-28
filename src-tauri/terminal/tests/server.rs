@@ -195,6 +195,10 @@ async fn lesen_zeilenbereich_ersetzen_und_suchen() {
     let (_, grep) = srv.get("/files/grep?query=DREI&path=.&regex=false&case_insensitive=true").await;
     assert_eq!(grep["matches"][0]["line"], 3);
     assert_eq!(grep["matches"][0]["content"], "drei");
+    // der Suchbegriff «null» ist ein echter Suchbegriff, kein «nicht gesetzt»
+    srv.post("/files/write", json!({ "path": "n.js", "content": "let x = null;\n" })).await;
+    let (status, grep) = srv.get("/files/grep?query=null&path=.&regex=false").await;
+    assert_eq!((status, grep["matches"][0]["line"].as_u64()), (200, Some(1)), "{grep}");
 }
 
 #[tokio::test]

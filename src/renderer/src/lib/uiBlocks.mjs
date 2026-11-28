@@ -164,17 +164,26 @@ export function evalFormula(expr, vars = {}) {
   if (!src.trim()) throw new Error('leer');
   if (src.length > 400) throw new Error('zu lang');
   const toks = [];
-  const re = /\s*(?:(\d+(?:[.,]\d+)?(?:e[+-]?\d+)?)|([a-zA-Z_][a-zA-Z0-9_]*)|(\*\*|[-+*/%^(),]))/y;
+  // Komma als Dezimalzeichen («1,5 * 2»), aber nicht in den Klammern einer Funktion: dort trennt es die
+  // Argumente («max(1,5)» ist 5, nicht 1.5)
+  const reComma = /\s*(?:(\d+(?:[.,]\d+)?(?:e[+-]?\d+)?)|([a-zA-Z_][a-zA-Z0-9_]*)|(\*\*|[-+*/%^(),]))/y;
+  const reDot = /\s*(?:(\d+(?:\.\d+)?(?:e[+-]?\d+)?)|([a-zA-Z_][a-zA-Z0-9_]*)|(\*\*|[-+*/%^(),]))/y;
+  const parens = []; // je offene Klammer: true, wenn sie zu einer Funktion gehört
   let pos = 0;
   while (pos < src.length) {
     if (/^\s*$/.test(src.slice(pos))) break;
+    const re = parens.includes(true) ? reDot : reComma;
     re.lastIndex = pos;
     const m = re.exec(src);
     if (!m) throw new Error(`unerwartetes Zeichen «${src.slice(pos).trim()[0]}»`);
     pos = re.lastIndex;
     if (m[1]) toks.push({ t: 'n', v: Number(m[1].replace(',', '.')) });
     else if (m[2]) toks.push({ t: 'id', v: m[2] });
-    else toks.push({ t: 'op', v: m[3] === '**' ? '^' : m[3] });
+    else {
+      if (m[3] === '(') parens.push(toks.at(-1)?.t === 'id');
+      if (m[3] === ')') parens.pop();
+      toks.push({ t: 'op', v: m[3] === '**' ? '^' : m[3] });
+    }
   }
   let i = 0;
   const peek = () => toks[i];

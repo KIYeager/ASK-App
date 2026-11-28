@@ -775,3 +775,25 @@ Nicht gewählt: Nebenfrage als Hilfsagent mit Lese-Werkzeugen (E55); möglich al
 
 Tests: `agent.rs` (ohne Werkzeuge, mit dem Chat, gespeichert, nicht im Verlauf des nächsten Auftrags; laufender Schritt heisst «Läuft noch»), `tests/chatmodel.test.js` (laufende Antwort bleibt ein Eintrag, Ende ohne Anfang, Fehler, Zuordnung nach dem Laden, Wiederverwenden unveränderter Aufträge).
 
+## E87 Absturzschutz der Oberfläche
+
+Ein Fehler beim Zeichnen der Oberfläche (etwa eine Nachricht mit unerwarteten Daten) liess bisher das ganze Fenster leer; die Lernenden sahen nichts mehr und wussten nicht, ob ihre Arbeit weg ist. Jetzt fängt `components/Crash.jsx` solche Fehler ab, auf drei Ebenen:
+
+- **Ganzes Fenster:** eine Karte «Hier ist etwas schiefgelaufen» mit der Meldung, «Neu laden» und «Details kopieren» (wie E69, mit Version, Anmeldung, Terminal und den ersten Zeilen des Stacks). Die Karte sagt, dass Chats und Dateien nicht betroffen sind: Sie liegen im Hauptprozess, ein laufender Auftrag arbeitet dort weiter, Neuladen verliert nichts.
+- **Einzelne Nachricht im Chat** und **rechte Seite:** nur ein kurzer Hinweis an der Stelle («Diese Nachricht lässt sich nicht anzeigen») mit «Nochmals versuchen» und «Details kopieren»; der Rest bleibt bedienbar. Die rechte Seite versucht es beim Wechsel des Reiters oder der Datei von selbst nochmals.
+
+Fehler in Klick-Handlern und Promises fängt React nicht ab; sie leeren das Fenster aber auch nicht.
+
+Nicht gewählt: automatisch neu laden (bei einem Fehler, der gleich wieder auftritt, flackerte das Fenster endlos).
+
+## E88 Rückgängig zurücknehmen («Wiederherstellen»)
+
+Wer zu früh oder beim falschen Auftrag auf «Rückgängig» klickte, hatte keinen Weg zurück, obwohl die App den Stand direkt vor dem Zurücksetzen schon sichert (`restore` legt «vor Rückgängig» an, E24). Jetzt steht beim letzten Rückgängig im Chat «Wiederherstellen»:
+
+- Der Hinweis zum Rückgängig speichert diesen Stand (`redo`) und welche Aufträge er als rückgängig gemacht markiert hat (`undid`, die Kennungen ihrer Sicherungen).
+- «Wiederherstellen» zeigt wie Rückgängig eine Rückfrage mit den Dateien, setzt den Ordner auf diesen Stand, markiert die Aufträge wieder als gültig und sagt es dem Modell. Auch das sichert vorher den jetzigen Stand.
+- Nur beim letzten Rückgängig und nur einmal. Nach einem weiteren Rückgängig stimmten die Markierungen der Aufträge sonst nicht mehr. Aufträge, die seit dem Rückgängig gelaufen sind, gehen mit (die Rückfrage sagt es), wie bei Rückgängig zu einem früheren Auftrag.
+- Ältere Chats ohne `redo` im Hinweis zeigen den Knopf nicht. Nach 14 Tagen ist die Sicherung weg; dann meldet die App das.
+
+Nicht gewählt: ein allgemeines Rückgängig/Wiederherstellen mit Ctrl+Z über alle Aufträge (zu leicht versehentlich ausgelöst, und es ändert Dateien ausserhalb des Chats, den man gerade ansieht).
+

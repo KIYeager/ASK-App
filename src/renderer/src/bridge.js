@@ -88,6 +88,7 @@ export function install() {
   setPrefs: (values) => call('prefs:set', values),
   usageGet: (withAsk = true) => call('usage:get', withAsk),
   chatUndo: (snapshot) => call('chat:undo', snapshot),
+  chatRedo: (id) => call('chat:redo', id),
   chatStop: () => call('chat:stop'),
   chatStopChat: (folder, id) => call('chat:stop-chat', folder, id),
   chatApprove: (id, answer) => call('chat:approve', id, answer),

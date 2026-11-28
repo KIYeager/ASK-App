@@ -288,7 +288,8 @@ fn table_rows(tbl: Node) -> Vec<String> {
                 .and_then(|g| attr_ns(g, W, "val"))
                 .and_then(|v| v.parse::<usize>().ok())
                 .filter(|v| *v >= 1)
-                .unwrap_or(1);
+                .unwrap_or(1)
+                .min(64); // Word erlaubt höchstens 63 Spalten; ein unsinniger Wert füllte sonst den Speicher
             let v_continue = tc_pr
                 .and_then(|pr| children_named(pr, W, "vMerge").next())
                 .is_some_and(|m| matches!(attr_ns(m, W, "val"), None | Some("continue")));
@@ -400,6 +401,7 @@ fn sheet_rows(doc: &Document, shared: &[String], date_styles: &[bool], epoch_190
     let Some(data) = doc.root_element().children().find(|n| is(*n, MAIN, "sheetData")) else { return Vec::new() };
     let mut cells: HashMap<(usize, usize), String> = HashMap::new();
     let (mut max_row, mut max_col) = (0usize, 0usize);
+    let (mut used_row, mut used_col) = (0usize, 0usize); // nur Zellen mit Inhalt
     let mut next_row = 0usize;
     for row in data.children().filter(|n| is(*n, MAIN, "row")) {
         let row_index = row.attribute("r").and_then(|v| v.parse::<usize>().ok()).unwrap_or(next_row + 1);
@@ -412,6 +414,8 @@ fn sheet_rows(doc: &Document, shared: &[String], date_styles: &[bool], epoch_190
             max_row = max_row.max(row_index);
             max_col = max_col.max(col);
             if let Some(v) = value {
+                used_row = used_row.max(row_index);
+                used_col = used_col.max(col);
                 cells.insert((row_index, col), v);
             }
         }
@@ -425,6 +429,16 @@ fn sheet_rows(doc: &Document, shared: &[String], date_styles: &[bool], epoch_190
         if let Ok(row) = last.trim_start_matches(|c: char| c.is_ascii_alphabetic()).parse::<usize>() {
             max_row = max_row.max(row);
         }
+    }
+    // Viele Dateien melden «A1:XFD1048576» (ganze Spalten formatiert): dann nur bis zur letzten Zelle mit Inhalt,
+    // und auch dort höchstens MAX_CELLS Zellen, sonst hinge das Lesen oder der Speicher liefe voll
+    const MAX_CELLS: usize = 2_000_000;
+    if max_row.saturating_mul(max_col) > MAX_CELLS {
+        (max_row, max_col) = (used_row, used_col);
+    }
+    max_col = max_col.min(1000);
+    if let Some(rows) = MAX_CELLS.checked_div(max_col) {
+        max_row = max_row.min(rows);
     }
     (1..=max_row).map(|r| (1..=max_col).map(|c| cells.get(&(r, c)).map(String::as_str).unwrap_or("")).collect::<Vec<_>>().join("\t")).collect()
 }
@@ -1097,6 +1111,16 @@ mod tests {
             ("xl/sharedStrings.xml", &shared),
             ("xl/styles.xml", &styles),
             ("xl/worksheets/sheet1.xml", &sheet),
+        ]);
+        assert_eq!(extract_xlsx(&data).unwrap(), "--- Tabelle1 ---\nName\t\tGrüezi\n\t\t\n3\t2.5\t2024-01-31 00:00:00");
+        // ganze Spalten formatiert («A1:XFD1048576») und eine leere Zelle ganz unten: nur bis zum Inhalt
+        let huge = sheet.replace(r#"<dimension ref="A1:C3"/>"#, r#"<dimension ref="A1:XFD1048576"/>"#).replace("</sheetData>", r#"<row r="1048576"><c r="XFD1048576" s="1"/></row></sheetData>"#);
+        let data = zip_of(&[
+            ("xl/workbook.xml", &workbook),
+            ("xl/_rels/workbook.xml.rels", rels),
+            ("xl/sharedStrings.xml", &shared),
+            ("xl/styles.xml", &styles),
+            ("xl/worksheets/sheet1.xml", &huge),
         ]);
         assert_eq!(extract_xlsx(&data).unwrap(), "--- Tabelle1 ---\nName\t\tGrüezi\n\t\t\n3\t2.5\t2024-01-31 00:00:00");
     }
