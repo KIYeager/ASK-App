@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
-import { extOf, fileBadge, formatSize } from '../lib/format.js';
+import { extOf, fileBadge, formatDuration, formatSize } from '../lib/format.js';
 import { api } from '../api.js';
 
 const THINK_LEVELS = ['standard', 'tief', 'mittel', 'maximal'];
@@ -583,7 +583,7 @@ const Composer = forwardRef(function Composer(props, ref) {
   const ctxKnown = context?.limit > 0;
   const ctxPct = ctxKnown ? Math.min(100, Math.round((context.tokens / context.limit) * 100)) : 0;
   const short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n)));
-  const seconds = runStarted ? Math.round((Date.now() - runStarted) / 1000) : 0;
+  const elapsed = runStarted ? formatDuration(Date.now() - runStarted) : '0 s';
 
   return (
     <div className="composer">
@@ -600,7 +600,7 @@ const Composer = forwardRef(function Composer(props, ref) {
           <div id="activity" className="activity">
             <span className="spin" aria-hidden="true" />
             <span id="activity-text">{activity}</span>
-            <span className="muted">(<span id="activity-time">{seconds} s</span> · Esc zum Stoppen)</span>
+            <span className="muted">(<span id="activity-time">{elapsed}</span> · Esc zum Stoppen)</span>
           </div>
         ) : null}
         <Todo tasks={tasks} open={showTodoOpen} onToggle={toggleTodo} />
