@@ -761,3 +761,17 @@ Tests: `sources.rs` im Terminal (Wörter, Teile, Trennzeilen, Stücke, Rangfolge
 
 Tests: `agent.rs` (Zeitstempel nur vor Eingaben der Person, Datum im Systemprompt), `tests/chatmodel.test.js` (Dauer, Statistik ohne «1000 s»).
 
+## E86 Nebenfrage mit /btw
+
+Während ASK an einem längeren Auftrag arbeitet (ein Dokument schreiben, eine Auswertung), will man oft kurz etwas wissen, das sich auf den Chat bezieht, ohne den Auftrag zu stoppen. Enter reiht eine Nachricht nur ein (E34), sie kommt erst nach dem Auftrag dran. Wie `/btw` in Claude Code stellt `/btw <Frage>` jetzt eine Nebenfrage:
+- **Eigene Anfrage an ASK** (`Agent::btw`, `answer_btw`), gleichzeitig mit dem Auftrag: Systemprompt des Chats mit dem Abschnitt «# Nebenfrage», der Verlauf so, wie ihn der Auftrag gerade sieht (Schritte ohne Ergebnis heissen dort «Läuft noch» statt «abgebrochen»), dazu die Frage mit Zeitstempel (E85) und dem Vorsatz «[Nebenfrage, der Auftrag läuft weiter]». **Keine Werkzeuge:** ASK antwortet aus dem Chat und seinem Wissen; braucht die Frage Werkzeuge oder soll sich am Auftrag etwas ändern, sagt es, man solle es als normale Nachricht schicken. Modell und Denkaufwand wie im Chat, keine Websuche, höchstens 5 Minuten.
+- **Der Auftrag merkt nichts davon:** Die Nebenfrage steht im Chat als eigene Rolle `btw`; `api_messages` übergeht sie, auch Zusammenfassung, Titel und Suche in früheren Chats lesen sie nicht. So bringt sie den laufenden Auftrag nicht durcheinander und kostet ihn keinen Kontext.
+- **Anzeige:** Die Antwort strömt als Ereignisse `btw-start`, `btw-delta`, `btw-end` und steht als Karte «Nebenbei» unter dem Auftrag, der beim Fragen lief (auch nach dem Neuladen, gespeichert im Chat). Im Datenmodell der Oberfläche liegen Nebenfragen neben den Einträgen (`model.btw`), nicht darin: sonst geriete eine Nebenantwort mitten in die laufende Antwort des Auftrags. Das Ende bringt Frage und Antwort noch einmal mit, falls der Chat inzwischen neu geladen wurde.
+- **Eingabe:** `/btw` im Eingabefeld geht immer, auch während einer offenen Frage oder Rückfrage und ohne laufenden Auftrag; die Zeile «Denkt nach …» erinnert daran. Anhänge gehen mit einer Nebenfrage nicht mit.
+
+Grenzen: Was ASK im laufenden Schritt gerade schreibt (ein halbfertiges Dokument), sieht die Nebenfrage nicht, nur was bis dahin im Chat steht. Wird der Chat während der Antwort in derselben Ansicht durch einen anderen ersetzt, wird die Antwort nicht gespeichert. Zwei Anfragen gleichzeitig sind mehr Last für ASK; meldet ASK «zu viele Anfragen», steht das in der Karte.
+
+Nicht gewählt: Nebenfrage als Hilfsagent mit Lese-Werkzeugen (E55); möglich als nächster Schritt, für eine erste Fassung aber langsamer und ohne klaren Gewinn bei Fragen zum Chat selbst.
+
+Tests: `agent.rs` (ohne Werkzeuge, mit dem Chat, gespeichert, nicht im Verlauf des nächsten Auftrags; laufender Schritt heisst «Läuft noch»), `tests/chatmodel.test.js` (laufende Antwort bleibt ein Eintrag, Ende ohne Anfang, Fehler, Zuordnung nach dem Laden, Wiederverwenden unveränderter Aufträge).
+

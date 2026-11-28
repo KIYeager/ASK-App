@@ -438,6 +438,21 @@ function After({ entry, ctx }) {
   }
 }
 
+// Nebenfrage mit /btw (E86): eigene Karte unter dem Auftrag, der beim Fragen lief
+function Btw({ entry, ctx }) {
+  return (
+    <div className={`msg btw${entry.done ? '' : ' live'}`}>
+      <div className="btw-head">
+        <Icon name="chat" size={13} /><span className="btw-label">Nebenbei</span>
+        <span className="btw-q" title={entry.question}>{entry.question}</span>
+      </div>
+      {entry.text ? <Markdown text={entry.text} isFile={ctx.isFile} onFile={ctx.openFileByName} onLink={ctx.openLink} onCopy={ctx.copy} /> : null}
+      {entry.error ? <div className="btw-error">{entry.error}</div> : null}
+      {!entry.done && !entry.text ? <div className="btw-wait"><span className="spin" aria-hidden="true" /> ASK antwortet nebenbei …</div> : null}
+    </div>
+  );
+}
+
 export const Turn = memo(function Turn({ turn, ctx, last }) {
   const streaming = turn.running && last && turn.answer && !turn.answer.done;
   return (
@@ -449,6 +464,7 @@ export const Turn = memo(function Turn({ turn, ctx, last }) {
       ) : null}
       {turn.answer ? <Answer entry={turn.answer} streaming={streaming} ctx={ctx} /> : null}
       {turn.after.map((e) => <After key={e.key} entry={e} ctx={ctx} />)}
+      {turn.btw.map((b) => <Btw key={b.id} entry={b} ctx={ctx} />)}
     </section>
   );
 });
