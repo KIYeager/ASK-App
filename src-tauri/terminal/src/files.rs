@@ -91,6 +91,11 @@ fn split_lines(text: &str) -> Vec<&str> {
     out
 }
 
+/// Dateien über dieser Grösse durchsucht grep nicht
+const GREP_MAX_BYTES: u64 = 20 * 1024 * 1024;
+/// Dateien über dieser Grösse liest read nicht als Ganzes (das Modell sieht ohnehin nur einen Ausschnitt)
+const READ_MAX_BYTES: u64 = 200 * 1024 * 1024;
+
 /// Start und Ende (Byteposition) des Zeilenbereichs wie `line_range_offsets`
 fn line_range_offsets(text: &str, start_line: Option<u32>, end_line: Option<u32>) -> (usize, usize) {
     let start_boundary = start_line.unwrap_or(1).saturating_sub(1) as usize;
@@ -345,6 +350,10 @@ impl FileApi {
             return Err(ApiError::new(404, "File not found"));
         }
         let shown = target.to_string_lossy().to_string();
+        let size = std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0);
+        if size > READ_MAX_BYTES {
+            return Err(ApiError::new(413, format!("File too large to read as text ({} MB). Read it in parts with Python instead.", size / (1024 * 1024))));
+        }
         match read_text(&target) {
             Err(e) => return Err(ApiError::new(400, os_error_text(&e, &target))),
             Ok(Ok(text)) => return Ok(ReadResult::Json(text_response(&shown, &text, start_line, end_line))),
@@ -495,6 +504,11 @@ impl FileApi {
         let mut truncated = false;
         let search_file = |file: &Path, matches: &mut Vec<Value>, truncated: &mut bool| {
             if *truncated {
+                return;
+            }
+            // Sehr grosse Dateien (Videos, Logs, Datenbanken) nicht ganz in den Speicher laden: Text zum Durchsuchen
+            // sind sie selten, und eine einzige würde die Suche über den ganzen Ordner lahmlegen
+            if std::fs::metadata(file).is_ok_and(|m| m.len() > GREP_MAX_BYTES) {
                 return;
             }
             let Ok(bytes) = std::fs::read(file) else { return };
@@ -662,6 +676,15 @@ mod tests {
         let s = api.grep("hallo", ".", false, true, &[], true, 1).unwrap();
         assert_eq!(s["truncated"], true);
         assert_eq!(api.grep("(", ".", true, false, &[], true, 5).unwrap_err().status, 400);
+        // sehr grosse Dateien: grep überspringt sie, read lehnt sie ab (Dateien mit Lücken, kosten keinen Platz)
+        let work = _b.path().join("Arbeitsordner Prüfung");
+        let big = std::fs::File::create(work.join("sub/gross.log")).unwrap();
+        big.set_len(GREP_MAX_BYTES + 1).unwrap();
+        std::fs::OpenOptions::new().write(true).open(work.join("sub/gross.log")).map(|mut f| { use std::io::Write; f.write_all(b"hallo\n").unwrap(); }).unwrap();
+        let s = api.grep("hallo", ".", false, true, &[], true, 50).unwrap();
+        assert_eq!(s["matches"].as_array().unwrap().len(), 2, "{s}");
+        std::fs::File::create(work.join("riesig.txt")).unwrap().set_len(READ_MAX_BYTES + 1).unwrap();
+        assert_eq!(api.read("riesig.txt", None, None).err().unwrap().status, 413);
     }
 
     #[test]

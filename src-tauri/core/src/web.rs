@@ -573,11 +573,19 @@ impl Web {
             let base = path.trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string();
             let safe = re!(r"[^A-Za-z0-9_.-]+").replace_all(&base, "_").to_string();
             let safe = if safe.is_empty() { "dokument".to_string() } else { safe };
-            let name = if safe.to_lowercase().ends_with(".pdf") { format!("{}.pdf", &safe[..safe.len() - 4]) } else { format!("{safe}.pdf") };
-            let rel = format!(".ask/arbeit/{chat}/web/{name}");
+            let stem = if safe.to_lowercase().ends_with(".pdf") { safe[..safe.len() - 4].to_string() } else { safe };
             let dir = root.join(".ask").join("arbeit").join(chat).join("web");
             std::fs::create_dir_all(&dir)?;
-            std::fs::write(rel.split('/').fold(root.clone(), |p, part| p.join(part)), &buf)?;
+            // Gleicher Name, anderes PDF (z. B. zweimal «download.pdf» von verschiedenen Seiten): nicht überschreiben,
+            // sonst läse das Modell später das falsche. Ein Kürzel der Adresse macht den Namen eindeutig.
+            let mut name = format!("{stem}.pdf");
+            if std::fs::read(dir.join(&name)).is_ok_and(|old| old != buf) {
+                use sha1::Digest;
+                let tag = hex::encode(sha1::Sha1::digest(final_url.as_bytes()));
+                name = format!("{stem}-{}.pdf", &tag[..8]);
+            }
+            let rel = format!(".ask/arbeit/{chat}/web/{name}");
+            std::fs::write(dir.join(&name), &buf)?;
             return Ok(PageResult { url: final_url, title: name, text: String::new(), pdf: Some(rel), total: 0, from: 0, to: 0 });
         }
         if !re!(r"(?i)html|xml|text|json").is_match(&ctype) && !ctype.is_empty() {
@@ -778,7 +786,7 @@ mod tests {
             if p.starts_with("/lite/") {
                 Resp::text(200, "text/html; charset=utf-8", ddg)
             } else if p.contains("pdf") {
-                Resp::text(200, "application/pdf", &b"%PDF-1.4 test"[..])
+                Resp::text(200, "application/pdf", format!("%PDF-1.4 {p}").into_bytes())
             } else if p.contains("weiter") {
                 Resp::redirect("http://192.168.1.1/")
             } else {
@@ -817,6 +825,14 @@ mod tests {
         let pdf = web.page(&format!("{base}/datei.pdf"), PageOptions { root: Some(root.path().to_path_buf()), chat: Some("c1".into()), ..Default::default() }).await.unwrap();
         assert_eq!(pdf.pdf.as_deref(), Some(".ask/arbeit/c1/web/datei.pdf"));
         assert!(std::fs::read(root.path().join(".ask/arbeit/c1/web/datei.pdf")).unwrap().starts_with(b"%PDF"));
+        // dasselbe PDF nochmals: gleicher Name; ein anderes mit gleichem Namen: eigener Name, das erste bleibt
+        let again = web.page(&format!("{base}/datei.pdf"), PageOptions { root: Some(root.path().to_path_buf()), chat: Some("c1".into()), ..Default::default() }).await.unwrap();
+        assert_eq!(again.pdf.as_deref(), Some(".ask/arbeit/c1/web/datei.pdf"));
+        let other = web.page(&format!("{base}/anders/datei.pdf"), PageOptions { root: Some(root.path().to_path_buf()), chat: Some("c1".into()), ..Default::default() }).await.unwrap();
+        let rel = other.pdf.unwrap();
+        assert!(rel.starts_with(".ask/arbeit/c1/web/datei-") && rel.ends_with(".pdf"), "{rel}");
+        assert!(std::fs::read_to_string(root.path().join(&rel)).unwrap().contains("/anders/datei.pdf"));
+        assert!(std::fs::read_to_string(root.path().join(".ask/arbeit/c1/web/datei.pdf")).unwrap().ends_with(" /datei.pdf"));
         assert!(web.page(&format!("{base}/datei.pdf"), PageOptions::default()).await.unwrap_err().to_string().contains("PDF kann hier nicht gespeichert"));
 
         let err = web.page(&format!("{base}/weiter"), PageOptions::default()).await.unwrap_err();

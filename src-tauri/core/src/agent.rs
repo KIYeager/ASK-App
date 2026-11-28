@@ -768,6 +768,11 @@ pub fn mod_rule_risk(name: &str, args: &Value, kinds: &[String]) -> Option<Risk>
             let path = if name == "doc_erstellen" { js_string(args.get("titel").unwrap_or(&Value::Null)) } else { js_string(args.get("pfad").unwrap_or(&Value::Null)) };
             risk("schreiben", format!("Darf ASK das Doc «{path}» schreiben?"), path)
         }
+        // Hilfsagenten suchen und lesen selbst im Web (helpers.rs), ohne eigene Rückfrage: darum einmal vor dem Start
+        HELPER if has("web") => {
+            let what = ["titel", "auftrag"].iter().find_map(|k| args.get(*k).filter(|v| truthy(v)).map(js_string)).unwrap_or_default();
+            risk("web", "Darf der Hilfsagent ins Internet?".into(), take_chars(&what, 300))
+        }
         "web_search" | "web_fetch" | "browser" if has("web") => {
             let what = ["query", "url", "address", "action"].iter().find_map(|k| args.get(*k).filter(|v| truthy(v)).map(js_string)).unwrap_or_default();
             risk("web", "Darf ASK ins Internet?".into(), take_chars(&what, 300))
@@ -1954,6 +1959,7 @@ impl Agent {
         let can_see = self.can_see();
         let mut planned = false;
         let mut helper_runs: HashMap<String, (Arc<HelperBatch>, usize)> = HashMap::new(); // Hilfsagenten dieses Schritts: Kennung → Ergebnis
+        let mut decided: HashMap<String, String> = HashMap::new(); // schon vor dem Start entschieden (Hilfsagenten)
         for (ci, call) in tool_calls.iter().enumerate() {
             let name = js_string(&call["function"]["name"]);
             let id = js_string(&call["id"]);
@@ -1962,29 +1968,42 @@ impl Agent {
                 continue;
             }
             // Hilfsagenten, die direkt hintereinander aufgerufen werden, laufen gleichzeitig (höchstens 3, helpers.rs)
-            if name == HELPER && !free && !helper_runs.contains_key(&id) {
+            if name == HELPER && !free && !helper_runs.contains_key(&id) && !decided.contains_key(&id) {
                 let batch: Vec<&Value> = tool_calls[ci..].iter().take_while(|c| c["function"]["name"] == HELPER).collect();
                 for b in &batch {
                     let mut ev = json!({ "type": "tool-start", "id": b["id"], "name": HELPER });
                     ev.as_object_mut().expect("Objekt").extend(describe_call(b));
                     self.event(ev);
                 }
-                let futures: Vec<_> = batch.iter().map(|b| { let (me, b, sig) = (self.clone(), (*b).clone(), signal.clone()); async move { me.run_helper_call(&b, &sig).await } }).collect();
-                let handle = tokio::spawn(async move { pool(futures, PARALLEL).await });
-                let shared = Arc::new(HelperBatch { handle: tokio::sync::Mutex::new(Some(handle)), results: tokio::sync::OnceCell::new() });
-                for (k, b) in batch.iter().enumerate() {
-                    helper_runs.insert(js_string(&b["id"]), (shared.clone(), k));
+                // Erst prüfen, dann starten: Sonst liefe ein abgelehnter Hilfsagent trotzdem (mit Web- und Modellaufrufen)
+                let mut approved: Vec<&Value> = Vec::new();
+                for b in &batch {
+                    let v = if plan && !PLAN_ALLOWED.contains(&HELPER) { "plan".to_string() } else { self.approve(b, signal).await };
+                    if v == "yes" {
+                        approved.push(b);
+                    }
+                    decided.insert(js_string(&b["id"]), v);
+                }
+                if !approved.is_empty() {
+                    let futures: Vec<_> = approved.iter().map(|b| { let (me, b, sig) = (self.clone(), (*b).clone(), signal.clone()); async move { me.run_helper_call(&b, &sig).await } }).collect();
+                    let handle = tokio::spawn(async move { pool(futures, PARALLEL).await });
+                    let shared = Arc::new(HelperBatch { handle: tokio::sync::Mutex::new(Some(handle)), results: tokio::sync::OnceCell::new() });
+                    for (k, b) in approved.iter().enumerate() {
+                        helper_runs.insert(js_string(&b["id"]), (shared.clone(), k));
+                    }
                 }
             }
             let started = now_ms();
-            if !helper_runs.contains_key(&id) {
+            if !helper_runs.contains_key(&id) && !decided.contains_key(&id) {
                 let mut ev = json!({ "type": "tool-start", "id": id, "name": name });
                 ev.as_object_mut().expect("Objekt").extend(describe_call(call));
                 self.event(ev);
             }
             // Ein Fehler in der App darf den Verlauf nicht kaputt machen: Jeder Aufruf bekommt ein Ergebnis,
             // sonst lehnt ASK jede weitere Anfrage dieses Chats ab (tool_calls ohne Antwort)
-            let verdict = if plan && !PLAN_ALLOWED.contains(&name.as_str()) {
+            let verdict = if let Some(v) = decided.remove(&id) {
+                v
+            } else if plan && !PLAN_ALLOWED.contains(&name.as_str()) {
                 "plan".to_string()
             } else if free && !FREE_ALLOWED.contains(&name.as_str()) {
                 "frei".to_string()
@@ -2745,6 +2764,8 @@ mod tests {
         assert_eq!(mod_rule_risk("write_file", &json!({ "path": "a.md" }), &k(&["schreiben"])).unwrap().title, "Darf ASK «a.md» schreiben?");
         assert_eq!(mod_rule_risk("web_fetch", &json!({ "url": "https://x.ch" }), &k(&["web"])).unwrap().detail, "https://x.ch");
         assert!(mod_rule_risk("read_file", &json!({ "path": "a.md" }), &k(&["schreiben", "web", "befehle", "loeschen"])).is_none());
+        assert_eq!(mod_rule_risk(HELPER, &json!({ "titel": "Preise", "auftrag": "x" }), &k(&["web"])).unwrap().detail, "Preise");
+        assert!(mod_rule_risk(HELPER, &json!({ "titel": "Preise" }), &k(&["schreiben"])).is_none());
     }
     use super::*;
     use crate::askapi::ToolCall;
@@ -3745,6 +3766,33 @@ mod tests {
         assert_eq!(events.iter().filter(|e| e["type"] == "tool-start").count(), 4, "jeder Hilfsagent einmal gestartet");
         assert!(events.iter().any(|e| e["type"] == "tool-progress" && e["id"] == "h1"));
         assert!(!events.iter().any(|e| e["type"] == "approval"), "keine Rückfrage");
+    }
+
+    #[tokio::test]
+    async fn abgelehnter_hilfsagent_startet_gar_nicht_die_anderen_laufen() {
+        // Mod-Regel «web»: vor jedem Hilfsagenten eine Rückfrage; den zweiten lehnt die Person ab
+        let three: Vec<ToolCall> = (1..=3).map(|n| call(&format!("h{n}"), "hilfsagent", json!({ "titel": format!("Teil {n}"), "auftrag": format!("Teil {n} klären") }))).collect();
+        let fake = helper_fake(vec![completion("", three), completion("Fertig.", vec![])]);
+        let (agent, _folder, events) = helper_agent(fake.clone(), |o| o.get_ask_before = Arc::new(|| vec!["web".to_string()]));
+        let answers: Arc<Mutex<VecDeque<&str>>> = Arc::new(Mutex::new(VecDeque::from(["yes", "no", "yes"])));
+        let a2 = agent.clone();
+        agent.events.on("event", move |ev| {
+            if ev["type"] == "approval" {
+                let a = answers.lock().pop_front().unwrap_or("no");
+                a2.answer_approval(&js_string(&ev["id"]), a);
+            }
+        });
+        agent.run_turn("Finde alles heraus", vec![], json!({})).await;
+        let helpers: Vec<String> = fake.requests.lock().iter().filter(|r| is_helper(r)).map(|r| js_string(&r.messages.last().unwrap()["content"])).collect();
+        assert_eq!(helpers.len(), 2, "der abgelehnte lief nicht: {helpers:?}");
+        assert!(helpers.iter().all(|h| !h.contains("Teil 2")), "{helpers:?}");
+        let last = fake.requests.lock().iter().rfind(|r| !is_helper(r)).cloned().unwrap();
+        let results: Vec<&Value> = last.messages.iter().filter(|m| m["role"] == "tool").collect();
+        assert_eq!(results.iter().map(|m| js_string(&m["tool_call_id"])).collect::<Vec<_>>(), ["h1", "h2", "h3"]);
+        assert!(js_string(&results[0]["content"]).contains("Antwort zu Teil 1 klären"));
+        assert!(js_string(&results[1]["content"]).contains("abgelehnt"), "{}", results[1]["content"]);
+        assert!(js_string(&results[2]["content"]).contains("Antwort zu Teil 3 klären"), "Ergebnis richtig zugeordnet");
+        assert_eq!(events.lock().iter().filter(|e| e["type"] == "tool-start").count(), 3);
     }
 
     #[tokio::test]
