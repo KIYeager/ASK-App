@@ -753,3 +753,11 @@ Nicht gewählt: Embeddings für eine Suche nach Bedeutung (ASK bietet Nutzern ke
 
 Tests: `sources.rs` im Terminal (Wörter, Teile, Trennzeilen, Stücke, Rangfolge und Ausschnitt, Index nur bei Änderungen, Hinweise, Lesen nach Ort, Ordnersperre), `documents.rs` (Seiten im PDF, Word in Abschnitten), `tests/server.rs` (Endpunkte samt Sperre), `sources.rs` im Kern (Zählen ohne Versteckte, Systemprompt, Hinzufügen ohne Überschreiben, Verweise), `tests/md.test.js` (gültige und ungültige Verweise), `tests/chatmodel.test.js` (Zeile «In den Quellen gesucht»). Unter Windows offen: Sprung an die Seite im PDF-Betrachter von WebView2, Umwandlung von PowerPoint, Dateidialog mit Mehrfachauswahl (Testprotokoll, Prüfliste Tauri).
 
+## E85 Zeitstempel für das Modell, Dauer in Minuten
+
+**Zeitstempel.** ASK wusste weder Datum noch Uhrzeit: Die App speicherte die Zeit jeder Nachricht, schickte sie aber nicht mit. «Bis morgen», «letzte Woche» oder «wie lange ist das her?» gingen darum nicht, und beim Jahr riet das Modell. Jetzt steht vor jeder Eingabe der Person in der Anfrage an ASK, wann sie geschickt wurde, in Ortszeit: `[Sa 28.11.2026 14:05] …` (`agent::time_stamp` in `api_messages`). Nur vor echten Eingaben: nicht vor Anstössen im Ziel-Modus (`auto`), Hinweisen der App (`note`, z. B. Ansicht, Rückgängig) und Aufträgen an Hilfsagenten (`helper`). Im gespeicherten Chat und in der Sprechblase steht er nicht. Dazu steht am Schluss des Systemprompts «# Datum» mit dem heutigen Datum und dem Satz, dass ASK die Zeitangaben nicht selbst in Antworten schreibt (`agent::date_prompt`). Bewusst nur das Datum im Systemprompt und am Schluss: Die Uhrzeit dort würde den Anfang jeder Anfrage ändern, und ASK könnte nichts zwischenspeichern.
+
+**Dauer.** Die laufende Anzeige im Eingabefeld und die Statistik unter einem Auftrag zeigten nur Sekunden («1000 s»). Jetzt gilt überall dieselbe Funktion `dauer` (`chatModel.mjs`, in `format.js` als `formatDuration`): «45 s» (in der Statistik mit einer Nachkommastelle), ab einer Minute «16 min 40 s», ab einer Stunde «1 h 2 min». Auch die Nutzungsübersicht zeigt so unter einer Stunde die Sekunden.
+
+Tests: `agent.rs` (Zeitstempel nur vor Eingaben der Person, Datum im Systemprompt), `tests/chatmodel.test.js` (Dauer, Statistik ohne «1000 s»).
+

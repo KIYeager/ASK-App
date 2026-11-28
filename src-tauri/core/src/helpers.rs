@@ -132,7 +132,8 @@ pub async fn run_helper(raw_args: &str, deps: &HelperDeps) -> ToolResult {
     }
     let cancelled = || deps.signal.as_ref().is_some_and(Signal::is_cancelled);
     let specs: Vec<Value> = tool_specs("").into_iter().filter(|s| HELPER_TOOLS.contains(&s["function"]["name"].as_str().unwrap_or(""))).collect();
-    let mut messages: Vec<Value> = vec![json!({ "role": "user", "content": task, "time": now_ms() })];
+    // «helper»: Auftrag des Hauptmodells, keine Eingabe der Person (ohne Zeitstempel, E85)
+    let mut messages: Vec<Value> = vec![json!({ "role": "user", "content": task, "helper": true, "time": now_ms() })];
     let mut steps: Vec<String> = Vec::new();
     let mut tokens: i64 = 0;
     let progress = |steps: &[String]| {

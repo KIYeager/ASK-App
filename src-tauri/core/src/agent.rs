@@ -442,6 +442,32 @@ pub type ImageUrlFn = Arc<dyn Fn(&Value) -> Option<String> + Send + Sync>;
 /// Verlauf für die Anfrage: ohne Denktexte, alte Ergebnisse gekürzt, im Textmodus ohne tool-Rollen
 /// (auch für frühere Schritte, die noch mit Werkzeugliste liefen). `image_url(anhang)` liefert Bilder
 /// als data-URL; sie gehen nur bei den letzten IMAGE_TURNS Eingaben mit, ältere nur als Pfad.
+const WEEKDAYS: [&str; 7] = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+const MONTHS: [&str; 12] = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+
+/// Wann die Person eine Nachricht geschickt hat, für das Modell: «[Sa 28.11.2026 14:05]» in Ortszeit
+/// (ENTSCHEIDE E85). Leer ohne gültige Zeit.
+pub fn time_stamp(ms: i64) -> String {
+    use chrono::{Datelike, TimeZone};
+    match chrono::Local.timestamp_millis_opt(ms).single() {
+        Some(t) if ms > 0 => format!("[{} {}]", take_chars(WEEKDAYS[t.weekday().num_days_from_monday() as usize], 2), t.format("%d.%m.%Y %H:%M")),
+        _ => String::new(),
+    }
+}
+
+/// Abschnitt für den Systemprompt: das heutige Datum (nur das Datum, damit der Anfang der Anfrage über den Tag
+/// gleich bleibt) und was die Zeitstempel vor den Nachrichten bedeuten (E85)
+pub fn date_prompt(now: chrono::DateTime<chrono::Local>) -> String {
+    use chrono::Datelike;
+    format!(
+        "\n\n# Datum\nHeute ist {}, {}. {} {}. Vor jeder Nachricht der Person steht in eckigen Klammern, wann sie sie geschickt hat (Ortszeit). Nutze das für «heute», «morgen», «letzte Woche» und Fristen; schreib diese Zeitangaben nicht selbst in deine Antworten.",
+        WEEKDAYS[now.weekday().num_days_from_monday() as usize],
+        now.day(),
+        MONTHS[now.month0() as usize],
+        now.year()
+    )
+}
+
 pub fn api_messages(system: &str, messages: &[Value], text_mode: bool, image_url: Option<&ImageFn>, budget: &Budget) -> Vec<Value> {
     // Zusammengefasster Verlauf (E78): Das Modell bekommt die Zusammenfassung und alles ab der Eingabe, an der sie hängt
     let (summary, messages) = match summary_index(messages) {
@@ -498,7 +524,10 @@ pub fn api_messages(system: &str, messages: &[Value], text_mode: bool, image_url
                 let text = if m["note"] == "view" {
                     if urls.is_empty() { format!("{}: nicht mehr mitgeschickt.", js_string(&m["content"])) } else { js_string(&m["content"]) }
                 } else {
-                    user_text(m)
+                    // Zeitpunkt der Eingabe (E85), nur bei echten Eingaben der Person, nicht bei Hinweisen der App
+                    let own = m.get("note").is_none_or(Value::is_null) && !truthy(&m["auto"]) && !truthy(&m["helper"]);
+                    let stamp = if own { time_stamp(m["time"].as_i64().unwrap_or(0)) } else { String::new() };
+                    if stamp.is_empty() { user_text(m) } else { format!("{stamp} {}", user_text(m)) }
                 };
                 if urls.is_empty() {
                     out.push(json!({ "role": "user", "content": text }));
@@ -3229,7 +3258,7 @@ mod tests {
         let sent: Vec<String> = requests[4].messages.iter().map(|m| js_string(&m["content"])).collect();
         assert_eq!(sent.len(), 3, "{sent:?}");
         assert!(sent[1].contains("Zusammenfassung des bisherigen Chats") && sent[1].contains(SUMMARY));
-        assert_eq!(sent[2], "zwei");
+        assert_eq!(ohne_zeit(&sent[2]), "zwei");
         // Gespeichert an der Eingabe, mit der der erhaltene Teil beginnt; nichts ist gelöscht
         let saved = t.saved();
         assert_eq!(saved["messages"][0]["content"], "eins");
@@ -3258,7 +3287,7 @@ mod tests {
         assert_eq!(requests.len(), 3, "Zusammenfassung vor der Antwort");
         assert!(js_string(&requests[1].messages[0]["content"]).starts_with("Du fasst einen langen Chat"));
         let sent: Vec<String> = requests[2].messages.iter().map(|m| js_string(&m["content"])).collect();
-        assert!(sent.len() == 3 && sent[1].contains(SUMMARY) && sent[2] == "zwei", "{sent:?}");
+        assert!(sent.len() == 3 && sent[1].contains(SUMMARY) && ohne_zeit(&sent[2]) == "zwei", "{sent:?}");
         assert_eq!(t.events_of("compacting").len(), 1);
         // Die Anzeige rechnet nach dem Zusammenfassen mit dem kurzen Verlauf
         let c = t.agent.context();
@@ -3325,7 +3354,40 @@ mod tests {
         let sent = api_messages("sys", &marked, false, None, &NORMAL);
         let texts: Vec<String> = sent.iter().map(|m| js_string(&m["content"])).collect();
         assert_eq!(texts.len(), 5, "{texts:?}");
-        assert!(texts[1].contains("kurz") && texts[2] == "d" && texts[4] == "f");
+        assert!(texts[1].contains("kurz") && ohne_zeit(&texts[2]) == "d" && ohne_zeit(&texts[4]) == "f");
+    }
+
+    /// Text einer Eingabe ohne den Zeitstempel davor (E85)
+    fn ohne_zeit(text: &str) -> String {
+        match text.strip_prefix('[').and_then(|r| r.split_once("] ")) {
+            Some((_, rest)) => rest.to_string(),
+            None => text.to_string(),
+        }
+    }
+
+    #[test]
+    fn zeitstempel_nur_vor_eingaben_der_person_und_datum_im_systemprompt() {
+        use chrono::TimeZone;
+        let t = chrono::Local.with_ymd_and_hms(2026, 11, 28, 14, 5, 0).single().unwrap();
+        let ms = t.timestamp_millis();
+        assert_eq!(time_stamp(ms), "[Sa 28.11.2026 14:05]");
+        assert_eq!(time_stamp(0), "");
+        assert_eq!(date_prompt(t), "\n\n# Datum\nHeute ist Samstag, 28. November 2026. Vor jeder Nachricht der Person steht in eckigen Klammern, wann sie sie geschickt hat (Ortszeit). Nutze das für «heute», «morgen», «letzte Woche» und Fristen; schreib diese Zeitangaben nicht selbst in deine Antworten.");
+        let list = [
+            json!({ "role": "user", "content": "Bis wann muss das fertig sein?", "time": ms }),
+            json!({ "role": "user", "content": "weiter", "auto": true, "time": ms }),
+            json!({ "role": "user", "content": "Rückgängig gemacht", "note": "undo", "time": ms }),
+            json!({ "role": "user", "content": "Teilfrage", "helper": true, "time": ms }),
+            json!({ "role": "user", "content": "ohne Zeit" }),
+        ];
+        let sent: Vec<String> = api_messages("sys", &list, false, None, &NORMAL).iter().map(|m| js_string(&m["content"])).collect();
+        assert_eq!(sent[1], "[Sa 28.11.2026 14:05] Bis wann muss das fertig sein?");
+        assert_eq!(sent[2], "weiter", "Anstoss im Ziel-Modus ohne Zeit");
+        assert!(!sent[3].starts_with('['), "Hinweis der App ohne Zeit: {}", sent[3]);
+        assert_eq!(sent[4], "Teilfrage", "Auftrag an einen Hilfsagenten ohne Zeit");
+        assert_eq!(sent[5], "ohne Zeit");
+        // Im gespeicherten Chat steht der Zeitstempel nicht im Text
+        assert_eq!(list[0]["content"], "Bis wann muss das fertig sein?");
     }
 
     #[tokio::test]
