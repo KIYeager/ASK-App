@@ -20,7 +20,7 @@ function listItem(line) {
   const m = /^([ \t]*)([-*+]|\d{1,9}[.)]) (.*)$/.exec(line);
   if (!m) return null;
   const indent = [...m[1]].reduce((n, c) => n + (c === '\t' ? 4 : 1), 0);
-  return { indent, ordered: /\d/.test(m[2]), text: m[3] };
+  return { indent, ordered: /\d/.test(m[2]), num: parseInt(m[2], 10) || 1, text: m[3] };
 }
 const isRule = (t) => { const c = t.replace(/\s/g, ''); return c.length >= 3 && /^(-+|\*+|_+)$/.test(c); };
 const isSep = (t) => /^[\s|:-]+$/.test(t) && t.includes('-') && t.includes('|');
@@ -81,7 +81,7 @@ export function parseBlocks(md) {
       if (!inList || (level === 0 && topOrdered !== item.ordered)) out.push({ type: 'listbreak' });
       inList = true;
       if (level === 0) topOrdered = item.ordered;
-      out.push({ type: 'li', level, ordered: item.ordered, text: item.text });
+      out.push({ type: 'li', level, ordered: item.ordered, num: item.num, text: item.text });
       continue;
     }
     if (t.startsWith('>')) {
@@ -211,11 +211,13 @@ function blocksToHtml(blocks) {
       case 'li': {
         const tag = b.ordered ? 'ol' : 'ul';
         const depth = b.level + 1;
+        // Nummerierte Liste, die nicht bei 1 beginnt (z. B. nach einem Codeblock weiter mit «2.»): Nummer behalten
+        const open = (t) => (t === 'ol' && b.num > 1 ? `<ol start="${b.num}">` : `<${t}>`);
         if (stack.length >= depth) {
           closeLists(depth);
-          if (stack[depth - 1] !== tag) { closeLists(depth - 1); html += `<${tag}>`; stack.push(tag); } else html += '</li>';
+          if (stack[depth - 1] !== tag) { closeLists(depth - 1); html += open(tag); stack.push(tag); } else html += '</li>';
         }
-        while (stack.length < depth) { html += `<${tag}>`; stack.push(tag); }
+        while (stack.length < depth) { html += open(tag); stack.push(tag); }
         html += `<li>${inlineHtml(b.text) || '<br>'}`;
         break;
       }
