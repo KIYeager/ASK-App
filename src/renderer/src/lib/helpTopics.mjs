@@ -93,7 +93,7 @@ export const HELP_TOPICS = [
         a: 'Markiere Text im Doc und klick mit der rechten Maustaste darauf: «Erklären», «Grafik dazu», «Einfacher», «Beispiel» oder «Bitte an ASK …» gehen an ASK, «Anstreichen» markiert die Stelle farbig. Oder oben im Doc auf «Anstreichen» (der Pfeil daneben wählt die Farbe) bzw. auf «ASK». Der Stern ganz oben gibt dir Feedback von ASK als Kommentare.',
         keys: 'anstreichen markieren leuchtstift farbe erklären grafik diagramm bild feedback vorschläge' },
       { q: 'Ein Doc mit anderen zusammen schreiben',
-        a: 'Öffne das Doc und klick oben auf den Personen-Knopf. Melde dich einmal mit dem Schulkonto bei Microsoft an und klick «Link erstellen». Schick den Link in Teams. Die anderen klicken in ASK in der Liste der Docs auf den Personen-Knopf, fügen den Link ein und schreiben mit. Geht das bei euch noch nicht, teilt ihr über einen Ordner, den alle haben.',
+        a: 'Öffne das Doc, klick oben auf den Personen-Knopf und dann «Ordner wählen …»: einen Ordner, den alle haben (in OneDrive freigegeben, ein Teams-Kanal oder ein Laufwerk der Schule). Die anderen klicken in der Liste der Docs auf den Personen-Knopf und wählen den Ordner «….askdoc». Hat deine Schule das Teilen per Link eingerichtet, steht dort stattdessen «Mit Microsoft anmelden» und «Link erstellen»; den Link schickst du in Teams.',
         keys: 'teilen geteilt zusammen gruppe gruppenarbeit live mitschreiben onedrive teams laufwerk' },
       { q: 'Eine Datei ansehen',
         a: 'Klick rechts auf die Datei und dann «Vorschau» oder «Öffnen». Word, Excel und PowerPoint zeigt die Vorschau nur, wenn Office installiert ist.',

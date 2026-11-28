@@ -46,7 +46,7 @@ function DocList({ docs, free, onOpen, onCompose, notice }) {
       <div className="docs-head">
         <b>Docs</b><span className="muted small">{free ? 'Chats ohne Projekt' : 'in diesem Projekt'}</span>
         <span className="spacer" />
-        <button type="button" className="icon-btn" title="Geteiltes Doc öffnen (Link aus Teams)" aria-label="Geteiltes Doc öffnen"
+        <button type="button" className="icon-btn" title="Geteiltes Doc öffnen" aria-label="Geteiltes Doc öffnen"
           onClick={() => setJoining(!joining)}><Icon name="user" size={15} /></button>
         <button type="button" className="btn small" onClick={() => setNaming(true)}><Icon name="plus" size={13} /> Neues Doc</button>
       </div>
@@ -103,10 +103,8 @@ function useMicrosoft() {
 
 function MsLogin({ ms, onDone, notice }) {
   const [busy, setBusy] = useState(false);
-  if (!ms) return null;
-  if (!ms.eingerichtet) {
-    return <p className="muted small">Teilen per Link ist auf diesem ASK noch nicht eingerichtet (es braucht eine App-Registrierung bei Microsoft, siehe Hilfe). Bis dahin geht es über einen Ordner.</p>;
-  }
+  // Ohne App-Registrierung (E83) gibt es kein Teilen per Link: dann erscheint davon nichts
+  if (!ms?.eingerichtet) return null;
   if (ms.angemeldet) {
     return (
       <p className="muted small docs-row">Bei Microsoft als <b>{ms.name || 'Schulkonto'}</b><span className="spacer" />
@@ -159,21 +157,32 @@ function SharePanel({ path, title, share, onChanged, onClose, notice }) {
   };
   const stop = async () => { const r = await api().docsUnshare(path); if (r?.ok) { onChanged(); onClose(); } };
   if (!share?.geteilt) {
+    const byLinkWay = !!ms?.eingerichtet;
     return (
       <div className="docs-share">
         <div className="docs-row"><b>Doc live teilen</b><span className="spacer" /><button type="button" className="icon-btn" aria-label="Schliessen" onClick={onClose}><Icon name="close" size={13} /></button></div>
-        <p>Andere schreiben auf ihrem Laptop mit, und ihr seht die Änderungen gegenseitig. Du bekommst einen <b>Link</b>, den du in <b>Teams</b> schickst; wer ihn in ASK einfügt, schreibt mit.</p>
-        <MsLogin ms={ms} onDone={refreshMs} notice={notice} />
-        {ms?.eingerichtet && ms?.angemeldet ? (
-          <div className="docs-row"><button type="button" className="btn small primary" disabled={busy} onClick={byLink}>{busy ? 'Erstellt den Link …' : 'Link erstellen'}</button>
-            <span className="muted small">legt das Doc in deinem OneDrive unter «ASK Docs» ab</span></div>
-        ) : null}
-        {folderWay || !ms?.eingerichtet ? (
+        {!ms ? <p className="muted small">Lädt …</p> : byLinkWay ? (
           <>
-            <p className="muted small">Über einen Ordner, den alle haben (OneDrive freigegeben, Teams-Kanal, Laufwerk der Schule): ASK legt dort «….askdoc» an, die anderen wählen ihn in der Liste der Docs mit dem Personen-Knopf.</p>
-            <div className="docs-row"><button type="button" className="btn small" disabled={busy} onClick={byFolder}>Ordner wählen …</button></div>
+            <p>Andere schreiben auf ihrem Laptop mit, und ihr seht die Änderungen gegenseitig. Du bekommst einen <b>Link</b>, den du in <b>Teams</b> schickst; wer ihn in ASK einfügt, schreibt mit.</p>
+            <MsLogin ms={ms} onDone={refreshMs} notice={notice} />
+            {ms.angemeldet ? (
+              <div className="docs-row"><button type="button" className="btn small primary" disabled={busy} onClick={byLink}>{busy ? 'Erstellt den Link …' : 'Link erstellen'}</button>
+                <span className="muted small">legt das Doc in deinem OneDrive unter «ASK Docs» ab</span></div>
+            ) : null}
+            {folderWay ? (
+              <>
+                <p className="muted small">Über einen Ordner, den alle haben (OneDrive freigegeben, Teams-Kanal, Laufwerk der Schule): ASK legt dort «….askdoc» an, die anderen wählen ihn in der Liste der Docs mit dem Personen-Knopf.</p>
+                <div className="docs-row"><button type="button" className="btn small" disabled={busy} onClick={byFolder}>Ordner wählen …</button></div>
+              </>
+            ) : <button type="button" className="link-btn" onClick={() => setFolderWay(true)}>Lieber über einen Ordner teilen …</button>}
           </>
-        ) : <button type="button" className="link-btn" onClick={() => setFolderWay(true)}>Lieber über einen Ordner teilen …</button>}
+        ) : (
+          <>
+            <p>Andere schreiben auf ihrem Laptop mit, und ihr seht die Änderungen gegenseitig. Dafür braucht ihr einen <b>Ordner, den alle haben</b>: in OneDrive freigegeben, ein Teams-Kanal oder ein Laufwerk der Schule.</p>
+            <p className="muted small">ASK legt dort «….askdoc» an. Die anderen klicken in der Liste der Docs auf den Personen-Knopf und wählen diesen Ordner.</p>
+            <div className="docs-row"><button type="button" className="btn small primary" disabled={busy} onClick={byFolder}>{busy ? 'Teilt …' : 'Ordner wählen …'}</button></div>
+          </>
+        )}
       </div>
     );
   }
@@ -218,7 +227,7 @@ function JoinPanel({ onOpen, onClose, notice }) {
   return (
     <div className="docs-share">
       <div className="docs-row"><b>Geteiltes Doc öffnen</b><span className="spacer" /><button type="button" className="icon-btn" aria-label="Schliessen" onClick={onClose}><Icon name="close" size={13} /></button></div>
-      {ms?.eingerichtet ? (
+      {!ms ? null : ms.eingerichtet ? (
         <>
           <MsLogin ms={ms} onDone={refreshMs} notice={notice} />
           <form className="docs-link" onSubmit={open}>
@@ -227,8 +236,13 @@ function JoinPanel({ onOpen, onClose, notice }) {
             <button type="submit" className="btn small primary" disabled={busy || !link.trim().startsWith('https://') || !ms?.angemeldet}>{busy ? 'Öffnet …' : 'Öffnen'}</button>
           </form>
         </>
-      ) : <p className="muted small">Teilen per Link ist auf diesem ASK noch nicht eingerichtet.</p>}
-      <button type="button" className="link-btn" onClick={folder}>Oder einen geteilten Ordner «….askdoc» wählen …</button>
+      ) : null}
+      {ms?.eingerichtet ? <button type="button" className="link-btn" onClick={folder}>Oder einen geteilten Ordner «….askdoc» wählen …</button> : ms ? (
+        <>
+          <p className="muted small">Hat jemand ein Doc mit dir geteilt, wähl den Ordner «….askdoc», den ihr gemeinsam habt (OneDrive, Teams-Kanal oder Laufwerk der Schule).</p>
+          <div className="docs-row"><button type="button" className="btn small primary" onClick={folder}>Ordner wählen …</button></div>
+        </>
+      ) : null}
     </div>
   );
 }
