@@ -87,6 +87,23 @@ fn list_item(line: &str) -> Option<(usize, bool, String)> {
     None
 }
 
+/// Ende von «(…)» nach Link oder Bild, mit Klammern darin (…/Foo_(bar))
+fn close_paren(chars: &[char], from: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut k = from;
+    while k < chars.len() {
+        match chars[k] {
+            '\\' => k += 1,
+            '(' => depth += 1,
+            ')' if depth == 0 => return Some(k),
+            ')' => depth -= 1,
+            _ => {}
+        }
+        k += 1;
+    }
+    None
+}
+
 /// Nummer eines nummerierten Punkts («12. » → 12)
 fn item_number(line: &str) -> Option<u64> {
     let t = line.trim_start();
@@ -301,7 +318,7 @@ pub fn parse_inline(text: &str) -> Vec<Span> {
             // ![Beschreibung](bilder/a.png)
             if let Some(mid) = (i + 2..chars.len()).find(|k| chars[*k] == ']') {
                 if chars.get(mid + 1) == Some(&'(') {
-                    if let Some(end) = (mid + 2..chars.len()).find(|k| chars[*k] == ')') {
+                    if let Some(end) = close_paren(&chars, mid + 2) {
                         push(&mut buf, &mut spans, bold, italic, strike);
                         let src: String = chars[mid + 2..end].iter().collect();
                         spans.push(Span { text: chars[i + 2..mid].iter().collect(), image: Some(src.trim().to_string()), ..Default::default() });
@@ -315,7 +332,7 @@ pub fn parse_inline(text: &str) -> Vec<Span> {
             // [Text](Adresse)
             if let Some(mid) = (i + 1..chars.len()).find(|k| chars[*k] == ']') {
                 if chars.get(mid + 1) == Some(&'(') {
-                    if let Some(end) = (mid + 2..chars.len()).find(|k| chars[*k] == ')') {
+                    if let Some(end) = close_paren(&chars, mid + 2) {
                         push(&mut buf, &mut spans, bold, italic, strike);
                         let label: String = chars[i + 1..mid].iter().collect();
                         let url: String = chars[mid + 2..end].iter().collect();
@@ -397,10 +414,12 @@ const MAX_IMAGE_BYTES: u64 = 20_000_000;
 
 /// Bild aus dem Projekt laden: (Endung, Inhalt, Breite, Höhe in Pixeln); None, wenn es nicht geht oder ausserhalb liegt
 fn load_image(base: &std::path::Path, root: &std::path::Path, src: &str) -> Option<(&'static str, Vec<u8>, u32, u32)> {
+    // Der Editor schreibt Leerzeichen und Klammern als %20, %28 …
+    let src = percent_encoding::percent_decode_str(src).decode_utf8().ok()?;
     if src.contains(':') || src.starts_with(['/', '\\']) || src.contains('\\') {
         return None;
     }
-    let path = base.join(src);
+    let path = base.join(src.as_ref());
     let real = dunce::canonicalize(&path).ok()?;
     let root = dunce::canonicalize(root).ok()?;
     if !real.starts_with(&root) || std::fs::metadata(&real).ok()?.len() > MAX_IMAGE_BYTES {
@@ -709,6 +728,11 @@ mod tests {
         let b = parse_blocks("1. Installieren\n\n```\nnpm i\n```\n\n2. Starten\n\nText\n\n1. Neu\n");
         let lists: Vec<usize> = b.iter().filter_map(|x| if let Block::Item { list, .. } = x { Some(*list) } else { None }).collect();
         assert_eq!(lists, vec![1, 1, 2]);
+        // Klammern in Adressen
+        let spans = parse_inline("[w](https://de.wikipedia.org/wiki/Foo_(bar)) x ![b](bilder/Bild%20%281%29.png)");
+        assert_eq!(spans.iter().find(|s| s.link.is_some()).and_then(|s| s.link.clone()).as_deref(), Some("https://de.wikipedia.org/wiki/Foo_(bar)"));
+        assert_eq!(spans.iter().find_map(|s| s.image.clone()).as_deref(), Some("bilder/Bild%20%281%29.png"));
+        assert!(!spans.iter().any(|s| s.text.contains(".png)")));
     }
 
 

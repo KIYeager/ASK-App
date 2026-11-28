@@ -114,3 +114,16 @@ test('Bilder im Doc: nur relative Pfade, hin und zurück', async () => {
   // Bilder von Webseiten (ohne data-src) fallen beim Einfügen weg
   assert.strictEqual(htmlToMd(parse('<p>a<img src="https://x.ch/t.png">b</p>')), 'ab\n');
 });
+
+test('Klammern, Leerzeichen, Rückstriche, Code mit Backtick und getippte Trennlinie', () => {
+  assert.strictEqual(round('[w](https://de.wikipedia.org/wiki/Foo_(bar)) x\n'), '[w](https://de.wikipedia.org/wiki/Foo_%28bar%29) x\n');
+  assert.ok(mdToHtml('[w](https://de.wikipedia.org/wiki/Foo_(bar)) x').includes('href="https://de.wikipedia.org/wiki/Foo_(bar)">w</a> x'));
+  assert.strictEqual(round('![Bild](bilder/Bild (1).png)\n'), '![Bild](bilder/Bild%20%281%29.png)\n');
+  assert.strictEqual(round('![Bild](bilder/Bild%20%281%29.png)\n'), '![Bild](bilder/Bild%20%281%29.png)\n', 'kodiert bleibt kodiert');
+  assert.strictEqual(round('Pfad C:\\\\temp\\\\\n'), 'Pfad C:\\\\temp\\\\\n', 'Rückstrich am Ende ist kein Umbruch');
+  assert.strictEqual(mdToHtml('`` a`b `` z'), '<p><code>a`b</code> z</p>');
+  assert.strictEqual(round('`` a`b `` z\n'), '`` a`b `` z\n');
+  assert.strictEqual(htmlToMd(parse('<p>---</p>')), '\\---\n', 'getippte Striche bleiben Text');
+  assert.strictEqual(round('\\---\n'), '\\---\n');
+  assert.strictEqual(round('1. a\n\n```\nnpm i\n```\n\n2. b\n'), '1. a\n\n```\nnpm i\n```\n\n2. b\n', 'Nummerierung nach einem Codeblock bleibt');
+});

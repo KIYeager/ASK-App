@@ -838,7 +838,7 @@ impl App {
                 let base = s(a, 2);
                 or_fail(save(f, &s(a, 0), &s(a, 1), Some(base.as_str())))
             }
-            "docs:create" => or_fail(create(f, &s(a, 0), "").map(|p| json!({ "ok": true, "path": p }))),
+            "docs:create" => or_fail(create(f, &s(a, 0), &s(a, 1)).map(|p| json!({ "ok": true, "path": p }))),
             "docs:open" => { set_open(f, &s(a, 0)); Value::Null }
             "docs:delete" => {
                 let rel = s(a, 0);

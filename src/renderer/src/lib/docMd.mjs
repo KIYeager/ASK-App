@@ -96,8 +96,10 @@ export function parseBlocks(md) {
       continue;
     }
     inList = false;
-    const hard = line.endsWith('  ') || line.endsWith('\\');
-    const text = t.replace(/\\$/, '');
+    // Harter Umbruch: zwei Leerzeichen oder ein einzelner Rückstrich am Ende («C:\\temp\\» bleibt Text)
+    const slashes = /\\*$/.exec(t)[0].length;
+    const hard = line.endsWith('  ') || slashes % 2 === 1;
+    const text = slashes % 2 === 1 ? t.slice(0, -1) : t;
     if (para === null) para = text; else if (para.endsWith('\n')) para += text; else para += ` ${text}`;
     if (hard) para += '\n';
   }
@@ -113,6 +115,20 @@ const ESCAPABLE = '\\`*_~[]()#|>!-+.';
 export const safeImagePath = (src) => !!src && !/^[a-z][a-z0-9+.-]*:|^[\\/]|\\/i.test(src) && src.length < 400;
 // Adresse eines Bildes zum Anzeigen (während mdToHtml gesetzt)
 let imageUrl = null;
+
+// Ende von «(…)» nach einem Link oder Bild, mit Klammern darin (z. B. Wikipedia: …/Foo_(bar))
+function closeParen(chars, from) {
+  let depth = 0;
+  for (let k = from; k < chars.length; k++) {
+    if (chars[k] === '\\') { k++; continue; }
+    if (chars[k] === '(') depth++;
+    else if (chars[k] === ')') { if (depth === 0) return k; depth--; }
+  }
+  return -1;
+}
+
+// Klammern und Leerraum in Adressen kodieren, damit «(…)» des Links nicht vorzeitig endet
+const encodeAddress = (u) => u.replace(/[()\s]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
 
 function hasClosing(chars, from, marker) {
   for (let k = from; k + marker.length <= chars.length; k++) {
@@ -132,13 +148,26 @@ export function inlineHtml(text) {
     if (c === '\\' && n && ESCAPABLE.includes(n)) { out += esc(n); i++; continue; }
     if (c === '\n') { out += '<br>'; continue; }
     if (c === '`') {
-      const end = chars.indexOf('`', i + 1);
-      if (end > i) { out += `<code>${esc(chars.slice(i + 1, end).join(''))}</code>`; i = end; continue; }
+      // Code: gleich viele Backticks schliessen («`` a`b ``»)
+      let run = 1;
+      while (chars[i + run] === '`') run++;
+      const fence = '`'.repeat(run);
+      let end = -1;
+      for (let k = i + run; k + run <= chars.length; k++) {
+        if (chars.slice(k, k + run).join('') === fence && chars[k + run] !== '`' && chars[k - 1] !== '`') { end = k; break; }
+      }
+      if (end > i) {
+        let code = chars.slice(i + run, end).join('');
+        if (code.length > 1 && code.startsWith(' ') && code.endsWith(' ') && code.trim()) code = code.slice(1, -1);
+        out += `<code>${esc(code)}</code>`;
+        i = end + run - 1;
+        continue;
+      }
     }
     if (c === '!' && n === '[') {
       const mid = chars.indexOf(']', i + 2);
       if (mid > i && chars[mid + 1] === '(') {
-        const end = chars.indexOf(')', mid + 2);
+        const end = closeParen(chars, mid + 2);
         if (end > mid) {
           const alt = chars.slice(i + 2, mid).join('');
           const src = chars.slice(mid + 2, end).join('').trim();
@@ -156,7 +185,7 @@ export function inlineHtml(text) {
     if (c === '[') {
       const mid = chars.indexOf(']', i + 1);
       if (mid > i && chars[mid + 1] === '(') {
-        const end = chars.indexOf(')', mid + 2);
+        const end = closeParen(chars, mid + 2);
         if (end > mid) {
           const label = inlineHtml(chars.slice(i + 1, mid).join(''));
           const url = chars.slice(mid + 2, end).join('').trim();
@@ -244,6 +273,7 @@ function escText(t) {
 // Am Anfang eines Absatzes und nach jedem Zeilenumbruch darin («\⏎»): nichts, was wie Überschrift, Liste,
 // Zitat oder Tabelle aussieht
 function escLine(t) {
+  if (/^\s*(-\s*){3,}$/.test(t)) return t.replace('-', '\\-'); // getippte «---» bleiben Text, keine Trennlinie
   return t.replace(/^(\s*)(#{1,6} |>|[-+] |\|)/, (m, sp, x) => `${sp}\\${x}`).replace(/^(\s*\d{1,9})([.)]) /, '$1\\$2 ');
 }
 function escStart(t) {
@@ -278,7 +308,7 @@ function inline(n, ctx = {}) {
     if (name === 'IMG') {
       // Nur Bilder, die aus dem Doc kommen (data-src); eingefügte Bilder von Webseiten fallen weg
       const src = String(c.getAttribute?.('data-src') || '');
-      if (safeImagePath(src)) out += `![${String(c.getAttribute?.('alt') || '').replace(/[[\]\\]/g, '')}](${src.replace(/[()\s]/g, encodeURIComponent)})`;
+      if (safeImagePath(src)) out += `![${String(c.getAttribute?.('alt') || '').replace(/[[\]\\]/g, '')}](${encodeAddress(src)})`;
       continue;
     }
     if (SKIP.has(name)) continue;
@@ -292,7 +322,7 @@ function inline(n, ctx = {}) {
     const st = style(c);
     if (name === 'A') {
       const href = String(c.getAttribute?.('href') || '').trim();
-      out += SAFE_URL.test(href) && inner.trim() ? `[${inner.trim()}](${href.replace(/[()\s]/g, encodeURIComponent)})` : inner;
+      out += SAFE_URL.test(href) && inner.trim() ? `[${inner.trim()}](${encodeAddress(href)})` : inner;
     } else if (name === 'STRONG' || name === 'B' || st.bold) {
       out += wrap(inner, '**');
     } else if (name === 'EM' || name === 'I' || st.italic) {
