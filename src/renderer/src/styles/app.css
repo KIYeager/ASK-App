@@ -1421,3 +1421,13 @@ button.docs-quote:hover { filter: brightness(.97); }
 .docs-recent li { font-size: 12px; overflow-wrap: anywhere; }
 .docs-linkbox { display: flex; flex-direction: column; gap: 6px; }
 .docs-linkbox input { width: 100%; padding: 5px 9px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--pane); color: var(--text); font: 12px var(--mono); }
+
+/* Nebenfrage mit /btw (E86): eigene, ruhige Karte unter dem Auftrag */
+.msg.btw { margin: 10px 0 4px; padding: 10px 14px; border: 1px dashed var(--line); border-left: 3px solid var(--acc-text); border-radius: 10px; background: color-mix(in srgb, var(--acc-text) 4%, transparent); }
+.msg.btw .btw-head { display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: 4px; color: var(--muted); font-size: 12.5px; }
+.msg.btw .btw-label { font-weight: 600; color: var(--acc-text); flex: none; }
+.msg.btw .btw-q { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.msg.btw .btw-q::before { content: '· '; }
+.msg.btw .btw-wait { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.msg.btw .btw-error { color: var(--bad); font-size: 13px; }
+

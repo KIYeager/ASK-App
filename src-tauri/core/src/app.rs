@@ -2144,6 +2144,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 Value::Null
             }
             "chat:stop" => { agent.stop(); Value::Null }
+            // Nebenfrage mit /btw (E86): läuft neben dem Auftrag
+            "chat:btw" => agent.btw(&sarg(a, 0)),
             // /zusammenfassen: ältere Aufträge jetzt zusammenfassen (E78)
             "chat:compact" => { let r = agent.compact_now().await; self.push_state(); r }
             "chat:goal" => { agent.set_goal(&sarg(a, 0)); Value::Null }
