@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import Icon from './Icon.jsx';
-import { extOf, fileBadge, formatSize } from '../lib/format.js';
+import { extOf, fileBadge, formatDuration, formatSize } from '../lib/format.js';
 import { api } from '../api.js';
 
 const THINK_LEVELS = ['standard', 'tief', 'mittel', 'maximal'];
@@ -289,7 +289,8 @@ function mentionAt(text, caret) {
 
 const Composer = forwardRef(function Composer(props, ref) {
   const { state, chatId, free, running, block, fileBlock, goal, tasks, tasksLive, activity, runStarted, commands, pendingQuestion, pendingApproval,
-    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode, autoEffort } = props;
+    onSend, onStop, onAnswer, onGoalClear, setModel, setThinking, setWeb, notice, context, todoCollapsed, mode, setMode, autoEffort,
+    sources, setStrictSources } = props;
   const [text, setText] = useState('');
   const [pending, setPending] = useState([]); // neue Anhänge { name, type, size, data, url }
   const [kept, setKept] = useState([]); // schon gespeicherte Anhänge einer zurückgenommenen Eingabe { path, name, image }
@@ -584,7 +585,7 @@ const Composer = forwardRef(function Composer(props, ref) {
   const ctxKnown = context?.limit > 0;
   const ctxPct = ctxKnown ? Math.min(100, Math.round((context.tokens / context.limit) * 100)) : 0;
   const short = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n)));
-  const seconds = runStarted ? Math.round((Date.now() - runStarted) / 1000) : 0;
+  const elapsed = runStarted ? formatDuration(Date.now() - runStarted) : '0 s';
 
   return (
     <div className="composer">
@@ -601,7 +602,7 @@ const Composer = forwardRef(function Composer(props, ref) {
           <div id="activity" className="activity">
             <span className="spin" aria-hidden="true" />
             <span id="activity-text">{activity}</span>
-            <span className="muted">(<span id="activity-time">{seconds} s</span> · Esc zum Stoppen)</span>
+            <span className="muted">(<span id="activity-time">{elapsed}</span> · Esc zum Stoppen)</span>
           </div>
         ) : null}
         <Todo tasks={tasks} open={showTodoOpen} onToggle={toggleTodo} />
@@ -668,9 +669,20 @@ const Composer = forwardRef(function Composer(props, ref) {
             <button type="button" id="attach-btn" className="chip icon-only" title="Dateien oder Bilder anhängen (auch mit Ctrl+V oder Hineinziehen)"
               aria-label="Anhängen" onClick={() => fileInput.current?.click()}><Icon name="clip" size={15} /></button>
             <input ref={fileInput} id="attach-file" type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-            <button type="button" id="web-btn" className={`chip${state.webSearch && state.webSearchAvailable ? ' on' : ''}`} disabled={!state.webSearchAvailable}
+            {/* Quellen (E84): nur in Projekten mit Unterlagen; an heisst «Nur aus Quellen», dann ohne Web */}
+            {!free && sources?.count > 0 ? (
+              <button type="button" id="sources-btn" className={`chip${sources.strict ? ' on' : ''}`} aria-pressed={!!sources.strict}
+                onClick={() => setStrictSources?.(!sources.strict)}
+                title={sources.strict ? `Nur aus Quellen an: ASK antwortet nur aus den ${sources.count === 1 ? 'Unterlage' : `${sources.count} Unterlagen`} im Ordner Quellen, ohne Web (/quellen)`
+                  : `Nur aus Quellen aus: ASK benutzt die ${sources.count === 1 ? 'Unterlage' : `${sources.count} Unterlagen`} im Ordner Quellen zuerst, darf aber auch eigenes Wissen und das Web nutzen (/quellen)`}>
+                <Icon name="book" size={14} /> <span className="chip-label">Quellen</span>
+              </button>
+            ) : null}
+            <button type="button" id="web-btn" className={`chip${state.webSearch && state.webSearchAvailable && !(sources?.strict && sources?.count > 0) ? ' on' : ''}`}
+              disabled={!state.webSearchAvailable || (!free && sources?.strict && sources?.count > 0)}
               onClick={() => setWeb(!state.webSearch)}
-              title={!state.webSearchAvailable ? 'Websuche ist in ASK für dein Konto nicht freigegeben' : state.webSearch ? 'Websuche an: ASK sucht vor der Antwort im Web (/web)' : 'Websuche aus (/web)'}>
+              title={!state.webSearchAvailable ? 'Websuche ist in ASK für dein Konto nicht freigegeben' : (!free && sources?.strict && sources?.count > 0) ? 'Websuche aus, weil «Nur aus Quellen» an ist'
+                : state.webSearch ? 'Websuche an: ASK sucht vor der Antwort im Web (/web)' : 'Websuche aus (/web)'}>
               <Icon name="globe" size={14} /> <span className="chip-label">Web</span>
             </button>
             <ThinkPicker level={state.thinking || 'standard'} autoLevel={autoEffort} onChange={setThinking} />

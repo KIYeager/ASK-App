@@ -52,6 +52,8 @@ pub trait Host: Send + Sync + 'static {
     fn clipboard_write(&self, text: &str);
     async fn pick_folder(&self, title: &str, default_path: &str) -> Option<String>;
     async fn pick_open_file(&self, title: &str, filters: Filters) -> Option<String>;
+    /// Mehrere Dateien wählen (Quellen hinzufügen, ENTSCHEIDE E84); leer: abgebrochen
+    async fn pick_open_files(&self, title: &str, filters: Filters) -> Vec<String>;
     async fn pick_save_file(&self, title: &str, default_name: &str, filters: Filters) -> Option<String>;
     /// Windows-Benachrichtigung; on_click läuft beim Klick darauf
     fn notify(&self, title: &str, body: &str, silent: bool, on_click: Box<dyn FnOnce() + Send>);
@@ -87,6 +89,7 @@ impl Host for NullHost {
     fn clipboard_write(&self, _text: &str) {}
     async fn pick_folder(&self, _t: &str, _d: &str) -> Option<String> { None }
     async fn pick_open_file(&self, _t: &str, _f: Filters) -> Option<String> { None }
+    async fn pick_open_files(&self, _t: &str, _f: Filters) -> Vec<String> { Vec::new() }
     async fn pick_save_file(&self, _t: &str, _n: &str, _f: Filters) -> Option<String> { None }
     fn notify(&self, _t: &str, _b: &str, _s: bool, _c: Box<dyn FnOnce() + Send>) {}
     fn window_focused(&self) -> bool { true }

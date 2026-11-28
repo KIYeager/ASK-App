@@ -141,7 +141,7 @@ pub fn plan_tool() -> Value {
 }
 
 /// Werkzeuge, die im Planmodus erlaubt sind: nichts, was den Ordner oder etwas ausserhalb verändert
-const PLAN_ALLOWED: &[&str] = &["read_file", "list_files", "find_files", "search_text", "view_file", "web_search", "web_fetch", HELPER,
+const PLAN_ALLOWED: &[&str] = &["read_file", "list_files", "find_files", "search_text", "quellen_suchen", "quelle_lesen", "view_file", "web_search", "web_fetch", HELPER,
     "chat_search", "chat_read", "github_status", "server_liste", "skill_lesen", "mod_liste", "mod_lesen", "katalog_suchen", "update_tasks", "frage_stellen", "plan_vorlegen", EFFORT_TOOL,
     "doc_liste", "doc_lesen"];
 /// Chat ohne Projekt (ENTSCHEIDE E78): Gespräch, Web, Bilder, Anhänge lesen und Gedächtnis. Nichts, was Dateien
@@ -150,6 +150,8 @@ const PLAN_ALLOWED: &[&str] = &["read_file", "list_files", "find_files", "search
 const FREE_ALLOWED: &[&str] = &["read_file", "view_file", "web_search", "web_fetch", "bild_erstellen", "chat_search", "chat_read", "skill_lesen",
     "merken", "vergessen", "update_tasks", "frage_stellen", "goal_done", EFFORT_TOOL,
     "doc_liste", "doc_lesen", "doc_erstellen", "doc_bearbeiten", "doc_kommentieren"];
+/// Werkzeuge der Quellen (ENTSCHEIDE E84): nur angeboten, wenn der Ordner «Quellen» Unterlagen hat
+const SOURCE_TOOLS: [&str; 2] = ["quellen_suchen", "quelle_lesen"];
 const FREE_PROMPT: &str = "\n\n# Chat ohne Projekt\nDieser Chat gehört zu keinem Projekt. Hier beantwortest du Fragen, erklärst, suchst im Web und erstellst auf Wunsch Bilder. Du kannst hier keine Dateien schreiben oder ändern, keine Befehle ausführen und keinen Server starten; es gibt keinen Projektordner. Docs (doc_erstellen, doc_bearbeiten) gehen trotzdem: Sie liegen bei den Chats ohne Projekt. Angehängte Dateien liest du mit read_file, angehängte Bilder siehst du direkt. Will die Person, dass du Dateien erstellst oder bearbeitest, Programme ausführst oder mit einem Ordner arbeitest, sag ihr in einem Satz, dass das in einem Projekt geht: links bei «Projekte» auf + klicken und den Auftrag dort stellen. Code, Texte und Tabellen kannst du hier direkt in der Antwort schreiben.";
 const PLAN_PROMPT: &str = "\n\n# Planmodus\nDie Person will zuerst einen Plan sehen. Ändere nichts: keine Befehle, keine Dateien schreiben. Sieh dir mit den Lese- und Suchwerkzeugen an, was du brauchst, frag bei Unklarem mit frage_stellen, und lege dann mit plan_vorlegen einen kurzen, konkreten Plan vor (Schritte, betroffene Dateien). Danach hörst du auf.";
 
@@ -440,6 +442,32 @@ pub type ImageUrlFn = Arc<dyn Fn(&Value) -> Option<String> + Send + Sync>;
 /// Verlauf für die Anfrage: ohne Denktexte, alte Ergebnisse gekürzt, im Textmodus ohne tool-Rollen
 /// (auch für frühere Schritte, die noch mit Werkzeugliste liefen). `image_url(anhang)` liefert Bilder
 /// als data-URL; sie gehen nur bei den letzten IMAGE_TURNS Eingaben mit, ältere nur als Pfad.
+const WEEKDAYS: [&str; 7] = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+const MONTHS: [&str; 12] = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+
+/// Wann die Person eine Nachricht geschickt hat, für das Modell: «[Sa 28.11.2026 14:05]» in Ortszeit
+/// (ENTSCHEIDE E85). Leer ohne gültige Zeit.
+pub fn time_stamp(ms: i64) -> String {
+    use chrono::{Datelike, TimeZone};
+    match chrono::Local.timestamp_millis_opt(ms).single() {
+        Some(t) if ms > 0 => format!("[{} {}]", take_chars(WEEKDAYS[t.weekday().num_days_from_monday() as usize], 2), t.format("%d.%m.%Y %H:%M")),
+        _ => String::new(),
+    }
+}
+
+/// Abschnitt für den Systemprompt: das heutige Datum (nur das Datum, damit der Anfang der Anfrage über den Tag
+/// gleich bleibt) und was die Zeitstempel vor den Nachrichten bedeuten (E85)
+pub fn date_prompt(now: chrono::DateTime<chrono::Local>) -> String {
+    use chrono::Datelike;
+    format!(
+        "\n\n# Datum\nHeute ist {}, {}. {} {}. Vor jeder Nachricht der Person steht in eckigen Klammern, wann sie sie geschickt hat (Ortszeit). Nutze das für «heute», «morgen», «letzte Woche» und Fristen; schreib diese Zeitangaben nicht selbst in deine Antworten.",
+        WEEKDAYS[now.weekday().num_days_from_monday() as usize],
+        now.day(),
+        MONTHS[now.month0() as usize],
+        now.year()
+    )
+}
+
 pub fn api_messages(system: &str, messages: &[Value], text_mode: bool, image_url: Option<&ImageFn>, budget: &Budget) -> Vec<Value> {
     // Zusammengefasster Verlauf (E78): Das Modell bekommt die Zusammenfassung und alles ab der Eingabe, an der sie hängt
     let (summary, messages) = match summary_index(messages) {
@@ -496,7 +524,10 @@ pub fn api_messages(system: &str, messages: &[Value], text_mode: bool, image_url
                 let text = if m["note"] == "view" {
                     if urls.is_empty() { format!("{}: nicht mehr mitgeschickt.", js_string(&m["content"])) } else { js_string(&m["content"]) }
                 } else {
-                    user_text(m)
+                    // Zeitpunkt der Eingabe (E85), nur bei echten Eingaben der Person, nicht bei Hinweisen der App
+                    let own = m.get("note").is_none_or(Value::is_null) && !truthy(&m["auto"]) && !truthy(&m["helper"]);
+                    let stamp = if own { time_stamp(m["time"].as_i64().unwrap_or(0)) } else { String::new() };
+                    if stamp.is_empty() { user_text(m) } else { format!("{stamp} {}", user_text(m)) }
                 };
                 if urls.is_empty() {
                     out.push(json!({ "role": "user", "content": text }));
@@ -662,6 +693,8 @@ pub struct AgentOptions {
     /// Reserve des Kontextfensters in Token: Ist der Verlauf bis auf diese Reserve voll, fasst ASK vor dem nächsten
     /// Auftrag die älteren Aufträge zusammen (E78). 0: nie vorbeugend, nur wenn ASK den Verlauf ablehnt.
     pub get_compact_reserve: Arc<dyn Fn() -> i64 + Send + Sync>,
+    /// Quellen des Projekts (ENTSCHEIDE E84): (gibt es Unterlagen, «Nur aus Quellen»), bei jedem Schritt gelesen
+    pub get_sources: Arc<dyn Fn() -> (bool, bool) + Send + Sync>,
 }
 
 impl AgentOptions {
@@ -702,6 +735,7 @@ impl AgentOptions {
             auto_title: false,
             free: false,
             get_compact_reserve: Arc::new(|| 0),
+            get_sources: Arc::new(|| (false, false)),
         }
     }
 }
@@ -1752,7 +1786,15 @@ impl Agent {
         let memory = (self.o.get_chat_memory)();
         let flux = self.o.images.as_ref().is_some_and(|i| i.available());
         let remember = self.o.knowledge.as_ref().and_then(|k| k.memory_on.as_ref()).is_none_or(|f| f());
-        let offered = |name: &str| (memory || !name.starts_with("chat_")) && (flux || name != "bild_erstellen") && (remember || !MEMORY_TOOLS.contains(&name));
+        // Quellen (E84): Werkzeuge nur mit Unterlagen; «Nur aus Quellen» ohne Internet
+        let (has_sources, strict) = (self.o.get_sources)();
+        let offered = |name: &str| {
+            (memory || !name.starts_with("chat_"))
+                && (flux || name != "bild_erstellen")
+                && (remember || !MEMORY_TOOLS.contains(&name))
+                && (has_sources || !SOURCE_TOOLS.contains(&name))
+                && !(strict && matches!(name, "web_search" | "web_fetch"))
+        };
         let free = self.o.free;
         let plan = !free && (self.o.get_mode)() == "plan"; // ohne Projekt gibt es nichts zu planen
         let chat_id = self.chat_id();
@@ -1859,6 +1901,8 @@ impl Agent {
         // gelesen hat (ohne gelesene Seiten die ersten Treffer von web_search)
         let mut sources: Vec<Source> = completion.sources.clone();
         if tool_calls.is_empty() {
+            // Verweise auf Unterlagen in der Antwort zuerst (E84)
+            sources.splice(0..0, crate::sources::cited(&content));
             let web: Option<Vec<Source>> = self.inner.lock().turn_sources.as_ref().map(|t| if t.read.is_empty() { t.found.iter().take(5).cloned().collect() } else { t.read.clone() });
             if let Some(web) = web {
                 let mut seen: Vec<Source> = Vec::new();
@@ -3214,7 +3258,7 @@ mod tests {
         let sent: Vec<String> = requests[4].messages.iter().map(|m| js_string(&m["content"])).collect();
         assert_eq!(sent.len(), 3, "{sent:?}");
         assert!(sent[1].contains("Zusammenfassung des bisherigen Chats") && sent[1].contains(SUMMARY));
-        assert_eq!(sent[2], "zwei");
+        assert_eq!(ohne_zeit(&sent[2]), "zwei");
         // Gespeichert an der Eingabe, mit der der erhaltene Teil beginnt; nichts ist gelöscht
         let saved = t.saved();
         assert_eq!(saved["messages"][0]["content"], "eins");
@@ -3243,7 +3287,7 @@ mod tests {
         assert_eq!(requests.len(), 3, "Zusammenfassung vor der Antwort");
         assert!(js_string(&requests[1].messages[0]["content"]).starts_with("Du fasst einen langen Chat"));
         let sent: Vec<String> = requests[2].messages.iter().map(|m| js_string(&m["content"])).collect();
-        assert!(sent.len() == 3 && sent[1].contains(SUMMARY) && sent[2] == "zwei", "{sent:?}");
+        assert!(sent.len() == 3 && sent[1].contains(SUMMARY) && ohne_zeit(&sent[2]) == "zwei", "{sent:?}");
         assert_eq!(t.events_of("compacting").len(), 1);
         // Die Anzeige rechnet nach dem Zusammenfassen mit dem kurzen Verlauf
         let c = t.agent.context();
@@ -3310,7 +3354,40 @@ mod tests {
         let sent = api_messages("sys", &marked, false, None, &NORMAL);
         let texts: Vec<String> = sent.iter().map(|m| js_string(&m["content"])).collect();
         assert_eq!(texts.len(), 5, "{texts:?}");
-        assert!(texts[1].contains("kurz") && texts[2] == "d" && texts[4] == "f");
+        assert!(texts[1].contains("kurz") && ohne_zeit(&texts[2]) == "d" && ohne_zeit(&texts[4]) == "f");
+    }
+
+    /// Text einer Eingabe ohne den Zeitstempel davor (E85)
+    fn ohne_zeit(text: &str) -> String {
+        match text.strip_prefix('[').and_then(|r| r.split_once("] ")) {
+            Some((_, rest)) => rest.to_string(),
+            None => text.to_string(),
+        }
+    }
+
+    #[test]
+    fn zeitstempel_nur_vor_eingaben_der_person_und_datum_im_systemprompt() {
+        use chrono::TimeZone;
+        let t = chrono::Local.with_ymd_and_hms(2026, 11, 28, 14, 5, 0).single().unwrap();
+        let ms = t.timestamp_millis();
+        assert_eq!(time_stamp(ms), "[Sa 28.11.2026 14:05]");
+        assert_eq!(time_stamp(0), "");
+        assert_eq!(date_prompt(t), "\n\n# Datum\nHeute ist Samstag, 28. November 2026. Vor jeder Nachricht der Person steht in eckigen Klammern, wann sie sie geschickt hat (Ortszeit). Nutze das für «heute», «morgen», «letzte Woche» und Fristen; schreib diese Zeitangaben nicht selbst in deine Antworten.");
+        let list = [
+            json!({ "role": "user", "content": "Bis wann muss das fertig sein?", "time": ms }),
+            json!({ "role": "user", "content": "weiter", "auto": true, "time": ms }),
+            json!({ "role": "user", "content": "Rückgängig gemacht", "note": "undo", "time": ms }),
+            json!({ "role": "user", "content": "Teilfrage", "helper": true, "time": ms }),
+            json!({ "role": "user", "content": "ohne Zeit" }),
+        ];
+        let sent: Vec<String> = api_messages("sys", &list, false, None, &NORMAL).iter().map(|m| js_string(&m["content"])).collect();
+        assert_eq!(sent[1], "[Sa 28.11.2026 14:05] Bis wann muss das fertig sein?");
+        assert_eq!(sent[2], "weiter", "Anstoss im Ziel-Modus ohne Zeit");
+        assert!(!sent[3].starts_with('['), "Hinweis der App ohne Zeit: {}", sent[3]);
+        assert_eq!(sent[4], "Teilfrage", "Auftrag an einen Hilfsagenten ohne Zeit");
+        assert_eq!(sent[5], "ohne Zeit");
+        // Im gespeicherten Chat steht der Zeitstempel nicht im Text
+        assert_eq!(list[0]["content"], "Bis wann muss das fertig sein?");
     }
 
     #[tokio::test]

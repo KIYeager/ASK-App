@@ -15,9 +15,25 @@ function inline(text) {
     .replace(/(^|[^_\w])_(?!\s)([^_\n]*[^_\s])_(?!\w)/g, '$1<em>$2</em>');
   let s = String(text).replace(/\u0000/g, '').replace(/`([^`\n]+)`/g, (_m, c) => hold(`<code>${esc(c)}</code>`));
   s = esc(s).replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, (_m, label, url) => hold(`<a href="${url}" title="${url}">${emph(urls(label))}</a>`));
+  // Verweis auf eine Unterlage im Ordner «Quellen» (ENTSCHEIDE E84); ungültige Pfade bleiben Text
+  s = s.replace(/\[([^\]\n]+)\]\((quelle:[^)\s]+)\)/g, (m, label, url) => {
+    const ref = parseSourceLink(url.replace(/&amp;/g, '&'));
+    return ref ? hold(`<a class="quelle" href="${url}" title="${esc(ref.path)}${ref.seite ? `, S. ${ref.seite}` : ''}">${emph(label)}</a>`) : m;
+  });
   s = emph(urls(s));
   for (let n = 0; n < 10 && /\u0000\d+\u0000/.test(s); n++) s = s.replace(/\u0000(\d+)\u0000/g, (_m, i) => stash[Number(i)] ?? '');
   return s;
+}
+
+// Verweis `quelle:Quellen/Skript.pdf#seite=14` → { path, seite }; nur relative Pfade im Ordner «Quellen», ohne «..»
+export function parseSourceLink(href) {
+  const m = /^quelle:([^#?]+)(?:#seite=(\d{1,5}))?$/.exec(String(href || ''));
+  if (!m) return null;
+  let path;
+  try { path = decodeURIComponent(m[1]).replace(/\\/g, '/'); } catch { return null; }
+  const parts = path.split('/');
+  if (!/^quellen$/i.test(parts[0]) || parts.length < 2 || parts.some((p) => !p || p === '.' || p === '..' || /[:\u0000]/.test(p))) return null;
+  return { path, seite: m[2] ? Number(m[2]) : null };
 }
 
 // Zellen einer Tabellenzeile; ein «|» in Inline-Code oder als «\|» trennt nicht

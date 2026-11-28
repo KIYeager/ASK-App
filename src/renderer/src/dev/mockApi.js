@@ -58,6 +58,10 @@ const tree = {
     { path: 'bilder\\titelbild.png', name: 'titelbild.png', dir: false, size: 1200000, modified: now - 86400000 }],
 };
 const files = { top: tree[''], recent: tree[''].filter((f) => !f.dir) };
+// Quellen (E84): Ordner «Quellen» mit einer Unterlage; ?quellen=1 zeigt dazu eine Antwort mit Verweisen
+tree[''].unshift({ path: 'Quellen', name: 'Quellen', dir: true, size: 0, modified: now - 7200000 });
+tree.Quellen = [{ path: 'Quellen\\Skript Budgetplanung.pdf', name: 'Skript Budgetplanung.pdf', dir: false, size: 412000, modified: now - 7200000 }];
+files.quellen = 1;
 
 const saved = [
   { role: 'user', content: 'Werte ausgaben.csv aus: Summen pro Kategorie und ein Diagramm, alles in Excel.', time: now - 400000, snapshot: 's1',
@@ -75,6 +79,16 @@ const saved = [
   { role: 'tool', id: 't5', ok: true, summary: 'Tabelle und Diagramm geprüft', output: '' },
   { role: 'assistant', content: 'Fertig. In `auswertung.xlsx` stehen die Summen pro Kategorie und ein Balkendiagramm.\n\n| Kategorie | CHF |\n|---|---:|\n| ÖV-Abo | 500.00 |\n| Freizeit | 460.75 |\n| Bücher | 411.15 |\n| Material | 266.95 |\n| Handy | 150.00 |\n| Verpflegung | 145.70 |\n| **Total** | **1’934.55** |\n\nDen alten Entwurf `entwurf_alt.xlsx` habe ich nach deiner Bestätigung gelöscht.', stats: stats(300), calls: [] },
 ];
+if (params.get('quellen')) {
+  saved.push({ role: 'user', content: 'Was ist laut Skript der Unterschied zwischen fixen und variablen Kosten?', time: now - 120000 },
+    { role: 'assistant', content: '', stats: stats(150), calls: [{ id: 'q1', name: 'quellen_suchen', label: 'Quellen', detail: '«fixe variable Kosten»' }, { id: 'q2', name: 'quelle_lesen', label: 'Quelle', detail: 'Quellen/Skript Budgetplanung.pdf, S. 4' }] },
+    { role: 'tool', id: 'q1', ok: true, summary: '3 Treffer', output: '[1] Quellen/Skript Budgetplanung.pdf · S. 4 · …' },
+    { role: 'tool', id: 'q2', ok: true, summary: 'S. 4', output: 'Fixe Kosten fallen jeden Monat gleich an …' },
+    { role: 'assistant', stats: stats(380), time: now - 100000,
+      content: 'Laut Skript sind **fixe Kosten** Ausgaben, die jeden Monat gleich hoch sind, zum Beispiel Miete, ÖV-Abo oder Handy-Abo [Skript Budgetplanung, S. 4](quelle:Quellen/Skript%20Budgetplanung.pdf#seite=4). **Variable Kosten** schwanken je nach Verhalten, etwa Freizeit, Kleider oder Ausgang [Skript Budgetplanung, S. 5](quelle:Quellen/Skript%20Budgetplanung.pdf#seite=5).\n\nDas Skript empfiehlt, zuerst die fixen Kosten vom Lohn abzuziehen und den Rest auf die variablen Kosten und das Sparen zu verteilen [Skript Budgetplanung, S. 7](quelle:Quellen/Skript%20Budgetplanung.pdf#seite=7).',
+      sources: [{ url: 'quelle:Quellen/Skript%20Budgetplanung.pdf#seite=4', title: 'Skript Budgetplanung, S. 4' }, { url: 'quelle:Quellen/Skript%20Budgetplanung.pdf#seite=5', title: 'Skript Budgetplanung, S. 5' },
+        { url: 'quelle:Quellen/Skript%20Budgetplanung.pdf#seite=7', title: 'Skript Budgetplanung, S. 7' }] });
+}
 
 // Nutzung (E49): 30 Tage mit Beispielwerten, drei Projekte, Angaben von ASK
 function mockUsage() {
@@ -487,11 +501,16 @@ if (!new URLSearchParams(location.search).get('docs')) {
   mockComments['docs/lernzettel-photosynthese.md'] = [{ id: 'k1a2b3c', zitat: 'Calvin-Zyklus im Stroma', erledigt: false, zeit: Date.now() - 600e3,
     eintraege: [{ von: 'person', text: 'Kannst du hier ein Beispiel ergänzen?', zeit: Date.now() - 600e3 }, { von: 'ask', text: 'Beispiel mit Glukose ergänzt.', zeit: Date.now() - 500e3 }] }];
 }
+// Geteilte Docs (E82): ein Beispiel ist mit Tim und Mia geteilt
+const mockShares = { 'docs/lernzettel-photosynthese.md': { geteilt: true, ordner: 'C:\\Users\\lea\\OneDrive - TF Bern\\Gruppe Bio\\lernzettel-photosynthese.askdoc', fehler: '',
+  personen: [{ name: 'Tim', ich: false, zuletzt: Date.now() - 90e3 }, { name: 'Lea Muster', ich: true, zuletzt: Date.now() - 300e3 }, { name: 'Mia', ich: false, zuletzt: Date.now() - 3 * 3600e3 }],
+  anderen: [{ name: 'Tim', zeit: Date.now() - 90e3, text: 'Teil Ort Lichtreaktion Thylakoid' }] } };
+const mockMs = { name: new URLSearchParams(location.search).get('ms') === 'neu' ? '' : 'Lea Muster' };
 const docMsg = (p, t) => `[Kommentar im Doc ${p}, ${t.id}] ${t.zitat ? `zur Stelle «${t.zitat}»` : 'zum ganzen Doc'}: ${[...t.eintraege].reverse().find((e) => e.von === 'person')?.text || ''}`;
 const mockDocsApi = {
   docsList: async () => ({ ok: true, docs: Object.entries(mockDocs).map(([path, d]) => ({ path, title: docTitle(d.content, path), modified: d.modified, size: d.content.length,
-    comments: (mockComments[path] || []).filter((c) => !c.erledigt).length })).sort((a, b) => b.modified - a.modified) }),
-  docsRead: async (path) => { const d = mockDocs[path]; return d ? { ok: true, path, title: docTitle(d.content, path), content: d.content, hash: docHash(d.content), modified: d.modified, comments: structuredClone(mockComments[path] || []) } : { ok: false, reason: `Das Doc «${path}» gibt es nicht.` }; },
+    comments: (mockComments[path] || []).filter((c) => !c.erledigt).length, geteilt: !!mockShares[path] })).sort((a, b) => b.modified - a.modified) }),
+  docsRead: async (path) => { const d = mockDocs[path]; return d ? { ok: true, path, title: docTitle(d.content, path), content: d.content, hash: docHash(d.content), modified: d.modified, comments: structuredClone(mockComments[path] || []), share: mockShares[path] || { geteilt: false } } : { ok: false, reason: `Das Doc «${path}» gibt es nicht.` }; },
   docsSave: async (path, content, base) => {
     const d = mockDocs[path];
     if (d && base && docHash(d.content) !== base && d.content !== content) return { ok: false, conflict: true, content: d.content, hash: docHash(d.content) };
@@ -501,8 +520,19 @@ const mockDocsApi = {
   docsCreate: async (title) => { const path = `docs/${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'doc'}${docSeq++ ? `-${docSeq}` : ''}.md`; mockDocs[path] = { content: `# ${title}\n\n`, modified: Date.now() }; return { ok: true, path }; },
   docsDelete: async (path) => { delete mockDocs[path]; delete mockComments[path]; return { ok: true }; },
   docsOpen: async () => null,
+  docsShare: async (path) => { mockShares[path] = { geteilt: true, ordner: 'C:\\Users\\lea\\OneDrive - TF Bern\\Geteilt\\doc.askdoc', fehler: '', personen: [{ name: 'Lea Muster', ich: true, zuletzt: Date.now() }], anderen: [] }; return { ok: true, ...mockShares[path] }; },
+  docsJoin: async () => ({ ok: false, canceled: true }),
+  docsUnshare: async (path) => { delete mockShares[path]; return { ok: true }; },
+  docsShareInfo: async (path) => mockShares[path] || { geteilt: false },
+  docsShowFolder: async () => null,
+  // Teilen per Link (E83): ?ms=aus ohne App-Registrierung, ?ms=neu nicht angemeldet
+  docsMsStatus: async () => ({ eingerichtet: params.get('ms') !== 'aus', angemeldet: !!mockMs.name, name: mockMs.name }),
+  docsMsLogin: async () => { await wait(500); mockMs.name = 'Lea Muster'; return { ok: true, name: mockMs.name }; },
+  docsMsLogout: async () => { mockMs.name = ''; return { ok: true }; },
+  docsShareLink: async (path) => { const link = 'https://tfbern-my.sharepoint.com/:f:/g/personal/lea_muster/EaBcD123'; mockShares[path] = { geteilt: true, link, ordner: 'OneDrive (Link)', fehler: '', personen: [{ name: 'Lea Muster', ich: true, zuletzt: Date.now() }], anderen: [] }; return { ok: true, ...mockShares[path] }; },
+  docsJoinLink: async (link) => (/^https:\/\//.test(link) ? { ok: true, path: Object.keys(mockDocs)[0] } : { ok: false, reason: 'Das ist kein Link.' }),
   docsComments: async (path) => ({ ok: true, comments: structuredClone(mockComments[path] || []) }),
-  docsCommentAdd: async (path, zitat, text) => { const t = { id: `k${Math.random().toString(16).slice(2, 8)}`, zitat, erledigt: false, zeit: Date.now(), eintraege: [{ von: 'person', text, zeit: Date.now() }] }; (mockComments[path] ||= []).push(t); return { ok: true, thread: structuredClone(t), message: docMsg(path, t) }; },
+  docsCommentAdd: async (path, zitat, text, farbe = '') => { const t = { id: `k${Math.random().toString(16).slice(2, 8)}`, zitat, farbe, erledigt: false, zeit: Date.now(), eintraege: text ? [{ von: 'person', text, zeit: Date.now() }] : [] }; (mockComments[path] ||= []).push(t); return { ok: true, thread: structuredClone(t), message: docMsg(path, t) }; },
   docsCommentReply: async (path, id, text) => { const t = (mockComments[path] || []).find((x) => x.id === id); t.eintraege.push({ von: 'person', text, zeit: Date.now() }); return { ok: true, thread: { ...t }, message: docMsg(path, t) }; },
   docsCommentDone: async (path, id, done) => { const t = (mockComments[path] || []).find((x) => x.id === id); t.erledigt = !!done; return { ok: true, thread: { ...t } }; },
   docsCommentDelete: async (path, id) => { mockComments[path] = (mockComments[path] || []).filter((x) => x.id !== id); return { ok: true }; },
@@ -523,7 +553,7 @@ export function install() {
   });
   window.ask = {
     getState: async () => { chatOf(state.chat.id); return full(); },
-    onState: on('state'), onFiles: on('files'), onTasks: on('tasks'),
+    onState: on('state'), onFiles: on('files'), onTasks: on('tasks'), onDocsSync: on('docs:sync'),
     onMenuChooseFolder: on('x1'), onMenuNewFolder: on('x2'), onMenuGithub: on('x3'), onFolderError: on('folder:error'),
     onProjectRename: on('project:rename'), onGroupsChanged: on('groups'), onChatEvent: on('chat:event'), onChatChanged: on('chat:changed'),
     onBrowserState: on('browser:state'), onBrowserNotice: on('browser:notice'), onServers: on('servers'),
@@ -542,7 +572,11 @@ export function install() {
       { key: '2', label: 'Farbe', enabled: true, submenu: ['#0082B4', '#F28855', '#4EB68E', '#EE716D'].map((c, i) => ({ key: `2.${i}`, label: ['TF Blau', 'Orange', 'Grün', 'Rot'][i], type: 'radio', checked: i === 0, swatch: c, enabled: true })) },
       { separator: true }, { key: '4', label: 'Im Explorer öffnen', enabled: true }, { key: '5', label: 'Projektnotizen bearbeiten', enabled: true }, { separator: true },
       { key: '7', label: 'Aus der Liste entfernen', enabled: true }] }),
-    projectUpdate: async (folder, patch) => { const p = projects.find((x) => x.folder === folder); if (p && patch.name) p.name = patch.name; return true; },
+    projectUpdate: async (folder, patch) => {
+      const p = projects.find((x) => x.folder === folder); if (p && patch.name) p.name = patch.name;
+      if (p && typeof patch.nurQuellen === 'boolean') { p.nurQuellen = patch.nurQuellen; state = { ...state, project: { folder, name: p.name, color: p.color, nurQuellen: p.nurQuellen } }; push(); }
+      return true;
+    },
     setSettings: async (v) => { state = { ...state, ...v }; push(); },
     updateAction: async () => emit('ui:ask', params.get('meldung')
       ? { id: Date.now(), type: 'warning', message: 'Die Suche nach Updates hat nicht geklappt.', detail: 'Ist der Laptop mit dem Internet verbunden?\n\nnet::ERR_INTERNET_DISCONNECTED', buttons: ['OK'] }
@@ -614,7 +648,7 @@ export function install() {
     browserShow: async () => {}, browserGo: async () => {}, browserBack: async () => {}, browserForward: async () => {}, browserClear: async () => {}, browserReload: async () => {}, browserClose: async () => {},
     copy: async (t) => navigator.clipboard?.writeText(t).catch(() => {}), openLink: async (u) => window.open(u, '_blank'),
     files: async () => (state.free ? { top: [], recent: [] } : files), tasks: async () => null,
-    preview: async (rel) => (/\.(csv|py|txt)$/.test(rel) ? { kind: 'text', text: rel.endsWith('.csv') ? 'Datum;Kategorie;Beschreibung;Betrag CHF\n02.08.2026;Bücher;Fachbuch Netzwerktechnik;32.75\n02.08.2026;Verpflegung;Mittagessen Mensa;15.85' : 'import pandas as pd\n\ndf = pd.read_csv("ausgaben.csv", sep=";", encoding="cp1252")\nsummen = df.groupby("Kategorie")["Betrag CHF"].sum()' } : { kind: 'office', name: rel }),
+    preview: async (rel) => (/\.pdf$/i.test(rel) ? { kind: 'pdf', url: 'about:blank' } : /\.(csv|py|txt)$/.test(rel) ? { kind: 'text', text: rel.endsWith('.csv') ? 'Datum;Kategorie;Beschreibung;Betrag CHF\n02.08.2026;Bücher;Fachbuch Netzwerktechnik;32.75\n02.08.2026;Verpflegung;Mittagessen Mensa;15.85' : 'import pandas as pd\n\ndf = pd.read_csv("ausgaben.csv", sep=";", encoding="cp1252")\nsummen = df.groupby("Kategorie")["Betrag CHF"].sum()' } : { kind: 'office', name: rel }),
     openFile: async () => '', toPdf: async () => ({ fehler: 'Nur in der App.' }), showFile: async () => {},
     ...memoryApi,
     ...extensionsApi,

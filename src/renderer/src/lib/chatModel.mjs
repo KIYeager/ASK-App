@@ -3,7 +3,7 @@
 // Aufträge: Eingabe, Arbeitsschritte (einklappbare Karte), Schlussantwort und alles danach.
 // Reine Funktionen ohne DOM, damit sie sich mit node --test prüfen lassen.
 
-export const READ_ONLY = new Set(['read_file', 'list_files', 'find_files', 'search_text', 'chat_search', 'chat_read']);
+export const READ_ONLY = new Set(['read_file', 'list_files', 'find_files', 'search_text', 'chat_search', 'chat_read', 'quellen_suchen', 'quelle_lesen']);
 
 export function emptyChat() {
   return { entries: [], turnStats: [], seq: 0, streaming: null };
@@ -345,6 +345,17 @@ export function reuseTurns(prev, next) {
 const num = (n) => Math.round(n).toLocaleString('de-CH');
 const sec = (ms) => (ms / 1000).toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
+// Dauer für Menschen: «45 s» (mit decimals «3,0 s»), ab einer Minute «16 min 40 s», ab einer Stunde «1 h 2 min»,
+// damit nie «1000 s» dasteht
+export function dauer(ms, { decimals = false } = {}) {
+  const v = Math.max(0, Number(ms) || 0);
+  const total = Math.round(v / 1000);
+  if (total < 60) return decimals && v < 59950 ? `${sec(v)} s` : `${total} s`;
+  if (total < 3600) return `${Math.floor(total / 60)} min${total % 60 ? ` ${total % 60} s` : ''}`;
+  const min = Math.round(total / 60);
+  return `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}`;
+}
+
 export function statsText(list) {
   list = (list || []).filter(Boolean);
   if (!list.length) return null;
@@ -354,9 +365,9 @@ export function statsText(list) {
   const approx = list.some((s) => s.estimated) ? '≈ ' : '';
   const parts = [`${list.length} ${list.length === 1 ? 'Schritt' : 'Schritte'}`, `${approx}${num(tokens)} Token`];
   if (gen > 0) parts.push(`${approx}${num(tokens / (gen / 1000))} Token/s`);
-  parts.push(`Modell ${sec(total)} s`);
-  const steps = list.map((s, i) => `Schritt ${i + 1}: ${s.estimated ? '≈ ' : ''}${num(s.tokens || 0)} Token in ${sec(s.genMs || 0)} s`
-    + `${s.genMs > 0 ? ` (${num((s.tokens || 0) / (s.genMs / 1000))} Token/s)` : ''}, erste Antwort nach ${sec(s.firstMs || 0)} s`
+  parts.push(`Modell ${dauer(total, { decimals: true })}`);
+  const steps = list.map((s, i) => `Schritt ${i + 1}: ${s.estimated ? '≈ ' : ''}${num(s.tokens || 0)} Token in ${dauer(s.genMs || 0, { decimals: true })}`
+    + `${s.genMs > 0 ? ` (${num((s.tokens || 0) / (s.genMs / 1000))} Token/s)` : ''}, erste Antwort nach ${dauer(s.firstMs || 0, { decimals: true })}`
     + `${s.promptTokens ? `, Eingabe ${num(s.promptTokens)} Token` : ''}`);
   if (approx) steps.push('≈ geschätzt aus der Textlänge: ASK hat keine Tokenzahlen geliefert.');
   return { text: parts.join(' · '), title: steps.join('\n') };
@@ -368,7 +379,12 @@ export function groupTitle(entries) {
   const reads = count(['read_file', 'chat_read']);
   const lists = count(['list_files']);
   const searches = count(['find_files', 'search_text', 'chat_search']);
+  // Quellen (E84): Suchen und gelesene Teile in den Unterlagen
+  const sourceSearches = count(['quellen_suchen']);
+  const sourceReads = count(['quelle_lesen']);
   const parts = [];
+  if (sourceSearches) parts.push(`${sourceSearches === 1 ? 'In den Quellen gesucht' : `${sourceSearches}× in den Quellen gesucht`}`);
+  if (sourceReads) parts.push(`${sourceReads} ${sourceReads === 1 ? 'Stelle' : 'Stellen'} in den Quellen gelesen`);
   if (reads) parts.push(`${reads} ${reads === 1 ? 'Datei' : 'Dateien'} gelesen`);
   if (lists) parts.push(`${lists} Ordner angesehen`);
   if (searches) parts.push(`${searches} ${searches === 1 ? 'Suche' : 'Suchen'}`);

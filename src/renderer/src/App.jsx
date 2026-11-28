@@ -14,6 +14,7 @@ import { Turn } from './components/Chat.jsx';
 import Guard from './components/Crash.jsx';
 import { applyEvent, buildTurns, emptyChat, lastTasks, loadChat, reuseTurns } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
+import { parseSourceLink } from './lib/md.mjs';
 import { emitMod, fillTemplate, loadMods, modCommandFor, modsChanged, setModHost, takeDialogAfterReload, useMods } from './lib/mods.js';
 
 // Knöpfe des Fensters (ohne Rahmen von Windows, ENTSCHEIDE E73): minimieren, maximieren, schliessen
@@ -346,6 +347,7 @@ export default function App() {
         if (!c.running && !document.querySelector('.overlay, .tour') && (!document.activeElement || document.activeElement === document.body)) composer.current?.focus();
       }),
       a.onFiles((f) => setFiles(f)),
+      a.onNotice?.((text) => notice(text)),
       a.onGroupsChanged?.(() => loadChats()),
       a.onProjectRename?.((folder) => { setRenaming(folder); if (!stateRef.current?.chatbarOpen) a.setChatbar(true); }),
       a.onMenuChooseFolder(() => openFolder(() => a.chooseFolder())),
@@ -495,7 +497,8 @@ export default function App() {
     return res;
   };
 
-  const openFile = useCallback((p) => {
+  // seite: Vorschau eines PDF (oder einer umgewandelten Präsentation) an dieser Seite öffnen (Quellen, E84)
+  const openFile = useCallback((p, seite = null) => {
     // Docs öffnen im eigenen Reiter (E81), nicht in der Vorschau
     const rel = String(p || '').replaceAll('\\', '/').replace(/^\.?\//, '');
     if (/^docs\/.+\.md$/i.test(rel)) {
@@ -505,7 +508,7 @@ export default function App() {
       return;
     }
     const found = allFiles.find((f) => norm(f.path) === norm(p));
-    setSelected(found || { path: p, name: baseName(p), modified: Date.now() });
+    setSelected({ ...(found || { path: p, name: baseName(p), modified: Date.now() }), seite: seite || null, opened: Date.now() });
     setTab('vorschau');
     if (!stateRef.current?.sidebarOpen) api().setSidebar(true);
   }, [allFiles]);
@@ -555,6 +558,8 @@ export default function App() {
   const setVerboseSaved = (on) => { setVerbose(on); api().setPrefs?.({ verbose: on }); };
 
   const notice = (text) => dispatch({ type: 'events', evs: [{ type: 'notice', text }] });
+  // «Nur aus Quellen» pro Projekt (E84); der Kern schickt danach den neuen Zustand
+  const setStrictSources = (on) => { if (state.folder) api().projectUpdate(state.folder, { nurQuellen: !!on }); };
 
   const blocker = !state?.folder ? 'Zuerst ein Projekt wählen.'
     : ask.state === 'fehler' ? 'ASK meldet einen Fehler (Hinweis über dem Eingabefeld).'
@@ -612,6 +617,7 @@ export default function App() {
     { cmd: '/nachfragen', text: 'Nachfragen: ASK fragt vor heiklen Schritten', run: () => api().setSettings({ mode: 'nachfragen' }) },
     { cmd: '/modell', text: 'Modell wählen', run: () => document.getElementById('model-select')?.focus() },
     { cmd: '/denken', text: 'Denkaufwand einstellen (Standard, Tief bis Maximal)', run: () => document.getElementById('think-btn')?.click() },
+    ...(!free && files.quellen > 0 ? [{ cmd: '/quellen', text: '«Nur aus Quellen» ein- oder ausschalten', run: () => setStrictSources(!state.project?.nurQuellen) }] : []),
     { cmd: '/web', text: 'Websuche ein- oder ausschalten', run: () => { if (state.webSearchAvailable) api().setWebSearch(!state.webSearch); else notice('Websuche ist in ASK für dein Konto nicht freigegeben.'); } },
     { cmd: '/chats', text: 'Frühere Chats für das Modell ein- oder ausschalten', run: () => api().setChatMemory(!state.chatMemory) },
     { cmd: '/einstellungen', text: 'Einstellungen: Darstellung, Rückfragen, Version', run: () => setDialog({ name: 'settings' }) },
@@ -764,7 +770,8 @@ export default function App() {
     isFile: (t) => !!findFile(t),
     openFile,
     openFileByName: (t) => { const f = findFile(t); if (f) openFile(f.path); },
-    openLink: (u) => api().openLink(u),
+    // Verweis auf eine Unterlage (E84): Vorschau rechts statt Browser
+    openLink: (u) => { const ref = parseSourceLink(u); if (ref) openFile(ref.path, ref.seite); else if (!String(u).startsWith('quelle:')) api().openLink(u); },
     copy: (t) => api().copy(t),
     state,
     approve: (id, a) => api().chatApprove(id, a),
@@ -953,6 +960,7 @@ export default function App() {
           {/* auch während der Anmeldung da (unter der Anmeldeseite), mit Hinweis im Platzhalter */}
           {(
             <Composer ref={composer} state={state} chatId={chatId} free={free} running={running} block={blocker}
+              sources={{ count: files.quellen || 0, strict: !!state.project?.nurQuellen }} setStrictSources={setStrictSources}
               fileBlock={free && state.terminal?.state !== 'läuft' ? (state.terminal?.state === 'startet' ? 'Einen Moment: Zum Lesen von Anhängen startet noch das Terminal.'
                 : 'Angehängte Dateien kann ASK gerade nicht lesen, weil das Terminal nicht läuft (unten links auf «Terminal» klicken). Bilder und Text gehen trotzdem.') : ''} goal={state.chat?.goal} tasks={tasks} tasksLive={tasksLive}
               context={state.chat?.context} todoCollapsed={state.prefs?.todoCollapsed ?? true}

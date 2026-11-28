@@ -100,3 +100,17 @@ test('Titel und Blöcke', () => {
   assert.deepStrictEqual(b.filter((x) => x.type === 'li').map((x) => x.text), ['a', 'b']);
   assert.strictEqual(b.filter((x) => x.type === 'listbreak').length, 1, 'Leerzeile zwischen Punkten trennt die Liste nicht');
 });
+
+test('Bilder im Doc: nur relative Pfade, hin und zurück', async () => {
+  const { safeImagePath } = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'renderer', 'src', 'lib', 'docMd.mjs')).href);
+  const html = mdToHtml('Text\n\n![Zelle mit Kern](bilder/zelle.png)', { image: (src) => `askfile://datei/docs/${src}` });
+  assert.ok(html.includes('<img src="askfile://datei/docs/bilder/zelle.png" alt="Zelle mit Kern" data-src="bilder/zelle.png">'), html);
+  assert.strictEqual(round('Text\n\n![Zelle mit Kern](bilder/zelle.png)\n'), 'Text\n\n![Zelle mit Kern](bilder/zelle.png)\n');
+  assert.strictEqual(round('Ein ![Logo](../bilder/logo.png) im Satz.\n'), 'Ein ![Logo](../bilder/logo.png) im Satz.\n');
+  for (const bad of ['https://x.ch/a.png', 'C:/x.png', '/etc/x.png', 'file:///x.png', 'a\\b.png', 'javascript:alert(1)']) {
+    assert.ok(!safeImagePath(bad), bad);
+    assert.ok(!mdToHtml(`![x](${bad})`).includes('<img'), bad);
+  }
+  // Bilder von Webseiten (ohne data-src) fallen beim Einfügen weg
+  assert.strictEqual(htmlToMd(parse('<p>a<img src="https://x.ch/t.png">b</p>')), 'ab\n');
+});

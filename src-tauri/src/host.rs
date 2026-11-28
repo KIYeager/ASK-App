@@ -110,6 +110,19 @@ impl Host for HostImpl {
         rx.await.ok().flatten().map(|p| p.to_string_lossy().to_string())
     }
 
+    async fn pick_open_files(&self, title: &str, filters: Filters) -> Vec<String> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let mut d = filters_of(self.app.dialog().file().set_title(title), &filters);
+        if let Some(w) = self.window() {
+            d = d.set_parent(&w);
+        }
+        d.pick_files(move |p| {
+            let list: Vec<String> = p.unwrap_or_default().into_iter().filter_map(|p| p.into_path().ok()).map(|p| p.to_string_lossy().to_string()).collect();
+            let _ = tx.send(list);
+        });
+        rx.await.unwrap_or_default()
+    }
+
     async fn pick_save_file(&self, title: &str, default_name: &str, filters: Filters) -> Option<String> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let mut d = filters_of(self.app.dialog().file().set_title(title).set_file_name(default_name), &filters);

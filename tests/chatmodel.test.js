@@ -114,6 +114,27 @@ test('Statistikzeile und Gruppentitel', async () => {
   assert.strictEqual(statsText([]), null);
   assert.strictEqual(groupTitle([{ name: 'read_file' }, { name: 'read_file' }, { name: 'list_files' }, { name: 'search_text' }]),
     '2 Dateien gelesen, 1 Ordner angesehen, 1 Suche');
+  // Quellen (E84)
+  assert.strictEqual(groupTitle([{ name: 'quellen_suchen' }, { name: 'quellen_suchen' }, { name: 'quelle_lesen' }]), '2× in den Quellen gesucht, 1 Stelle in den Quellen gelesen');
+  assert.strictEqual(groupTitle([{ name: 'quellen_suchen' }]), 'In den Quellen gesucht');
+});
+
+test('Dauer: Sekunden, ab einer Minute Minuten und Sekunden, ab einer Stunde Stunden', async () => {
+  const { dauer, statsText } = await load();
+  assert.strictEqual(dauer(0), '0 s');
+  assert.strictEqual(dauer(45_000), '45 s');
+  assert.strictEqual(dauer(59_600), '1 min', 'nie «60 s»');
+  assert.strictEqual(dauer(60_000), '1 min');
+  assert.strictEqual(dauer(1_000_000), '16 min 40 s', 'nicht «1000 s»');
+  assert.strictEqual(dauer(3_599_000), '59 min 59 s');
+  assert.strictEqual(dauer(3_600_000), '1 h');
+  assert.strictEqual(dauer(3_725_000), '1 h 2 min');
+  assert.match(dauer(3000, { decimals: true }), /^3[.,]0 s$/);
+  assert.strictEqual(dauer(59_970, { decimals: true }), '1 min', 'nie «60,0 s»');
+  assert.strictEqual(dauer(-5), '0 s');
+  const long = statsText([{ ...stats, totalMs: 1_234_500, genMs: 1_200_000 }]);
+  assert.match(long.text, /Modell 20 min 35 s$/, long.text);
+  assert.ok(!/\d{3,} s/.test(long.title), long.title);
 });
 
 test('Markdown bleibt maskiert und kennt Zitate', async () => {

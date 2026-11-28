@@ -1,7 +1,8 @@
 // ASK Docs (ENTSCHEIDE E81): Markdown für den Editor im Reiter «Docs» in HTML und zurück. Gespeichert wird immer
 // Markdown (docs/….md im Projekt); der Editor zeigt es formatiert wie in Word. Dasselbe Markdown versteht der Export nach
 // Word (src-tauri/core/src/docx.rs): Überschriften, Absätze, Listen (verschachtelt), Zitate, Code, Tabellen, Trennlinien,
-// **fett**, *kursiv*, ~~durchgestrichen~~, `Code`, [Links](https://…).
+// **fett**, *kursiv*, ~~durchgestrichen~~, `Code`, [Links](https://…) und Bilder ![Beschreibung](bilder/name.png)
+// (Pfad relativ zum Doc, E82; die Adresse zum Anzeigen liefert mdToHtml(md, { image })).
 // mdToHtml erzeugt nur eigene, maskierte Tags. htmlToMd liest einen DOM-Baum (oder einen Nachbau mit nodeType, nodeName,
 // childNodes, textContent, getAttribute), auch eingefügtes HTML aus Word oder dem Browser; was es nicht kennt, wird Text.
 // Reine Funktionen ohne DOM, damit sie sich mit node --test prüfen lassen.
@@ -108,6 +109,11 @@ export function parseBlocks(md) {
 
 const ESCAPABLE = '\\`*_~[]()#|>!-+.';
 
+// Bildpfad im Doc: nur relativ, ohne Laufwerk, Schema oder Rückstrich (die Auflösung prüft die Oberfläche)
+export const safeImagePath = (src) => !!src && !/^[a-z][a-z0-9+.-]*:|^[\\/]|\\/i.test(src) && src.length < 400;
+// Adresse eines Bildes zum Anzeigen (während mdToHtml gesetzt)
+let imageUrl = null;
+
 function hasClosing(chars, from, marker) {
   for (let k = from; k + marker.length <= chars.length; k++) {
     if (chars.slice(k, k + marker.length).join('') === marker && chars[k - 1] !== '\\') return true;
@@ -128,6 +134,24 @@ export function inlineHtml(text) {
     if (c === '`') {
       const end = chars.indexOf('`', i + 1);
       if (end > i) { out += `<code>${esc(chars.slice(i + 1, end).join(''))}</code>`; i = end; continue; }
+    }
+    if (c === '!' && n === '[') {
+      const mid = chars.indexOf(']', i + 2);
+      if (mid > i && chars[mid + 1] === '(') {
+        const end = chars.indexOf(')', mid + 2);
+        if (end > mid) {
+          const alt = chars.slice(i + 2, mid).join('');
+          const src = chars.slice(mid + 2, end).join('').trim();
+          if (safeImagePath(src)) {
+            const url = imageUrl ? imageUrl(src) : '';
+            out += `<img${url ? ` src="${esc(url)}"` : ''} alt="${esc(alt)}" data-src="${esc(src)}">`;
+          } else {
+            out += esc(alt);
+          }
+          i = end;
+          continue;
+        }
+      }
     }
     if (c === '[') {
       const mid = chars.indexOf(']', i + 1);
@@ -156,8 +180,12 @@ export function inlineHtml(text) {
 
 // ---------- Markdown → HTML für den Editor ----------
 
-export function mdToHtml(md) {
-  const blocks = parseBlocks(md);
+export function mdToHtml(md, opts = {}) {
+  imageUrl = typeof opts.image === 'function' ? opts.image : null;
+  try { return blocksToHtml(parseBlocks(md)); } finally { imageUrl = null; }
+}
+
+function blocksToHtml(blocks) {
   let html = '';
   // Listen: Stapel offener <ul>/<ol>; ein <li> bleibt offen, bis der nächste Punkt gleicher oder kleinerer Tiefe kommt
   const stack = [];
@@ -245,6 +273,12 @@ function inline(n, ctx = {}) {
     }
     if (c.nodeType !== 1) continue;
     const name = nameOf(c);
+    if (name === 'IMG') {
+      // Nur Bilder, die aus dem Doc kommen (data-src); eingefügte Bilder von Webseiten fallen weg
+      const src = String(c.getAttribute?.('data-src') || '');
+      if (safeImagePath(src)) out += `![${String(c.getAttribute?.('alt') || '').replace(/[[\]\\]/g, '')}](${src.replace(/[()\s]/g, encodeURIComponent)})`;
+      continue;
+    }
     if (SKIP.has(name)) continue;
     if (name === 'BR') { out += '\\\n'; continue; }
     if (name === 'CODE' || name === 'KBD' || name === 'SAMP') {
@@ -301,7 +335,7 @@ function blocks(n, out) {
     run = { childNodes: [] };
   };
   for (const c of kids(n)) {
-    if (c.nodeType === 3 || (c.nodeType === 1 && !isBlock(c) && !SKIP.has(nameOf(c)))) {
+    if (c.nodeType === 3 || (c.nodeType === 1 && !isBlock(c) && (!SKIP.has(nameOf(c)) || nameOf(c) === 'IMG'))) {
       if (c.nodeType === 1 && nameOf(c) === 'BR' && !run.childNodes.length) continue;
       run.childNodes.push(c);
       continue;

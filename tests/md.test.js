@@ -72,3 +72,19 @@ test('Maskierung bleibt: kein fremdes HTML, keine javascript:-Links, kein Ausbru
   assert.match(md('`<b>`'), /<code>&lt;b&gt;<\/code>/);
   assert.ok(!/<b>/.test(md('| <b>x</b> |\n|---|\n| <i> |')));
 });
+
+test('Verweise auf Unterlagen (Quellen, E84): nur Pfade im Ordner Quellen, ohne «..» und Laufwerk', async () => {
+  const { parseSourceLink } = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'renderer', 'src', 'lib', 'md.mjs')).href);
+  assert.strictEqual(md('[Skript, S. 2](quelle:Quellen/Skript%20Bio.pdf#seite=2)'),
+    '<p><a class="quelle" href="quelle:Quellen/Skript%20Bio.pdf#seite=2" title="Quellen/Skript Bio.pdf, S. 2">Skript, S. 2</a></p>');
+  assert.deepStrictEqual(parseSourceLink('quelle:Quellen/Woche%202/Blatt.docx'), { path: 'Quellen/Woche 2/Blatt.docx', seite: null });
+  assert.deepStrictEqual(parseSourceLink('quelle:quellen/a.pdf#seite=14'), { path: 'quellen/a.pdf', seite: 14 });
+  for (const bad of ['quelle:Quellen/../geheim.txt', 'quelle:Quellen/..%2Fgeheim.txt', 'quelle:C:/Windows/win.ini', 'quelle:/etc/passwd', 'quelle:Andere/a.pdf',
+    'quelle:Quellen/', 'quelle:Quellen/a.pdf#seite=x', 'quelle:Quellen/%E0%A4%A', 'https://x.ch', '']) {
+    assert.strictEqual(parseSourceLink(bad), null, bad);
+  }
+  assert.ok(!/<a /.test(md('[x](quelle:Quellen/../geheim.txt)')), 'ungültiger Verweis bleibt Text');
+  const quoted = md('[a](quelle:Quellen/a"onmouseover="x.pdf)');
+  assert.ok(!/"onmouseover/.test(quoted), quoted);
+  assert.ok(!/<img/.test(md('[<img src=x>](quelle:Quellen/a.pdf)')), 'Text des Verweises bleibt maskiert');
+});

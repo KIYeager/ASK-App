@@ -287,6 +287,9 @@ button.work-head:hover { background: var(--hover); }
 .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
 .md li { margin: 2px 0; }
 .md a { color: var(--acc-text); }
+/* Verweis auf eine Unterlage im Ordner «Quellen» (E84): öffnet die Vorschau, darum ohne Unterstrich und mit Hintergrund */
+.md a.quelle { text-decoration: none; padding: 0 .3em; border-radius: 4px; background: color-mix(in srgb, var(--acc-text) 10%, transparent); white-space: nowrap; }
+.md a.quelle:hover { background: color-mix(in srgb, var(--acc-text) 18%, transparent); }
 .md code { font-size: .88em; }
 .md code.file { color: var(--acc-text); background: var(--acc-soft); cursor: pointer; }
 .md code.file:hover { text-decoration: underline; }
@@ -1367,7 +1370,6 @@ textarea.gh-input { resize: vertical; min-height: 56px; line-height: 1.45; }
 .docs-page table { width: 100%; }
 .docs-page td, .docs-page th { min-width: 3em; }
 .docs-page a { cursor: text; }
-::highlight(doc-kommentar) { background-color: rgba(242, 184, 85, .38); }
 .docs-comments { flex: none; max-height: 38%; overflow-y: auto; border-top: 1px solid var(--line); background: var(--pane); }
 .docs-comments-head { padding: 7px 12px; position: sticky; top: 0; background: var(--pane); border-bottom: 1px solid var(--line); z-index: 1; }
 .docs-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -1390,6 +1392,35 @@ button.docs-quote:hover { filter: brightness(.97); }
 @container (max-width: 480px) {
   .rt:has(> :nth-child(5)) button .icon { display: none; }
 }
+/* Anstreichen (E82): Farben, Knopf oben, Rechtsklick */
+:root { --mark-gelb: rgba(242, 184, 85, .7); --mark-gruen: rgba(78, 182, 142, .65); --mark-blau: rgba(85, 170, 207, .65); --mark-rot: rgba(238, 113, 109, .65); }
+.docs-split { display: inline-flex; }
+.docs-split .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.docs-split .btn:last-child { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0; padding-left: 6px; padding-right: 6px; }
+.docs-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-left: -2px; }
+.docs-dot.gelb, .docs-quote.gelb { --mark: var(--mark-gelb); }
+.docs-dot.gruen, .docs-quote.gruen { --mark: var(--mark-gruen); }
+.docs-dot.blau, .docs-quote.blau { --mark: var(--mark-blau); }
+.docs-dot.rot, .docs-quote.rot { --mark: var(--mark-rot); }
+.docs-dot { background: var(--mark); }
+.docs-quote.gelb, .docs-quote.gruen, .docs-quote.blau, .docs-quote.rot { border-left-color: var(--mark); background: color-mix(in srgb, var(--mark) 30%, transparent); }
+::highlight(doc-gelb) { background-color: rgba(242, 184, 85, .4); }
+::highlight(doc-gruen) { background-color: rgba(78, 182, 142, .35); }
+::highlight(doc-blau) { background-color: rgba(85, 170, 207, .35); }
+::highlight(doc-rot) { background-color: rgba(238, 113, 109, .35); }
+.docs-page img { max-width: 100%; height: auto; border-radius: 6px; display: inline-block; vertical-align: middle; }
+.docs-page p > img:only-child { display: block; margin: 6px auto; }
+/* Geteilte Docs (E82) */
+.docs-shared { color: var(--acc-text); display: inline-grid; place-items: center; flex: none; }
+.docs-shared-btn { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid var(--acc-line); border-radius: 999px; background: var(--acc-soft); color: var(--acc-text); font-size: 12px; flex: none; }
+.docs-share { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--card); line-height: 1.5; }
+.docs-share p, .docs-share ul { margin: 0; }
+.docs-share ul { padding-left: 18px; }
+.docs-people, .docs-recent { list-style: none; padding: 0 !important; display: flex; flex-direction: column; gap: 3px; }
+.docs-people li { display: flex; align-items: center; gap: 6px; }
+.docs-recent li { font-size: 12px; overflow-wrap: anywhere; }
+.docs-linkbox { display: flex; flex-direction: column; gap: 6px; }
+.docs-linkbox input { width: 100%; padding: 5px 9px; border: 1px solid var(--line-2); border-radius: 7px; background: var(--pane); color: var(--text); font: 12px var(--mono); }
 
 /* Absturzschutz (components/Crash.jsx): Karte statt leeres Fenster, kurzer Hinweis an einer einzelnen Stelle */
 .crash { height: 100%; display: grid; place-items: center; padding: 24px; background: var(--bg, var(--pane)); color: var(--text); }
