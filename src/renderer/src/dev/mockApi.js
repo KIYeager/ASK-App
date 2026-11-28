@@ -58,6 +58,10 @@ const tree = {
     { path: 'bilder\\titelbild.png', name: 'titelbild.png', dir: false, size: 1200000, modified: now - 86400000 }],
 };
 const files = { top: tree[''], recent: tree[''].filter((f) => !f.dir) };
+// Quellen (E84): Ordner «Quellen» mit einer Unterlage; ?quellen=1 zeigt dazu eine Antwort mit Verweisen
+tree[''].unshift({ path: 'Quellen', name: 'Quellen', dir: true, size: 0, modified: now - 7200000 });
+tree.Quellen = [{ path: 'Quellen\\Skript Budgetplanung.pdf', name: 'Skript Budgetplanung.pdf', dir: false, size: 412000, modified: now - 7200000 }];
+files.quellen = 1;
 
 const saved = [
   { role: 'user', content: 'Werte ausgaben.csv aus: Summen pro Kategorie und ein Diagramm, alles in Excel.', time: now - 400000, snapshot: 's1',
@@ -75,6 +79,16 @@ const saved = [
   { role: 'tool', id: 't5', ok: true, summary: 'Tabelle und Diagramm geprüft', output: '' },
   { role: 'assistant', content: 'Fertig. In `auswertung.xlsx` stehen die Summen pro Kategorie und ein Balkendiagramm.\n\n| Kategorie | CHF |\n|---|---:|\n| ÖV-Abo | 500.00 |\n| Freizeit | 460.75 |\n| Bücher | 411.15 |\n| Material | 266.95 |\n| Handy | 150.00 |\n| Verpflegung | 145.70 |\n| **Total** | **1’934.55** |\n\nDen alten Entwurf `entwurf_alt.xlsx` habe ich nach deiner Bestätigung gelöscht.', stats: stats(300), calls: [] },
 ];
+if (params.get('quellen')) {
+  saved.push({ role: 'user', content: 'Was ist laut Skript der Unterschied zwischen fixen und variablen Kosten?', time: now - 120000 },
+    { role: 'assistant', content: '', stats: stats(150), calls: [{ id: 'q1', name: 'quellen_suchen', label: 'Quellen', detail: '«fixe variable Kosten»' }, { id: 'q2', name: 'quelle_lesen', label: 'Quelle', detail: 'Quellen/Skript Budgetplanung.pdf, S. 4' }] },
+    { role: 'tool', id: 'q1', ok: true, summary: '3 Treffer', output: '[1] Quellen/Skript Budgetplanung.pdf · S. 4 · …' },
+    { role: 'tool', id: 'q2', ok: true, summary: 'S. 4', output: 'Fixe Kosten fallen jeden Monat gleich an …' },
+    { role: 'assistant', stats: stats(380), time: now - 100000,
+      content: 'Laut Skript sind **fixe Kosten** Ausgaben, die jeden Monat gleich hoch sind, zum Beispiel Miete, ÖV-Abo oder Handy-Abo [Skript Budgetplanung, S. 4](quelle:Quellen/Skript%20Budgetplanung.pdf#seite=4). **Variable Kosten** schwanken je nach Verhalten, etwa Freizeit, Kleider oder Ausgang [Skript Budgetplanung, S. 5](quelle:Quellen/Skript%20Budgetplanung.pdf#seite=5).\n\nDas Skript empfiehlt, zuerst die fixen Kosten vom Lohn abzuziehen und den Rest auf die variablen Kosten und das Sparen zu verteilen [Skript Budgetplanung, S. 7](quelle:Quellen/Skript%20Budgetplanung.pdf#seite=7).',
+      sources: [{ url: 'quelle:Quellen/Skript%20Budgetplanung.pdf#seite=4', title: 'Skript Budgetplanung, S. 4' }, { url: 'quelle:Quellen/Skript%20Budgetplanung.pdf#seite=5', title: 'Skript Budgetplanung, S. 5' },
+        { url: 'quelle:Quellen/Skript%20Budgetplanung.pdf#seite=7', title: 'Skript Budgetplanung, S. 7' }] });
+}
 
 // Nutzung (E49): 30 Tage mit Beispielwerten, drei Projekte, Angaben von ASK
 function mockUsage() {
@@ -558,7 +572,11 @@ export function install() {
       { key: '2', label: 'Farbe', enabled: true, submenu: ['#0082B4', '#F28855', '#4EB68E', '#EE716D'].map((c, i) => ({ key: `2.${i}`, label: ['TF Blau', 'Orange', 'Grün', 'Rot'][i], type: 'radio', checked: i === 0, swatch: c, enabled: true })) },
       { separator: true }, { key: '4', label: 'Im Explorer öffnen', enabled: true }, { key: '5', label: 'Projektnotizen bearbeiten', enabled: true }, { separator: true },
       { key: '7', label: 'Aus der Liste entfernen', enabled: true }] }),
-    projectUpdate: async (folder, patch) => { const p = projects.find((x) => x.folder === folder); if (p && patch.name) p.name = patch.name; return true; },
+    projectUpdate: async (folder, patch) => {
+      const p = projects.find((x) => x.folder === folder); if (p && patch.name) p.name = patch.name;
+      if (p && typeof patch.nurQuellen === 'boolean') { p.nurQuellen = patch.nurQuellen; state = { ...state, project: { folder, name: p.name, color: p.color, nurQuellen: p.nurQuellen } }; push(); }
+      return true;
+    },
     setSettings: async (v) => { state = { ...state, ...v }; push(); },
     updateAction: async () => emit('ui:ask', params.get('meldung')
       ? { id: Date.now(), type: 'warning', message: 'Die Suche nach Updates hat nicht geklappt.', detail: 'Ist der Laptop mit dem Internet verbunden?\n\nnet::ERR_INTERNET_DISCONNECTED', buttons: ['OK'] }
@@ -630,7 +648,7 @@ export function install() {
     browserShow: async () => {}, browserGo: async () => {}, browserBack: async () => {}, browserForward: async () => {}, browserClear: async () => {}, browserReload: async () => {}, browserClose: async () => {},
     copy: async (t) => navigator.clipboard?.writeText(t).catch(() => {}), openLink: async (u) => window.open(u, '_blank'),
     files: async () => (state.free ? { top: [], recent: [] } : files), tasks: async () => null,
-    preview: async (rel) => (/\.(csv|py|txt)$/.test(rel) ? { kind: 'text', text: rel.endsWith('.csv') ? 'Datum;Kategorie;Beschreibung;Betrag CHF\n02.08.2026;Bücher;Fachbuch Netzwerktechnik;32.75\n02.08.2026;Verpflegung;Mittagessen Mensa;15.85' : 'import pandas as pd\n\ndf = pd.read_csv("ausgaben.csv", sep=";", encoding="cp1252")\nsummen = df.groupby("Kategorie")["Betrag CHF"].sum()' } : { kind: 'office', name: rel }),
+    preview: async (rel) => (/\.pdf$/i.test(rel) ? { kind: 'pdf', url: 'about:blank' } : /\.(csv|py|txt)$/.test(rel) ? { kind: 'text', text: rel.endsWith('.csv') ? 'Datum;Kategorie;Beschreibung;Betrag CHF\n02.08.2026;Bücher;Fachbuch Netzwerktechnik;32.75\n02.08.2026;Verpflegung;Mittagessen Mensa;15.85' : 'import pandas as pd\n\ndf = pd.read_csv("ausgaben.csv", sep=";", encoding="cp1252")\nsummen = df.groupby("Kategorie")["Betrag CHF"].sum()' } : { kind: 'office', name: rel }),
     openFile: async () => '', toPdf: async () => ({ fehler: 'Nur in der App.' }), showFile: async () => {},
     ...memoryApi,
     ...extensionsApi,

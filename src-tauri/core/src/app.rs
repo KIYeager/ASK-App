@@ -994,11 +994,15 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 let history = if truthy(&settings::get("chatMemory")) { crate::history::history_prompt(Path::new(&f), chat) } else { String::new() };
                 // Ohne Projekt (E78): keine Projektnotizen und keine Vorlagen für Dateien
                 let (notes, templates) = if free { (String::new(), String::new()) } else { (project_notes(&f), crate::vorlagen::system_prompt()) };
-                format!("{}{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, templates, crate::docs::system_prompt(&f), a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch())
+                // Quellen (E84): Unterlagen im Ordner «Quellen», nur in Projekten
+                let quellen = if free { String::new() } else { let p = Path::new(&f); crate::sources::prompt(p, crate::sources::strict(p)) };
+                format!("{}{}{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, quellen, templates, crate::docs::system_prompt(&f), a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch())
             }
         });
         o.get_command_hint = Arc::new({ let f = f.clone(); move |chat: &str| read_instruction("befehle.md", &f, chat) });
-        o.get_web_search = Arc::new({ let me = me.clone(); move || me.upgrade().is_some_and(|a| a.ask.web_search()) && truthy(&settings::get("webSearch")) });
+        // «Nur aus Quellen» (E84) schaltet die Websuche von ASK für dieses Projekt aus
+        o.get_web_search = Arc::new({ let (me, f) = (me.clone(), f.clone()); move || me.upgrade().is_some_and(|a| a.ask.web_search()) && truthy(&settings::get("webSearch")) && (free || !crate::sources::strict(Path::new(&f))) });
+        o.get_sources = Arc::new({ let f = f.clone(); move || if free { (false, false) } else { let p = Path::new(&f); (crate::sources::count(p) > 0, crate::sources::strict(p)) } });
         o.get_thinking = Arc::new({ let me = me.clone(); move || me.upgrade().map(|a| a.thinking_level()).unwrap_or_default() });
         o.github = Some(self.github.clone());
         o.github_trust = Some(self.github_trust.clone());
@@ -1421,6 +1425,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         if let Err(err) = std::fs::create_dir_all(&target) {
             return fail(format!("Der Ordner kann nicht angelegt werden: {err}"));
         }
+        // Ordner für Kursunterlagen (E84); fehlt er, geht das Projekt trotzdem
+        let _ = std::fs::create_dir_all(target.join(crate::sources::FOLDER));
         self.open_folder(&target.to_string_lossy(), &title).await
     }
 
@@ -1551,6 +1557,25 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         Value::Array(groups)
     }
 
+    /// Kursunterlagen wählen und in den Ordner «Quellen» des Projekts kopieren (ENTSCHEIDE E84)
+    async fn add_sources(&self, folder: &str) {
+        let filters: crate::host::Filters = vec![
+            ("Unterlagen".into(), ["pdf", "docx", "pptx", "xlsx", "odt", "odp", "ods", "rtf", "txt", "md", "csv", "epub", "png", "jpg", "jpeg"].iter().map(|s| s.to_string()).collect()),
+            ("Alle Dateien".into(), vec!["*".into()]),
+        ];
+        let picked = self.host.pick_open_files("Unterlagen als Quellen hinzufügen", filters).await;
+        if picked.is_empty() {
+            return;
+        }
+        let text = match crate::sources::add(Path::new(folder), &picked) {
+            Ok(done) if done.len() == 1 => format!("{} liegt jetzt im Ordner {}. ASK benutzt die Unterlage in diesem Projekt.", done[0].rsplit('/').next().unwrap_or(""), crate::sources::FOLDER),
+            Ok(done) => format!("{} Unterlagen liegen jetzt im Ordner {}. ASK benutzt sie in diesem Projekt.", done.len(), crate::sources::FOLDER),
+            Err(err) => format!("Nicht kopiert: {err}"),
+        };
+        self.send("app:notice", json!(text));
+        self.push_state();
+    }
+
     fn open_notes(&self, folder: &str) {
         let file = Path::new(folder).join(".ask").join("projekt.md");
         if !file.exists() {
@@ -1596,6 +1621,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             items.push(MenuItem::new("Im Explorer öffnen", self.action(move |a, _| { let f = f2.clone(); Box::pin(async move { a.host.open_path(&f).await; }) })));
             let f2 = f.clone();
             items.push(MenuItem::new("Projektnotizen bearbeiten", self.action(move |a, _| { let f = f2.clone(); Box::pin(async move { a.open_notes(&f); }) })));
+            let f2 = f.clone();
+            items.push(MenuItem::new("Quellen hinzufügen …", self.action(move |a, _| { let f = f2.clone(); Box::pin(async move { a.add_sources(&f).await; }) })));
             if same_path(folder, &js_string(&settings::get("folder"))) {
                 items.push(MenuItem::new("GitHub …", self.action(|a, _| Box::pin(async move { a.send("menu:github", Value::Null); }))));
             }

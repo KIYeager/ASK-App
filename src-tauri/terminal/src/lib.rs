@@ -10,7 +10,8 @@
 //! - `run_from_stdin() -> i32`: blockierend, baut eine eigene tokio-Laufzeit; Rückgabe ist der Exitcode
 //! - `serve(config) -> ServerHandle` (async): derselbe Server im eigenen Prozess, z. B. für Tests
 //! - `Config`: Einstellungen (`key`, `port`, `workdir`, `origin`, `execute_timeout`, `low_integrity`)
-//! - Module: `guard` (Ordnersperre), `files` (Datei-API), `documents` (Text aus Dokumenten), `runner` (Befehle),
+//! - Module: `guard` (Ordnersperre), `files` (Datei-API), `documents` (Text aus Dokumenten), `sources` (Quellen,
+//!   ENTSCHEIDE E84), `runner` (Befehle),
 //!   `streams` (Ausgabe lesen und umwandeln), `winproc` (nur Windows: Low Integrity, Job-Objekte, Label)
 
 pub mod documents;
@@ -18,6 +19,7 @@ pub mod files;
 pub mod guard;
 pub mod http;
 pub mod runner;
+pub mod sources;
 pub mod streams;
 #[cfg(windows)]
 pub mod winproc;

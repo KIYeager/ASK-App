@@ -114,6 +114,9 @@ test('Statistikzeile und Gruppentitel', async () => {
   assert.strictEqual(statsText([]), null);
   assert.strictEqual(groupTitle([{ name: 'read_file' }, { name: 'read_file' }, { name: 'list_files' }, { name: 'search_text' }]),
     '2 Dateien gelesen, 1 Ordner angesehen, 1 Suche');
+  // Quellen (E84)
+  assert.strictEqual(groupTitle([{ name: 'quellen_suchen' }, { name: 'quellen_suchen' }, { name: 'quelle_lesen' }]), '2× in den Quellen gesucht, 1 Stelle in den Quellen gelesen');
+  assert.strictEqual(groupTitle([{ name: 'quellen_suchen' }]), 'In den Quellen gesucht');
 });
 
 test('Markdown bleibt maskiert und kennt Zitate', async () => {

@@ -282,6 +282,17 @@ impl FileApi {
         self.guard.inside(path) || self.read_only.iter().any(|g| g.inside(path))
     }
 
+    /// Alle Dateien unter einem Ordner (rekursiv, ohne verknüpfte Ordner und nur innerhalb der Sperre), sortiert;
+    /// für die Quellen (ENTSCHEIDE E84)
+    pub fn files_under(&self, root: &Path) -> Vec<PathBuf> {
+        if !root.is_dir() || !self.inside(root) {
+            return Vec::new();
+        }
+        let mut out: Vec<PathBuf> = self.walk(root).into_iter().flat_map(|(dir, _, files)| files.into_iter().map(move |f| dir.join(f))).collect();
+        out.sort();
+        out
+    }
+
     // ---------- list ----------
 
     pub fn list(&self, directory: &str) -> Res<Value> {

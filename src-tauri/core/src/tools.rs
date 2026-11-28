@@ -774,6 +774,55 @@ async fn search_text(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolR
     Ok(ToolResult::new(true, if clipped.is_empty() { "Keine Treffer.".to_string() } else { clipped }, format!("{} Treffer", found.len())))
 }
 
+// ---------- Quellen (ENTSCHEIDE E84) ----------
+
+/// Eine Unterlage mit Ort und Verweis für die Antwort
+fn source_head(r: &Value) -> String {
+    let file = str_of(r, "datei");
+    let ort = str_of(r, "ort");
+    let name = file.rsplit('/').next().unwrap_or(&file).to_string();
+    let label = if ort.is_empty() { name } else { format!("{name}, {ort}") };
+    format!("{file} · {ort} · Verweis: [{label}]({})", crate::sources::link(&file, r.get("seite").and_then(Value::as_u64)))
+}
+
+fn source_notes(json: &Value) -> String {
+    let notes: Vec<String> = json["hinweise"].as_array().into_iter().flatten().map(|h| format!("- {}: {}", str_of(h, "datei"), str_of(h, "hinweis"))).collect();
+    if notes.is_empty() { String::new() } else { format!("\n\nHinweise zu Unterlagen:\n{}", notes.join("\n")) }
+}
+
+async fn quellen_suchen(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolResult> {
+    let res = request(terminal, "GET", &format!("/quellen/search?{}", q(&[("query", arg(a, "suche")), ("limit", arg(a, "anzahl"))])), None, REQUEST_TIMEOUT_MS).await?;
+    let Some(json) = res.json.clone().filter(|_| res.status == 200) else { return Err(fail(&res)) };
+    let results = json["results"].as_array().cloned().unwrap_or_default();
+    let files = json["dateien"].as_u64().unwrap_or(0);
+    if results.is_empty() {
+        let text = if files == 0 {
+            format!("Im Ordner {} gibt es keine durchsuchbaren Unterlagen.", crate::sources::FOLDER)
+        } else {
+            format!("Keine Treffer in {files} Unterlagen. Versuche andere Wörter (Fachbegriff, Einzahl, Synonym) oder lies eine Unterlage mit quelle_lesen.")
+        };
+        return Ok(ToolResult::new(true, format!("{text}{}", source_notes(&json)), "keine Treffer"));
+    }
+    let list: Vec<String> = results.iter().enumerate().map(|(i, r)| format!("[{}] {}\n{}", i + 1, source_head(r), str_of(r, "text"))).collect();
+    let n = results.len();
+    Ok(ToolResult::new(true, clip(&format!("{}{}", list.join("\n\n"), source_notes(&json)), MAX_OUTPUT), if n == 1 { "1 Treffer".to_string() } else { format!("{n} Treffer") }))
+}
+
+async fn quelle_lesen(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolResult> {
+    let ort = a.get("ort").filter(|v| truthy(v)).cloned().unwrap_or(Value::Null);
+    let res = request(terminal, "GET", &format!("/quellen/read?{}", q(&[("path", arg(a, "datei")), ("seite", arg(a, "seite")), ("ort", ort)])), None, REQUEST_TIMEOUT_MS).await?;
+    let Some(json) = res.json.clone().filter(|_| res.status == 200) else { return Err(fail(&res)) };
+    let teile: Vec<String> = json["teile"].as_array().into_iter().flatten().map(js_string).collect();
+    let more = if teile.len() > 1 { format!("\n\nTeile dieser Unterlage: {}", teile.iter().take(60).cloned().collect::<Vec<_>>().join(", ")) } else { String::new() };
+    let hint = json.get("hinweis").filter(|h| truthy(h)).map(|h| format!("\nHinweis: {}", js_string(h))).unwrap_or_default();
+    if str_of(&json, "ort").is_empty() {
+        return Ok(ToolResult::new(true, format!("{}: kein lesbarer Text.{hint}{more}", str_of(&json, "datei")), "ohne Text"));
+    }
+    let text = str_of(&json, "text");
+    let cut = if json["gekuerzt"].as_bool() == Some(true) { "\n(gekürzt)" } else { "" };
+    Ok(ToolResult::new(true, format!("{}\n\n{text}{cut}{hint}{more}", source_head(&json)), str_of(&json, "ort")))
+}
+
 fn update_tasks(a: &Value) -> ToolResult {
     // Die Liste gehört zum Chat und steht dort im Ergebnis dieses Aufrufs (früher: eine Datei für den ganzen Ordner)
     let status = |s: Option<&Value>| match s.and_then(Value::as_str) {
@@ -1548,6 +1597,33 @@ fn build_tools() -> Vec<Tool> {
             }),
         ),
         tool(
+            "quellen_suchen",
+            "Quellen",
+            "Durchsucht die Unterlagen im Ordner Quellen (PDF, Word, PowerPoint, Excel, Text) und liefert die besten Stellen mit Datei, Seite oder Abschnitt, Ausschnitt und dem Verweis für die Antwort.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "suche": { "type": "string", "description": "Suchwörter, am besten Fachbegriffe, z. B. Photosynthese Chlorophyll" },
+                    "anzahl": { "type": "integer", "description": "Höchstens so viele Treffer (Standard 8, höchstens 20)" },
+                },
+                "required": ["suche"],
+            }),
+        ),
+        tool(
+            "quelle_lesen",
+            "Quelle",
+            "Liest einen ganzen Teil einer Unterlage im Ordner Quellen: eine Seite (PDF), eine Folie (PowerPoint) oder einen Abschnitt (Word, Text). Ohne seite und ort den ersten Teil; das Ergebnis nennt alle Teile.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "datei": { "type": "string", "description": "Pfad der Unterlage, z. B. Quellen/Skript.pdf" },
+                    "seite": { "type": "integer", "description": "Seite (PDF) oder Folie (PowerPoint)" },
+                    "ort": { "type": "string", "description": "Abschnitt oder Blatt, z. B. Zellen" },
+                },
+                "required": ["datei"],
+            }),
+        ),
+        tool(
             "search_text",
             "Suchen",
             "Sucht einen Text in den Dateien des Arbeitsordners und liefert Datei, Zeile und Fundstelle.",
@@ -1873,6 +1949,12 @@ fn describe_detail(name: &str, a: &Value) -> String {
         "list_files" => Some(or_empty(a, "path")).filter(|p| !p.is_empty()).unwrap_or_else(|| ".".into()),
         "find_files" => or_empty(a, "pattern"),
         "search_text" => format!("«{}»{}", tpl(a, "text"), if a.get("path").is_some_and(truthy) { format!(" in {}", js_string(&a["path"])) } else { String::new() }),
+        "quellen_suchen" => format!("«{}»", tpl(a, "suche")),
+        "quelle_lesen" => format!("{}{}", tpl(a, "datei"), match (a.get("seite").filter(|v| truthy(v)), a.get("ort").filter(|v| truthy(v))) {
+            (Some(n), _) => format!(", S. {}", js_string(n)),
+            (None, Some(o)) => format!(", {}", js_string(o)),
+            _ => String::new(),
+        }),
         "update_tasks" => or_empty(a, "auftrag"),
         "github_status" => "Status".into(),
         "github_clone" => format!("holen {}", tpl(a, "repo")),
@@ -1957,6 +2039,8 @@ async fn run(terminal: Option<&dyn TerminalEndpoint>, name: &str, args: &Value, 
         "list_files" => list_files(term()?, args).await,
         "find_files" => find_files(term()?, args).await,
         "search_text" => search_text(term()?, args).await,
+        "quellen_suchen" => quellen_suchen(term()?, args).await,
+        "quelle_lesen" => quelle_lesen(term()?, args).await,
         "update_tasks" => Ok(update_tasks(args)),
         "github_status" => github_status(ctx).await,
         "github_clone" => github_clone(ctx, args).await,

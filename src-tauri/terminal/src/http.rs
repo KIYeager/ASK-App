@@ -2,7 +2,8 @@
 //!
 //! Nur die Endpunkte, die die App braucht, mit denselben Anfragen, Antworten und Statuscodes:
 //! `GET /health` (ohne Anmeldung), `GET /ask/info`, `POST /execute`, `GET /execute/{id}/status`,
-//! `DELETE /execute/{id}`, `GET /files/list|read|glob|grep`, `POST /files/write|replace`.
+//! `DELETE /execute/{id}`, `GET /files/list|read|glob|grep`, `POST /files/write|replace`. Dazu, nur in ASK, die Quellen
+//! (ENTSCHEIDE E84): `GET /quellen/search|read|list`.
 //! Anmeldung: `Authorization: Bearer <Key>` (konstante Zeit). Fehler als `{"detail": …}`.
 //!
 //! Öffentliche Schnittstelle:
@@ -24,6 +25,7 @@ use serde_json::{json, Value};
 
 use crate::files::{ApiError, FileApi, ReadResult, Replacement};
 use crate::runner::Registry;
+use crate::sources::Sources;
 use crate::Config;
 
 /// Grösse einer Anfrage (Dateiinhalt zum Schreiben)
@@ -35,6 +37,7 @@ struct State {
     origin: String,
     execute_timeout: f64,
     files: Arc<FileApi>,
+    sources: Arc<Sources>,
     registry: Arc<Registry>,
     integrity: String,
     low_integrity: bool,
@@ -75,6 +78,7 @@ pub async fn serve(config: Config) -> std::io::Result<ServerHandle> {
         origin: config.origin.clone(),
         execute_timeout: config.execute_timeout,
         files: Arc::new(FileApi::new(std::path::Path::new(&config.workdir)).with_read_only(&config.read_only)),
+        sources: Arc::new(Sources::new()),
         registry: registry.clone(),
         integrity,
         low_integrity,
@@ -255,11 +259,14 @@ enum Route {
     Replace,
     Glob,
     Grep,
+    SourcesSearch,
+    SourcesRead,
+    SourcesList,
 }
 
 /// Route zu Methode und Pfad; `Err(true)`: Pfad bekannt, Methode nicht (405), `Err(false)`: unbekannt (404)
 fn route(method: &Method, path: &str) -> Result<(Route, Option<String>), bool> {
-    let table: [(&str, Method, Route); 9] = [
+    let table: [(&str, Method, Route); 12] = [
         ("/ask/info", Method::GET, Route::Info),
         ("/execute", Method::POST, Route::Execute),
         ("/files/list", Method::GET, Route::List),
@@ -268,6 +275,9 @@ fn route(method: &Method, path: &str) -> Result<(Route, Option<String>), bool> {
         ("/files/replace", Method::POST, Route::Replace),
         ("/files/glob", Method::GET, Route::Glob),
         ("/files/grep", Method::GET, Route::Grep),
+        ("/quellen/search", Method::GET, Route::SourcesSearch),
+        ("/quellen/read", Method::GET, Route::SourcesRead),
+        ("/quellen/list", Method::GET, Route::SourcesList),
         ("/health", Method::GET, Route::Health),
     ];
     if let Some(rest) = path.strip_prefix("/execute/") {
@@ -483,6 +493,23 @@ async fn run(state: &Arc<State>, route: Route, id: Option<String>, q: Query, bod
             let max = q.int("max_results", Some(1), Some(500))?.unwrap_or(50) as usize;
             Ok(json_response(200, &blocking(move || files.grep(&query, &path, regex, ci, &include, per_line, max)).await?))
         }
+        Route::SourcesSearch => {
+            let query = q.required("query")?.to_string();
+            let limit = q.int("limit", Some(1), Some(20))?.unwrap_or(8) as usize;
+            let sources = state.sources.clone();
+            Ok(json_response(200, &blocking(move || Ok(sources.search(&files, &query, limit))).await?))
+        }
+        Route::SourcesRead => {
+            let path = q.required("path")?.to_string();
+            let seite = q.int("seite", Some(1), None)?.map(|v| v as u32);
+            let ort = q.string("ort", "");
+            let sources = state.sources.clone();
+            Ok(json_response(200, &blocking(move || sources.read(&files, &path, seite, Some(ort.as_str()))).await?))
+        }
+        Route::SourcesList => {
+            let sources = state.sources.clone();
+            Ok(json_response(200, &blocking(move || Ok(sources.list(&files))).await?))
+        }
         Route::Execute => execute(state, q, &body).await,
         Route::Status => {
             state.registry.cleanup_expired();
@@ -578,5 +605,7 @@ mod tests {
         let (r, id) = route(&Method::DELETE, "/execute/2024-ab%20c").unwrap();
         assert_eq!((r, id.as_deref()), (Route::Kill, Some("2024-ab c")));
         assert_eq!(route(&Method::GET, "/execute/x/status").unwrap().0, Route::Status);
+        assert_eq!(route(&Method::GET, "/quellen/search").unwrap().0, Route::SourcesSearch);
+        assert!(route(&Method::POST, "/quellen/read").unwrap_err());
     }
 }

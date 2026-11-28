@@ -957,18 +957,73 @@ fn extract_pdf_safe(path: &str) -> Res<String> {
         .unwrap_or_else(|_| Err(DocError::new("PDF nicht lesbar: Die Datei hat einen Aufbau, den der Leser nicht versteht.")))
 }
 
-/// Text aller Seiten (lopdf, reines Rust). Seiten ohne lesbaren Text geben eine leere Zeile.
+/// Text aller Seiten (lopdf, reines Rust), jede Seite mit einer Trennzeile `--- Seite N ---` davor (wie
+/// `--- Slide N ---` bei PowerPoint), damit das Modell Seiten nennen kann (ENTSCHEIDE E84). Seiten ohne
+/// lesbaren Text geben eine leere Zeile.
 fn extract_pdf(path: &str) -> Res<String> {
+    let pages = pdf_pages(path)?;
+    let mut lines = Vec::with_capacity(pages.len() * 2);
+    for (i, text) in pages.into_iter().enumerate() {
+        lines.push(format!("--- Seite {} ---", i + 1));
+        lines.push(text);
+    }
+    Ok(lines.join("\n"))
+}
+
+/// Text jeder Seite eines PDF, in der Reihenfolge der Seiten
+fn pdf_pages(path: &str) -> Res<Vec<String>> {
     let doc = lopdf::Document::load(path).map_err(|e| DocError::new(format!("PDF nicht lesbar: {e}")))?;
     if doc.is_encrypted() {
         return Err(DocError::new("Verschlüsselte PDF-Datei. Bitte eine unverschlüsselte Kopie angeben."));
     }
     let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
-    let mut texts = Vec::with_capacity(pages.len());
-    for page in pages {
-        texts.push(doc.extract_text(&[page]).unwrap_or_default());
+    Ok(pages.into_iter().map(|page| doc.extract_text(&[page]).unwrap_or_default()).collect())
+}
+
+/// Wie `pdf_pages`, aber ein Panic im PDF-Parser wird zum Fehler (für die Quellen, ENTSCHEIDE E84)
+pub fn pdf_pages_safe(path: &str) -> Res<Vec<String>> {
+    let p = path.to_string();
+    std::panic::catch_unwind(move || pdf_pages(&p))
+        .unwrap_or_else(|_| Err(DocError::new("PDF nicht lesbar: Die Datei hat einen Aufbau, den der Leser nicht versteht.")))
+}
+
+/// Word in Abschnitten nach Überschriften (für die Quellen, ENTSCHEIDE E84): (Überschrift, Text). Der Text vor
+/// der ersten Überschrift hat eine leere Überschrift. Überschrift ist ein Absatz mit einer Formatvorlage
+/// «Heading …», «Überschrift …» (Kennung `berschrift…`), «Title»/«Titel» oder mit Gliederungsebene.
+pub fn docx_sections(data: &[u8]) -> Res<Vec<(String, String)>> {
+    let mut zip = open_zip(data)?;
+    let main = zip_required(&mut zip, "word/document.xml")?;
+    let doc = Document::parse(&main)?;
+    let body = doc.root_element().children().find(|n| is(*n, W, "body")).ok_or_else(|| DocError::new("Kein Dokumentkörper in word/document.xml"))?;
+    let mut sections: Vec<(String, Vec<String>)> = vec![(String::new(), Vec::new())];
+    for child in body.children().filter(|c| c.is_element() && c.tag_name().namespace() == Some(W)) {
+        if local(child) == "p" && is_heading(child) {
+            let title = paragraph_text(child).trim().to_string();
+            if !title.is_empty() {
+                sections.push((title, Vec::new()));
+                continue;
+            }
+        }
+        let lines = match local(child) {
+            "p" => vec![paragraph_text(child)],
+            "tbl" => table_rows(child),
+            "sdt" | "customXml" => blocks(child),
+            _ => Vec::new(),
+        };
+        if let Some(last) = sections.last_mut() {
+            last.1.extend(lines);
+        }
     }
-    Ok(texts.join("\n"))
+    Ok(sections.into_iter().map(|(t, lines)| (t, lines.join("\n"))).filter(|(t, text)| !t.is_empty() || !text.trim().is_empty()).collect())
+}
+
+fn is_heading(p: Node) -> bool {
+    let Some(ppr) = p.children().find(|c| is(*c, W, "pPr")) else { return false };
+    if children_named(ppr, W, "outlineLvl").next().is_some() {
+        return true;
+    }
+    let style = children_named(ppr, W, "pStyle").next().and_then(|s| attr_ns(s, W, "val")).unwrap_or("").to_lowercase();
+    style.starts_with("heading") || style.contains("berschrift") || style == "title" || style == "titel"
 }
 
 #[cfg(test)]
@@ -1138,6 +1193,29 @@ mod tests {
         std::fs::write(&path, pdf).unwrap();
         let text = extract_pdf(&path.to_string_lossy()).unwrap();
         assert!(text.contains("Hallo PDF-Welt"), "{text:?}");
+        assert!(text.starts_with("--- Seite 1 ---\n"), "Seite vor dem Text: {text:?}");
+        assert_eq!(pdf_pages_safe(&path.to_string_lossy()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn word_in_abschnitten() {
+        let doc = format!(
+            r#"<w:document xmlns:w="{W}"><w:body>
+            <w:p><w:r><w:t>Vorwort</w:t></w:r></w:p>
+            <w:p><w:pPr><w:pStyle w:val="berschrift1"/></w:pPr><w:r><w:t>Zellen</w:t></w:r></w:p>
+            <w:p><w:r><w:t>Zellen haben einen Kern.</w:t></w:r></w:p>
+            <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Photosynthese</w:t></w:r></w:p>
+            <w:p><w:r><w:t>Licht wird zu Zucker.</w:t></w:r></w:p>
+            <w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:r><w:t>Anhang</w:t></w:r></w:p>
+            </w:body></w:document>"#
+        );
+        let data = zip_of(&[("word/document.xml", &doc)]);
+        let s = docx_sections(&data).unwrap();
+        let titles: Vec<&str> = s.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(titles, ["", "Zellen", "Photosynthese", "Anhang"]);
+        assert_eq!(s[0].1, "Vorwort");
+        assert_eq!(s[2].1, "Licht wird zu Zucker.");
+        assert_eq!(s[3].1, "");
     }
 
     #[test]

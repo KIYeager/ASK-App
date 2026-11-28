@@ -198,6 +198,27 @@ async fn lesen_zeilenbereich_ersetzen_und_suchen() {
 }
 
 #[tokio::test]
+async fn quellen_suchen_lesen_und_sperre() {
+    let srv = Srv::start().await;
+    std::fs::create_dir_all(srv.workdir.join("Quellen")).unwrap();
+    std::fs::write(srv.workdir.join("Quellen").join("Skript Zellbiologie.md"), "# Zellen\nZellen haben einen Kern.\n# Mitose\nBei der Mitose teilt sich die Zelle.").unwrap();
+    let (status, list) = srv.get("/quellen/list").await;
+    assert_eq!(status, 200, "{list}");
+    assert_eq!(list["dateien"][0]["datei"], "Quellen/Skript Zellbiologie.md");
+    assert_eq!(list["dateien"][0]["teile"], 2);
+    let (status, found) = srv.get(&format!("/quellen/search?query={}&limit=3", url_encode("Wie läuft die Mitose ab?"))).await;
+    assert_eq!(status, 200, "{found}");
+    assert_eq!(found["results"][0]["ort"], "Abschnitt «Mitose»");
+    let (status, part) = srv.get(&format!("/quellen/read?path={}&ort=Mitose", url_encode("Skript Zellbiologie.md"))).await;
+    assert_eq!(status, 200, "{part}");
+    assert!(part["text"].as_str().unwrap().contains("teilt sich"));
+    assert_eq!(srv.get("/quellen/search").await.0, 422, "query fehlt");
+    assert_eq!(srv.get(&format!("/quellen/read?path={}", url_encode("../ausserhalb/geheim.txt"))).await.0, 403);
+    assert_eq!(srv.get(&format!("/quellen/read?path={}", url_encode("Übung.txt"))).await.0, 404, "nur Dateien in Quellen");
+    assert!(srv.workdir.join(".ask").join("quellen").join("index.json").is_file());
+}
+
+#[tokio::test]
 async fn word_mit_inhaltssteuerelementen_und_kopfzeile() {
     // Port von test_read_docx_with_content_controls
     use std::io::Write;
