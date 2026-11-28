@@ -517,7 +517,7 @@ const mockDocsApi = {
     mockDocs[path] = { content, modified: Date.now() };
     return { ok: true, path, hash: docHash(content), title: docTitle(content, path) };
   },
-  docsCreate: async (title) => { const path = `docs/${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'doc'}${docSeq++ ? `-${docSeq}` : ''}.md`; mockDocs[path] = { content: `# ${title}\n\n`, modified: Date.now() }; return { ok: true, path }; },
+  docsCreate: async (title, content) => { const path = `docs/${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'doc'}${docSeq++ ? `-${docSeq}` : ''}.md`; mockDocs[path] = { content: content || `# ${title}\n\n`, modified: Date.now() }; return { ok: true, path }; },
   docsDelete: async (path) => { delete mockDocs[path]; delete mockComments[path]; return { ok: true }; },
   docsOpen: async () => null,
   docsShare: async (path) => { mockShares[path] = { geteilt: true, ordner: 'C:\\Users\\lea\\OneDrive - TF Bern\\Geteilt\\doc.askdoc', fehler: '', personen: [{ name: 'Lea Muster', ich: true, zuletzt: Date.now() }], anderen: [] }; return { ok: true, ...mockShares[path] }; },

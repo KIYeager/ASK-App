@@ -32,11 +32,14 @@ function DocList({ docs, free, onOpen, onCompose, notice }) {
   const [joining, setJoining] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [creating, setCreating] = useState(false);
   const create = async (e) => {
     e.preventDefault();
     const title = name.trim();
-    if (!title) return;
-    const r = await api().docsCreate(title);
+    if (!title || creating) return;
+    setCreating(true);
+    const r = await api().docsCreate(title).catch((err) => ({ ok: false, reason: err?.message }));
+    setCreating(false);
     if (!r?.ok) { setError(r?.reason || 'Nicht angelegt.'); return; }
     setNaming(false); setName(''); setError('');
     onOpen(r.path);
@@ -46,7 +49,7 @@ function DocList({ docs, free, onOpen, onCompose, notice }) {
       <div className="docs-head">
         <b>Docs</b><span className="muted small">{free ? 'Chats ohne Projekt' : 'in diesem Projekt'}</span>
         <span className="spacer" />
-        <button type="button" className="icon-btn" title="Geteiltes Doc öffnen (Link aus Teams)" aria-label="Geteiltes Doc öffnen"
+        <button type="button" className="icon-btn" title="Geteiltes Doc öffnen" aria-label="Geteiltes Doc öffnen"
           onClick={() => setJoining(!joining)}><Icon name="user" size={15} /></button>
         <button type="button" className="btn small" onClick={() => setNaming(true)}><Icon name="plus" size={13} /> Neues Doc</button>
       </div>
@@ -55,7 +58,7 @@ function DocList({ docs, free, onOpen, onCompose, notice }) {
         <form className="docs-new" onSubmit={create}>
           <input autoFocus value={name} placeholder="Titel, z. B. Lernzettel Chemie" maxLength={120} aria-label="Titel des neuen Docs"
             onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setNaming(false); } }} />
-          <button type="submit" className="btn small primary" disabled={!name.trim()}>Anlegen</button>
+          <button type="submit" className="btn small primary" disabled={!name.trim() || creating}>{creating ? 'Legt an …' : 'Anlegen'}</button>
           {error ? <p className="docs-error">{error}</p> : null}
         </form>
       ) : null}
@@ -96,17 +99,15 @@ const ago = (ms) => {
 // Anmeldung bei Microsoft für das Teilen per Link (E83): Zustand und Knopf
 function useMicrosoft() {
   const [ms, setMs] = useState(null);
-  const refresh = useCallback(async () => setMs(await api().docsMsStatus?.() || { eingerichtet: false }), []);
+  const refresh = useCallback(async () => setMs(await Promise.resolve(api().docsMsStatus?.()).catch(() => null) || { eingerichtet: false }), []);
   useEffect(() => { refresh(); }, [refresh]);
   return [ms, refresh];
 }
 
 function MsLogin({ ms, onDone, notice }) {
   const [busy, setBusy] = useState(false);
-  if (!ms) return null;
-  if (!ms.eingerichtet) {
-    return <p className="muted small">Teilen per Link ist auf diesem ASK noch nicht eingerichtet (es braucht eine App-Registrierung bei Microsoft, siehe Hilfe). Bis dahin geht es über einen Ordner.</p>;
-  }
+  // Ohne App-Registrierung (E83) gibt es kein Teilen per Link: dann erscheint davon nichts
+  if (!ms?.eingerichtet) return null;
   if (ms.angemeldet) {
     return (
       <p className="muted small docs-row">Bei Microsoft als <b>{ms.name || 'Schulkonto'}</b><span className="spacer" />
@@ -157,23 +158,37 @@ function SharePanel({ path, title, share, onChanged, onClose, notice }) {
     setBusy(false);
     if (r?.ok) { onChanged(); if (r.link) { api().copy(r.link); notice?.('Link erstellt und kopiert. Füge ihn in Teams ein.'); } } else notice?.(r?.reason || 'Nicht geteilt.');
   };
-  const stop = async () => { const r = await api().docsUnshare(path); if (r?.ok) { onChanged(); onClose(); } };
+  const stop = async () => {
+    const r = await api().docsUnshare(path).catch((e) => ({ ok: false, reason: e?.message }));
+    if (r?.ok) { onChanged(); onClose(); } else if (!r?.canceled) notice?.(r?.reason || 'Teilen nicht beendet.');
+  };
   if (!share?.geteilt) {
+    const byLinkWay = !!ms?.eingerichtet;
     return (
       <div className="docs-share">
         <div className="docs-row"><b>Doc live teilen</b><span className="spacer" /><button type="button" className="icon-btn" aria-label="Schliessen" onClick={onClose}><Icon name="close" size={13} /></button></div>
-        <p>Andere schreiben auf ihrem Laptop mit, und ihr seht die Änderungen gegenseitig. Du bekommst einen <b>Link</b>, den du in <b>Teams</b> schickst; wer ihn in ASK einfügt, schreibt mit.</p>
-        <MsLogin ms={ms} onDone={refreshMs} notice={notice} />
-        {ms?.eingerichtet && ms?.angemeldet ? (
-          <div className="docs-row"><button type="button" className="btn small primary" disabled={busy} onClick={byLink}>{busy ? 'Erstellt den Link …' : 'Link erstellen'}</button>
-            <span className="muted small">legt das Doc in deinem OneDrive unter «ASK Docs» ab</span></div>
-        ) : null}
-        {folderWay || !ms?.eingerichtet ? (
+        {!ms ? <p className="muted small">Lädt …</p> : byLinkWay ? (
           <>
-            <p className="muted small">Über einen Ordner, den alle haben (OneDrive freigegeben, Teams-Kanal, Laufwerk der Schule): ASK legt dort «….askdoc» an, die anderen wählen ihn in der Liste der Docs mit dem Personen-Knopf.</p>
-            <div className="docs-row"><button type="button" className="btn small" disabled={busy} onClick={byFolder}>Ordner wählen …</button></div>
+            <p>Andere schreiben auf ihrem Laptop mit, und ihr seht die Änderungen gegenseitig. Du bekommst einen <b>Link</b>, den du in <b>Teams</b> schickst; wer ihn in ASK einfügt, schreibt mit.</p>
+            <MsLogin ms={ms} onDone={refreshMs} notice={notice} />
+            {ms.angemeldet ? (
+              <div className="docs-row"><button type="button" className="btn small primary" disabled={busy} onClick={byLink}>{busy ? 'Erstellt den Link …' : 'Link erstellen'}</button>
+                <span className="muted small">legt das Doc in deinem OneDrive unter «ASK Docs» ab</span></div>
+            ) : null}
+            {folderWay ? (
+              <>
+                <p className="muted small">Über einen Ordner, den alle haben (OneDrive freigegeben, Teams-Kanal, Laufwerk der Schule): ASK legt dort «….askdoc» an, die anderen wählen ihn in der Liste der Docs mit dem Personen-Knopf.</p>
+                <div className="docs-row"><button type="button" className="btn small" disabled={busy} onClick={byFolder}>Ordner wählen …</button></div>
+              </>
+            ) : <button type="button" className="link-btn" onClick={() => setFolderWay(true)}>Lieber über einen Ordner teilen …</button>}
           </>
-        ) : <button type="button" className="link-btn" onClick={() => setFolderWay(true)}>Lieber über einen Ordner teilen …</button>}
+        ) : (
+          <>
+            <p>Andere schreiben auf ihrem Laptop mit, und ihr seht die Änderungen gegenseitig. Dafür braucht ihr einen <b>Ordner, den alle haben</b>: in OneDrive freigegeben, ein Teams-Kanal oder ein Laufwerk der Schule.</p>
+            <p className="muted small">ASK legt dort «….askdoc» an. Die anderen klicken in der Liste der Docs auf den Personen-Knopf und wählen diesen Ordner.</p>
+            <div className="docs-row"><button type="button" className="btn small primary" disabled={busy} onClick={byFolder}>{busy ? 'Teilt …' : 'Ordner wählen …'}</button></div>
+          </>
+        )}
       </div>
     );
   }
@@ -218,7 +233,7 @@ function JoinPanel({ onOpen, onClose, notice }) {
   return (
     <div className="docs-share">
       <div className="docs-row"><b>Geteiltes Doc öffnen</b><span className="spacer" /><button type="button" className="icon-btn" aria-label="Schliessen" onClick={onClose}><Icon name="close" size={13} /></button></div>
-      {ms?.eingerichtet ? (
+      {!ms ? null : ms.eingerichtet ? (
         <>
           <MsLogin ms={ms} onDone={refreshMs} notice={notice} />
           <form className="docs-link" onSubmit={open}>
@@ -227,8 +242,13 @@ function JoinPanel({ onOpen, onClose, notice }) {
             <button type="submit" className="btn small primary" disabled={busy || !link.trim().startsWith('https://') || !ms?.angemeldet}>{busy ? 'Öffnet …' : 'Öffnen'}</button>
           </form>
         </>
-      ) : <p className="muted small">Teilen per Link ist auf diesem ASK noch nicht eingerichtet.</p>}
-      <button type="button" className="link-btn" onClick={folder}>Oder einen geteilten Ordner «….askdoc» wählen …</button>
+      ) : null}
+      {ms?.eingerichtet ? <button type="button" className="link-btn" onClick={folder}>Oder einen geteilten Ordner «….askdoc» wählen …</button> : ms ? (
+        <>
+          <p className="muted small">Hat jemand ein Doc mit dir geteilt, wähl den Ordner «….askdoc», den ihr gemeinsam habt (OneDrive, Teams-Kanal oder Laufwerk der Schule).</p>
+          <div className="docs-row"><button type="button" className="btn small primary" onClick={folder}>Ordner wählen …</button></div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -296,7 +316,11 @@ const BLOCKS = [['p', 'Text'], ['h1', 'Titel'], ['h2', 'Überschrift'], ['h3', '
 // Bildpfad im Doc (relativ zum Doc) → Adresse im Projekt; nie aus dem Projekt hinaus
 export function imageAddress(docPath, src, v = '') {
   const parts = String(docPath).split('/').slice(0, -1);
-  for (const p of String(src).split('/')) {
+  for (const raw of String(src).split('/')) {
+    // Im Doc stehen Leerzeichen und Klammern kodiert (%20); fileUrl kodiert selbst
+    let p;
+    try { p = decodeURIComponent(raw); } catch { return ''; }
+    if (/[/\\]/.test(p)) return '';
     if (p === '..') { if (!parts.length) return ''; parts.pop(); } else if (p && p !== '.') parts.push(p);
   }
   return parts.length ? fileUrl(parts.join('/'), v) : '';
@@ -337,8 +361,16 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
   const [ctxMenu, setCtxMenu] = useState(null); // Rechtsklick auf markierten Text: { x, y, quote, range }
   const [toolMenu, setToolMenu] = useState(null); // Menüs «Anstreichen» und «ASK» oben: { kind, x, y, quote }
   const [markColor, setMarkColor] = useState('gelb');
+  const inflight = useRef(null); // laufendes Speichern: nie zwei gleichzeitig
+  const conflictRef = useRef(null);
+  conflictRef.current = conflict;
+  const titleRef = useRef('');
+  titleRef.current = title;
+  const draftOpen = useRef(false);
 
-  const setDirty = (on) => { dirty.current = on; onDirty?.(on); };
+  // «Beschäftigt» für den Reiter: tippt oder schreibt gerade einen Kommentar (dann nicht zu einem anderen Doc wechseln)
+  const setDirty = (on) => { dirty.current = on; onDirty?.(on || draftOpen.current); };
+  useEffect(() => { draftOpen.current = !!draft; onDirty?.(dirty.current || !!draft); }, [draft]);
 
   const show = useCallback((md) => {
     const box = scroller.current;
@@ -349,8 +381,14 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
   }, [path]);
 
   const load = useCallback(async (force, retry = true) => {
-    const r = await api().docsRead(path);
-    if (!r?.ok) { setMissing(true); return; }
+    let r;
+    try { r = await api().docsRead(path); } catch (e) { r = { ok: false, reason: e?.message }; }
+    if (!r?.ok) {
+      // Schon offen und ungespeichert: Editor behalten (die Datei ist vielleicht nur kurz gesperrt, z. B. von OneDrive)
+      if (ed.current && dirty.current) { setStatus('Nicht neu gelesen'); return; }
+      setMissing(true);
+      return;
+    }
     setMissing(false);
     setComments(r.comments || []);
     setShare(r.share || null);
@@ -375,13 +413,26 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
   const save = useCallback(async () => {
     clearTimeout(timer.current);
     timer.current = null;
-    if (!dirty.current || !ed.current || conflict) return;
-    const at = seq.current;
-    const md = htmlToMd(ed.current);
-    if (md === saved.current) { setDirty(false); setStatus('Gespeichert'); return; }
+    if (!dirty.current || !ed.current) return;
+    // Text sofort lesen: Beim Verlassen ist der Editor nach dem ersten await schon weg
+    let at = seq.current;
+    let md = htmlToMd(ed.current);
+    // Nacheinander: Ein zweites Speichern während des ersten prüfte gegen den alten Stand und meldete einen Konflikt mit sich selbst
+    while (inflight.current) {
+      await inflight.current.catch(() => {});
+      if (ed.current) { md = htmlToMd(ed.current); at = seq.current; }
+    }
+    if (conflictRef.current) return; // erst entscheidet die Person (Hinweis oben)
+    if (md === saved.current) { if (seq.current === at) { setDirty(false); setStatus('Gespeichert'); } return; }
     setStatus('Speichert …');
     saving.current = md;
-    const r = await api().docsSave(path, md, hash.current).finally(() => { saving.current = null; });
+    const run = api().docsSave(path, md, hash.current);
+    inflight.current = run;
+    let r;
+    try { r = await run; } catch (e) { r = { ok: false, reason: e?.message }; } finally {
+      saving.current = null;
+      if (inflight.current === run) inflight.current = null;
+    }
     if (r?.ok) {
       hash.current = r.hash;
       saved.current = md;
@@ -397,8 +448,10 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
       setStatus('Nicht gespeichert');
     } else {
       setStatus(`Nicht gespeichert: ${r?.reason || 'Fehler'}`);
+      // nochmals versuchen, sobald die Person weitertippt oder in 10 s
+      timer.current = setTimeout(() => saveRef.current(), 10000);
     }
-  }, [path, conflict, title]);  
+  }, [path, title, show]);  
 
   const saveRef = useRef(save);
   saveRef.current = save;
@@ -416,7 +469,16 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
   }, [live]);  
   // Beim Verlassen: Ungespeichertes sofort speichern. Als Layout-Effekt, weil React den Editor (ed.current)
   // vor dem Aufräumen gewöhnlicher Effekte schon abgehängt hat; save liest den Text vor dem ersten await.
-  useLayoutEffect(() => () => { if (dirty.current) saveRef.current(); onDirty?.(false); }, []);  
+  // Steht noch die Frage «ASK hat das Doc geändert» offen, geht der eigene Text als Kopie in ein neues Doc statt verloren.
+  useLayoutEffect(() => () => {
+    if (dirty.current && conflictRef.current && ed.current) {
+      const copyTitle = `${titleRef.current || 'Doc'} (deine Fassung)`;
+      const md = htmlToMd(ed.current);
+      const body = /^# .*$/m.test(md) ? md.replace(/^# .*$/m, `# ${copyTitle}`) : `# ${copyTitle}\n\n${md}`;
+      Promise.resolve(api().docsCreate(copyTitle, body)).then((r) => { if (r?.ok) notice?.(`Deine Fassung liegt im Doc «${copyTitle}».`); }).catch(() => {});
+    } else if (dirty.current) saveRef.current();
+    onDirty?.(false);
+  }, []);  
 
   const changed = () => {
     seq.current += 1;
@@ -484,6 +546,8 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
     e.preventDefault();
     const html = e.clipboardData.getData('text/html');
     const text = e.clipboardData.getData('text/plain');
+    // Eine Zeile Text bleibt Text («2 * 3 * 4», «a_b_c»); Markdown wird erst ab mehreren Zeilen gelesen (z. B. aus dem Chat kopiert)
+    if (!html && text && !text.trim().includes('\n')) { document.execCommand('insertText', false, text.trim()); changed(); return; }
     // Eingefügtes läuft durch Markdown: nur bekannte Formatierung, nichts Fremdes (Skripte, Stile, Bilder)
     const md = html ? htmlToMd(new DOMParser().parseFromString(html, 'text/html').body) : text;
     if (!md.trim()) return;
@@ -495,6 +559,8 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
 
   const onKey = (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+    // Unterstreichen gibt es in Markdown nicht: sonst verschwände es beim nächsten Laden still
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'u') e.preventDefault();
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openLink(); }
   };
 
@@ -589,12 +655,13 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
   };
   const remove = async () => {
     clearTimeout(timer.current);
-    const r = await api().docsDelete(path);
-    if (r?.ok) { setDirty(false); onBack(); }
+    const r = await api().docsDelete(path).catch((e) => ({ ok: false, reason: e?.message }));
+    if (r?.ok) { setDirty(false); onBack(); } else if (!r?.canceled) notice?.(r?.reason || 'Nicht gelöscht.');
   };
 
   const keepMine = async () => {
     hash.current = conflict.hash;
+    conflictRef.current = null;
     setConflict(null);
     setTimeout(() => saveRef.current(), 0);
   };
@@ -602,6 +669,7 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
     show(conflict.content);
     hash.current = conflict.hash;
     saved.current = conflict.content;
+    conflictRef.current = null;
     setConflict(null);
     setDirty(false);
     setStatus('');
@@ -647,7 +715,7 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
         { label: 'PDF (mit Word)', icon: 'file', run: () => exportAs('pdf') },
         { label: 'Markdown (.md)', icon: 'file', run: () => exportAs('md') },
       ]} /> : null}
-      {sharing ? <SharePanel path={path} title={title} share={share} notice={notice} onClose={() => setSharing(false)} onChanged={() => load(true)} /> : null}
+      {sharing ? <SharePanel path={path} title={title} share={share} notice={notice} onClose={() => setSharing(false)} onChanged={async () => { await save(); load(true); }} /> : null}
       <div className="docs-tools" role="toolbar" aria-label="Formatierung">
         <select value={block} aria-label="Absatzart" onChange={(e) => { exec('formatBlock', e.target.value); setBlock(e.target.value); }}>
           {BLOCKS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -691,10 +759,10 @@ function DocEditor({ path, live, files, synced, running, onBack, onAsk, onDirty,
       ) : null}
       {conflict ? (
         <div className="docs-conflict" role="alert">
-          <span>ASK hat das Doc geändert, während du getippt hast.</span>
+          <span>ASK hat das Doc geändert, während du getippt hast. Welche Fassung soll gelten?</span>
           <div className="docs-row">
-            <button type="button" className="btn small primary" onClick={takeTheirs}>Fassung von ASK zeigen</button>
-            <button type="button" className="btn small" onClick={keepMine}>Meine behalten</button>
+            <button type="button" className="btn small primary" onClick={keepMine} title="Deine Fassung speichern; die Änderung von ASK fällt weg">Meine behalten</button>
+            <button type="button" className="btn small" onClick={takeTheirs} title="Die Fassung von ASK übernehmen; deine letzten Änderungen fallen weg">Fassung von ASK nehmen</button>
           </div>
         </div>
       ) : null}

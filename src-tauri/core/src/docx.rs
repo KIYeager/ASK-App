@@ -49,9 +49,23 @@ fn is_rule(t: &str) -> bool {
 fn heading(t: &str) -> Option<(usize, String)> {
     let n = t.chars().take_while(|c| *c == '#').count();
     if (1..=6).contains(&n) && t[n..].starts_with(' ') {
-        return Some((n, t[n..].trim().trim_end_matches('#').trim().to_string()));
+        return Some((n, strip_closing_hashes(t[n..].trim()).to_string()));
     }
     None
+}
+
+/// Schliessende `#` einer Überschrift nur mit Leerzeichen davor (wie CommonMark): «C#» bleibt «C#»
+pub(crate) fn strip_closing_hashes(t: &str) -> &str {
+    let without = t.trim_end_matches('#');
+    if without.len() == t.len() {
+        t
+    } else if without.is_empty() {
+        ""
+    } else if without.ends_with(' ') || without.ends_with('\t') {
+        without.trim_end()
+    } else {
+        t
+    }
 }
 
 /// Listenpunkt: (Einrückung, nummeriert, Text)
@@ -71,6 +85,30 @@ fn list_item(line: &str) -> Option<(usize, bool, String)> {
         }
     }
     None
+}
+
+/// Ende von «(…)» nach Link oder Bild, mit Klammern darin (…/Foo_(bar))
+fn close_paren(chars: &[char], from: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut k = from;
+    while k < chars.len() {
+        match chars[k] {
+            '\\' => k += 1,
+            '(' => depth += 1,
+            ')' if depth == 0 => return Some(k),
+            ')' => depth -= 1,
+            _ => {}
+        }
+        k += 1;
+    }
+    None
+}
+
+/// Nummer eines nummerierten Punkts («12. » → 12)
+fn item_number(line: &str) -> Option<u64> {
+    let t = line.trim_start();
+    let digits: String = t.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 fn table_cells(line: &str) -> Vec<String> {
@@ -104,8 +142,11 @@ pub fn parse_blocks(md: &str) -> Vec<Block> {
     let mut out = Vec::new();
     let mut para: Vec<String> = Vec::new();
     let mut list_no = 0usize;
+    let mut cur_list = 0usize;
     let mut in_list = false;
     let mut top_ordered: Option<bool> = None;
+    // Letzter Punkt oben in einer nummerierten Liste (Liste, Nummer): «2.» nach einem Codeblock zählt dort weiter
+    let mut last_top: Option<(usize, u64)> = None;
     let mut indents: Vec<usize> = Vec::new();
     let flush = |para: &mut Vec<String>, out: &mut Vec<Block>| {
         if !para.is_empty() {
@@ -180,14 +221,22 @@ pub fn parse_blocks(md: &str) -> Vec<Block> {
             }
             let level = (indents.len() - 1).min(8);
             // Neue Liste: nach anderem Inhalt, oder oben ein Wechsel zwischen Aufzählung und Nummerierung
+            let number = if ordered { item_number(line) } else { None };
             if !in_list || (level == 0 && top_ordered != Some(ordered)) {
-                list_no += 1;
+                match (level, number, last_top) {
+                    (0, Some(n), Some((list, last))) if n == last + 1 => cur_list = list,
+                    _ => {
+                        list_no += 1;
+                        cur_list = list_no;
+                    }
+                }
                 in_list = true;
             }
             if level == 0 {
                 top_ordered = Some(ordered);
+                last_top = number.map(|n| (cur_list, n));
             }
-            out.push(Block::Item { level, ordered, text, list: list_no });
+            out.push(Block::Item { level, ordered, text, list: cur_list });
             i += 1;
             continue;
         }
@@ -269,7 +318,7 @@ pub fn parse_inline(text: &str) -> Vec<Span> {
             // ![Beschreibung](bilder/a.png)
             if let Some(mid) = (i + 2..chars.len()).find(|k| chars[*k] == ']') {
                 if chars.get(mid + 1) == Some(&'(') {
-                    if let Some(end) = (mid + 2..chars.len()).find(|k| chars[*k] == ')') {
+                    if let Some(end) = close_paren(&chars, mid + 2) {
                         push(&mut buf, &mut spans, bold, italic, strike);
                         let src: String = chars[mid + 2..end].iter().collect();
                         spans.push(Span { text: chars[i + 2..mid].iter().collect(), image: Some(src.trim().to_string()), ..Default::default() });
@@ -283,7 +332,7 @@ pub fn parse_inline(text: &str) -> Vec<Span> {
             // [Text](Adresse)
             if let Some(mid) = (i + 1..chars.len()).find(|k| chars[*k] == ']') {
                 if chars.get(mid + 1) == Some(&'(') {
-                    if let Some(end) = (mid + 2..chars.len()).find(|k| chars[*k] == ')') {
+                    if let Some(end) = close_paren(&chars, mid + 2) {
                         push(&mut buf, &mut spans, bold, italic, strike);
                         let label: String = chars[i + 1..mid].iter().collect();
                         let url: String = chars[mid + 2..end].iter().collect();
@@ -365,10 +414,12 @@ const MAX_IMAGE_BYTES: u64 = 20_000_000;
 
 /// Bild aus dem Projekt laden: (Endung, Inhalt, Breite, Höhe in Pixeln); None, wenn es nicht geht oder ausserhalb liegt
 fn load_image(base: &std::path::Path, root: &std::path::Path, src: &str) -> Option<(&'static str, Vec<u8>, u32, u32)> {
+    // Der Editor schreibt Leerzeichen und Klammern als %20, %28 …
+    let src = percent_encoding::percent_decode_str(src).decode_utf8().ok()?;
     if src.contains(':') || src.starts_with(['/', '\\']) || src.contains('\\') {
         return None;
     }
-    let path = base.join(src);
+    let path = base.join(src.as_ref());
     let real = dunce::canonicalize(&path).ok()?;
     let root = dunce::canonicalize(root).ok()?;
     if !real.starts_with(&root) || std::fs::metadata(&real).ok()?.len() > MAX_IMAGE_BYTES {
@@ -667,6 +718,23 @@ mod tests {
         assert!(b.contains(&Block::Table(vec![vec!["A".into(), "B".into()], vec!["1".into(), "2 | 3".into()]])));
         assert_eq!(b.last(), Some(&Block::Rule));
     }
+    #[test]
+    fn ueberschrift_mit_raute_und_liste_ueber_codeblock() {
+        let b = parse_blocks("## Programmiersprache C#\n## Schluss ##\n# ###\n");
+        assert_eq!(b[0], Block::Heading(2, "Programmiersprache C#".into()));
+        assert_eq!(b[1], Block::Heading(2, "Schluss".into()));
+        assert_eq!(b[2], Block::Heading(1, String::new()));
+        // «2.» nach einem Codeblock zählt in derselben Liste weiter, «1.» danach beginnt neu
+        let b = parse_blocks("1. Installieren\n\n```\nnpm i\n```\n\n2. Starten\n\nText\n\n1. Neu\n");
+        let lists: Vec<usize> = b.iter().filter_map(|x| if let Block::Item { list, .. } = x { Some(*list) } else { None }).collect();
+        assert_eq!(lists, vec![1, 1, 2]);
+        // Klammern in Adressen
+        let spans = parse_inline("[w](https://de.wikipedia.org/wiki/Foo_(bar)) x ![b](bilder/Bild%20%281%29.png)");
+        assert_eq!(spans.iter().find(|s| s.link.is_some()).and_then(|s| s.link.clone()).as_deref(), Some("https://de.wikipedia.org/wiki/Foo_(bar)"));
+        assert_eq!(spans.iter().find_map(|s| s.image.clone()).as_deref(), Some("bilder/Bild%20%281%29.png"));
+        assert!(!spans.iter().any(|s| s.text.contains(".png)")));
+    }
+
 
     #[test]
     fn auszeichnungen() {

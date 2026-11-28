@@ -562,7 +562,8 @@ export default function App() {
   const askBtw = async (q) => {
     let res;
     try { res = await api().chatBtw(q); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
-    if (res?.ok === false) notice(res.reason || 'Die Nebenfrage liess sich nicht stellen.');
+    if (res?.ok === false) { notice(res.reason || 'Die Nebenfrage liess sich nicht stellen.'); return false; }
+    return true;
   };
   // «Nur aus Quellen» pro Projekt (E84); der Kern schickt danach den neuen Zustand
   const setStrictSources = (on) => { if (state.folder) api().projectUpdate(state.folder, { nurQuellen: !!on }); };
@@ -785,10 +786,10 @@ export default function App() {
     approve: (id, a) => api().chatApprove(id, a),
     answer: (id, t) => api().chatAnswer(id, t),
     forgetMemory: async (id) => { try { return !!(await api().memoryRemove(id)); } catch { return false; } },
-    undo: async (snap) => { const res = await api().chatUndo(snap); if (res && !res.ok && !res.cancelled) dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] }); },
+    undo: async (snap) => { const res = await api().chatUndo(snap); if (res && !res.ok && !res.cancelled && !res.busy) dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] }); },
     undoSnapshot,
     redoId,
-    redo: async (id) => { const res = await api().chatRedo(id); if (res && !res.ok && !res.cancelled) dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] }); },
+    redo: async (id) => { const res = await api().chatRedo(id); if (res && !res.ok && !res.cancelled && !res.busy) dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] }); },
     lastPlanKey,
     // Plan umsetzen: auf Auto wechseln und loslegen; ändern: Wunsch ins Eingabefeld schreiben lassen
     implementPlan: async () => { if (runningRef.current || acts.current.blocker) return; await api().setSettings({ mode: 'auto' }); acts.current.send('Setze den Plan um.', []); },
@@ -950,7 +951,7 @@ export default function App() {
                 </div>
               ) : null}
               <div id="messages" className="messages">
-                {turns.map((t, i) => <Guard key={`${chatId}:${t.key}`} label="Diese Nachricht" appState={state}><Turn turn={t} ctx={ctx} last={i === turns.length - 1} /></Guard>)}
+                {turns.map((t, i) => <Guard key={`${chatId}:${t.key}`} label="Diese Nachricht" appState={state} resetKey={`${t.body.length}:${t.body.at(-1)?.text?.length || 0}:${t.running}`}><Turn turn={t} ctx={ctx} last={i === turns.length - 1} /></Guard>)}
               </div>
             </div>
           </div>
@@ -996,7 +997,7 @@ export default function App() {
         {rightOpen ? <div className="resizer" data-panel="sidebar" role="separator" aria-orientation="vertical" tabIndex={0} aria-label="Breite der Seitenleiste"
           title="Ziehen: Breite ändern · Doppelklick: Standardbreite" onPointerDown={startResize('sidebar')} onDoubleClick={resetWidth('sidebar')} onKeyDown={keyResize('sidebar')} /> : <span />}
         {rightOpen ? (
-          <Guard label="Die rechte Seite" appState={state} resetKey={`${tab}:${selected?.path || ''}`}><RightPanel tab={tab} setTab={setTab} root={state.folder} free={free} files={files} marks={marks} removed={removed} selected={selected}
+          <Guard label="Die rechte Seite" appState={state} resetKey={`${tab}:${selected?.path || ''}:${docPath}`}><RightPanel tab={tab} setTab={setTab} root={state.folder} free={free} files={files} marks={marks} removed={removed} selected={selected}
             onSelect={setSelected} onBig={() => setDialog({ name: 'preview' })} browser={browser} browserActive={browserActive}
             onBrowserClose={() => { api().browserClose(); setBrowser(BROWSER0); setBrowserBig(false); setTab('dateien'); }}
             onBrowserBig={() => setBrowserBig(!browserBig)} browserBig={browserBig}

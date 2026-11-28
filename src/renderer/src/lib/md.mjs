@@ -16,7 +16,8 @@ function inline(text) {
   let s = String(text).replace(/\u0000/g, '').replace(/`([^`\n]+)`/g, (_m, c) => hold(`<code>${esc(c)}</code>`));
   s = esc(s).replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, (_m, label, url) => hold(`<a href="${url}" title="${url}">${emph(urls(label))}</a>`));
   // Verweis auf eine Unterlage im Ordner «Quellen» (ENTSCHEIDE E84); ungültige Pfade bleiben Text
-  s = s.replace(/\[([^\]\n]+)\]\((quelle:[^)\s]+)\)/g, (m, label, url) => {
+  // Klammern im Namen («Skript (2).pdf») kodiert oder als ein Paar
+  s = s.replace(/\[([^\]\n]+)\]\((quelle:(?:[^()\s]|\([^()\s]*\))+)\)/g, (m, label, url) => {
     const ref = parseSourceLink(url.replace(/&amp;/g, '&'));
     return ref ? hold(`<a class="quelle" href="${url}" title="${esc(ref.path)}${ref.seite ? `, S. ${ref.seite}` : ''}">${emph(label)}</a>`) : m;
   });

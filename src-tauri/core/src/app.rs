@@ -306,7 +306,9 @@ impl App {
         let trusted: Vec<String> = settings::get("githubTrusted").as_array().map(|a| a.iter().map(js_string).collect()).unwrap_or_default();
         let github_trust = Arc::new(GithubTrust::with_store(trusted, |list| settings::set(json!({ "githubTrusted": list }))));
 
-        let web = Arc::new(Web::new(Some(ask.clone()), client.clone(), test_mode));
+        // Eigener Client fürs Web: Weiterleitungen prüft Web::get Schritt für Schritt (auch per DNS)
+        let web_client = Web::fetch_client_builder(test_mode).dns_resolver(dns.clone()).build().unwrap_or_else(|_| client.clone());
+        let web = Arc::new(Web::new(Some(ask.clone()), web_client, test_mode));
 
         Arc::new_cyclic(|me: &Weak<App>| {
             let m1 = me.clone();
@@ -996,8 +998,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 let (notes, templates) = if free { (String::new(), String::new()) } else { (project_notes(&f), crate::vorlagen::system_prompt()) };
                 // Quellen (E84): Unterlagen im Ordner «Quellen», nur in Projekten
                 let quellen = if free { String::new() } else { let p = Path::new(&f); crate::sources::prompt(p, crate::sources::strict(p)) };
-                // Datum (E85) am Schluss: ändert sich einmal am Tag, der Anfang davor bleibt gleich
-                format!("{}{}{}{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, quellen, templates, crate::docs::system_prompt(&f), a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch(), crate::agent::date_prompt(chrono::Local::now()))
+                // Docs (offenes Doc, Kommentare) und Datum (E85) am Schluss: Sie ändern sich oft, der Anfang davor bleibt gleich
+                format!("{}{}{}{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, quellen, templates, a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch(), crate::docs::system_prompt(&f), crate::agent::date_prompt(chrono::Local::now()))
             }
         });
         o.get_command_hint = Arc::new({ let f = f.clone(); move |chat: &str| read_instruction("befehle.md", &f, chat) });
@@ -1568,12 +1570,18 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         if picked.is_empty() {
             return;
         }
-        let text = match crate::sources::add(Path::new(folder), &picked) {
+        let skipped = picked.len().saturating_sub(50);
+        let more = if skipped > 0 { format!(" {skipped} weitere nicht: höchstens 50 auf einmal.") } else { String::new() };
+        // Kopieren kann bei grossen Dateien dauern: nicht im Thread der Oberfläche
+        let (dir, list) = (folder.to_string(), picked.clone());
+        let res = tokio::task::spawn_blocking(move || crate::sources::add(Path::new(&dir), &list)).await.unwrap_or_else(|e| Err(anyhow::anyhow!("{e}")));
+        let text = match res {
+            Ok(done) if done.is_empty() => "Nichts kopiert: Die gewählten Dateien liessen sich nicht lesen.".to_string(),
             Ok(done) if done.len() == 1 => format!("{} liegt jetzt im Ordner {}. ASK benutzt die Unterlage in diesem Projekt.", done[0].rsplit('/').next().unwrap_or(""), crate::sources::FOLDER),
             Ok(done) => format!("{} Unterlagen liegen jetzt im Ordner {}. ASK benutzt sie in diesem Projekt.", done.len(), crate::sources::FOLDER),
             Err(err) => format!("Nicht kopiert: {err}"),
         };
-        self.send("app:notice", json!(text));
+        self.send("app:notice", json!(format!("{text}{more}")));
         self.push_state();
     }
 

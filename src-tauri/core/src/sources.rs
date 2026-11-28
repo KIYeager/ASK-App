@@ -70,7 +70,8 @@ pub fn strict(project: &Path) -> bool {
 
 /// Verweis auf eine Unterlage, wie das Modell ihn in die Antwort schreibt
 pub fn link(file: &str, seite: Option<u64>) -> String {
-    let path = file.split('/').map(encode_uri_component).collect::<Vec<_>>().join("/");
+    // Klammern auch kodieren: «Skript (2).pdf» beendete sonst den Markdown-Link vorzeitig
+    let path = file.split('/').map(|p| encode_uri_component(p).replace('(', "%28").replace(')', "%29")).collect::<Vec<_>>().join("/");
     match seite {
         Some(n) => format!("quelle:{path}#seite={n}"),
         None => format!("quelle:{path}"),
@@ -125,11 +126,11 @@ pub fn add(project: &Path, sources: &[String]) -> Result<Vec<String>> {
 /// Verweise auf Unterlagen in einer Antwort (`[Skript.pdf, S. 14](quelle:…)`), ohne doppelte, höchstens 10
 pub fn cited(text: &str) -> Vec<Source> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"\[([^\]\n]{1,200})\]\((quelle:[^)\s]{1,600})\)").expect("Regex"));
+    let re = RE.get_or_init(|| Regex::new(r"\[([^\]\n]{1,200})\]\((quelle:(?:[^()\s]|\([^()\s]*\))+)\)").expect("Regex"));
     let mut out: Vec<Source> = Vec::new();
     for c in re.captures_iter(text) {
         let url = c[2].to_string();
-        if !out.iter().any(|s| s.url == url) {
+        if url.len() <= 600 && !out.iter().any(|s| s.url == url) {
             out.push(Source { url, title: c[1].trim().to_string() });
         }
         if out.len() >= 10 {
@@ -183,5 +184,9 @@ mod tests {
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].title, "Skript, S. 2");
         assert_eq!(c[0].url, "quelle:Quellen/Skript.pdf#seite=2");
+        // Klammern im Namen: kodiert im Verweis, auch ein Paar roh wird ganz erkannt
+        assert_eq!(link("Quellen/Skript (2).pdf", Some(3)), "quelle:Quellen/Skript%20%282%29.pdf#seite=3");
+        let c = cited("[a](quelle:Quellen/Skript%20%282%29.pdf#seite=3) [b](quelle:Quellen/Folien%20(Teil%201).pdf)");
+        assert_eq!(c.iter().map(|s| s.url.as_str()).collect::<Vec<_>>(), ["quelle:Quellen/Skript%20%282%29.pdf#seite=3", "quelle:Quellen/Folien%20(Teil%201).pdf"]);
     }
 }

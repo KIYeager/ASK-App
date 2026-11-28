@@ -476,8 +476,10 @@ const Composer = forwardRef(function Composer(props, ref) {
     if (btwCmd) {
       const q = (btwCmd[1] || '').trim();
       if (!q) { notice('Schreib die Frage hinter /btw, zum Beispiel «/btw Was heisst Abstract?».'); return; }
+      const typed = text;
       setText('');
-      props.onBtw?.(q);
+      // Abgelehnt (z. B. noch nichts im Chat): die Frage zurück ins Eingabefeld, nichts geht verloren
+      Promise.resolve(props.onBtw?.(q)).then((ok) => { if (ok === false) setText((now) => now || typed); });
       return;
     }
     if (pendingQuestion) {

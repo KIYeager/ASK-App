@@ -862,6 +862,8 @@ pub struct Agent {
     compacting: AtomicBool,
     /// Das letzte Speichern ist gescheitert (einmal gemeldet, bis es wieder klappt)
     save_failed: AtomicBool,
+    /// Ein Schreibvorgang des Chats nach dem anderen (Auftrag und Nebenfrage speichern gleichzeitig)
+    save_lock: Mutex<()>,
 }
 
 fn blank() -> Value {
@@ -898,6 +900,7 @@ impl Agent {
             open_events: Mutex::new(Vec::new()),
             compacting: AtomicBool::new(false),
             save_failed: AtomicBool::new(false),
+            save_lock: Mutex::new(()),
         })
     }
 
@@ -1173,6 +1176,8 @@ impl Agent {
         if dir.as_os_str().is_empty() {
             return;
         }
+        // Stand lesen und schreiben ohne Lücke: Sonst konnte ein älterer Stand zuletzt auf der Platte landen
+        let _writing = self.save_lock.lock();
         let (id, text) = {
             let mut g = self.inner.lock();
             if arr(&g.chat["messages"]).is_empty() {
@@ -1298,7 +1303,7 @@ impl Agent {
         }
         // Während Rückfrage und Zurücksetzen startet kein Auftrag (send prüft undoing) und kein zweites Rückgängig
         if self.undoing.swap(true, Ordering::SeqCst) {
-            return json!({ "ok": false, "reason": "Es wird schon zurückgesetzt." });
+            return json!({ "ok": false, "busy": true, "reason": "Es wird schon zurückgesetzt." });
         }
         self.emit_changed();
         let result = match self.rewind_now().await {
@@ -2468,7 +2473,7 @@ impl Agent {
             return json!({ "ok": false, "reason": "Es läuft gerade ein Auftrag." });
         }
         if self.undoing.swap(true, Ordering::SeqCst) {
-            return json!({ "ok": false, "reason": "Es wird schon zurückgesetzt." });
+            return json!({ "ok": false, "busy": true, "reason": "Es wird schon zurückgesetzt." });
         }
         let result = match self.undo_now(id).await {
             Ok(v) => v,
@@ -2556,7 +2561,7 @@ impl Agent {
             return json!({ "ok": false, "reason": "Es läuft gerade ein Auftrag." });
         }
         if self.undoing.swap(true, Ordering::SeqCst) {
-            return json!({ "ok": false, "reason": "Es wird schon zurückgesetzt." });
+            return json!({ "ok": false, "busy": true, "reason": "Es wird schon zurückgesetzt." });
         }
         let result = match self.redo_now(id).await {
             Ok(v) => v,
@@ -2633,11 +2638,13 @@ impl Agent {
             (undid, later_ids)
         };
         let done = total.saturating_sub(failed.len());
-        let text = format!(
+        let text = if total == 0 && failed.is_empty() {
+            "Wiederhergestellt: Die Aufträge gelten wieder. Dateien waren nicht betroffen.".to_string()
+        } else { format!(
             "Wiederhergestellt: {done} {} wieder auf dem Stand vor dem Rückgängig.{}",
             if done == 1 { "Datei" } else { "Dateien" },
             if failed.is_empty() { String::new() } else { format!(" Nicht möglich (wohl geöffnet): {}.", failed.iter().take(5).cloned().collect::<Vec<_>>().join(", ")) }
-        );
+        ) };
         self.push(json!({ "role": "user", "auto": true, "note": "redo", "summary": text, "time": now_ms(),
             "content": "[Hinweis der App: Die Person hat das letzte Rückgängig zurückgenommen. Der Arbeitsordner ist wieder auf dem Stand vor dem Rückgängig; die Änderungen der rückgängig gemachten Aufträge gelten wieder.]" }));
         self.save();
@@ -2664,6 +2671,7 @@ impl Agent {
         let me = self.clone();
         let api_messages_fn: ApiMessagesFn = Arc::new(|system, messages, text_mode| api_messages(system, messages, text_mode, None, &NORMAL));
         let prompt_fn: TextModePromptFn = Arc::new(text_mode_prompt);
+        let (sources, strict) = (self.o.get_sources)();
         let deps = HelperDeps {
             ask: self.o.ask.clone(),
             model: if helper_model.is_empty() { (self.o.get_model)() } else { helper_model },
@@ -2677,6 +2685,8 @@ impl Agent {
             text_mode_prompt: prompt_fn,
             signal: Some(signal.clone()),
             on_progress: Some(Arc::new(move |output| me.event(json!({ "type": "tool-progress", "id": id, "output": clip(output, 4000) })))),
+            sources,
+            strict,
         };
         run_helper(&js_string(&call["function"]["arguments"]), &deps).await
     }
@@ -2693,13 +2703,21 @@ impl Agent {
         if (self.o.get_model)().is_empty() {
             return json!({ "ok": false, "reason": "Kein Modell gewählt." });
         }
+        // Zu welchem Auftrag die Nebenfrage gehört: Zeit der letzten Eingabe der Person (so steht sie auch nach dem
+        // Neuladen dort, obwohl sie erst nach der Antwort am Ende des Chats gespeichert wird)
+        let after = self.messages().iter().rev()
+            .find(|m| m["role"] == "user" && m.get("note").is_none_or(Value::is_null) && !truthy(&m["auto"]))
+            .map(|m| m["time"].clone());
+        let Some(after) = after else {
+            return json!({ "ok": false, "reason": "/btw ist für eine Nebenfrage, während ASK an etwas arbeitet. Stell deine Frage hier als normale Nachricht." });
+        };
         let id = format!("btw-{}", hex::encode(rand::random::<[u8; 4]>()));
         let time = now_ms();
         let chat = self.chat_id();
         self.event(json!({ "type": "btw-start", "id": id, "question": question, "time": time }));
         let me = self.clone();
         let task_id = id.clone();
-        tokio::spawn(async move { me.answer_btw(task_id, question, time, chat).await });
+        tokio::spawn(async move { me.answer_btw(task_id, question, time, chat, after).await });
         json!({ "ok": true, "id": id })
     }
 
@@ -2718,11 +2736,13 @@ impl Agent {
         messages
     }
 
-    async fn answer_btw(self: Arc<Self>, id: String, question: String, time: i64, chat: String) {
+    async fn answer_btw(self: Arc<Self>, id: String, question: String, time: i64, chat: String, after: Value) {
         let me = self.clone();
         let delta_id = id.clone();
+        let delta_chat = chat.clone();
+        // Ereignisse nur, solange derselbe Chat geladen ist: Sonst stünde die Karte im Chat, zu dem gewechselt wurde
         let on_delta: DeltaFn = Arc::new(move |kind, text| {
-            if kind == "text" {
+            if kind == "text" && me.chat_id() == delta_chat {
                 me.event(json!({ "type": "btw-delta", "id": delta_id, "text": text }));
             }
         });
@@ -2744,10 +2764,11 @@ impl Agent {
             Err(_) => (String::new(), "ASK hat nicht innert 5 Minuten geantwortet.".to_string()),
         };
         // Im Chat speichern, wenn er noch geladen ist (sonst gehört die Antwort zu einem Chat, der nicht mehr hier ist)
-        if self.chat_id() == chat {
-            self.push(json!({ "role": "btw", "id": id, "question": question, "answer": answer, "error": error, "time": time }));
-            self.save();
+        if self.chat_id() != chat {
+            return;
         }
+        self.push(json!({ "role": "btw", "id": id, "question": question, "answer": answer, "error": error, "time": time, "after": after }));
+        self.save();
         self.event(json!({ "type": "btw-end", "id": id, "question": question, "time": time, "text": answer, "error": error }));
     }
 
@@ -2789,7 +2810,7 @@ impl Agent {
                 return json!({ "role": "redo", "text": m["summary"] });
             }
             if m["role"] == "btw" {
-                return json!({ "role": "btw", "id": m["id"], "question": m["question"], "answer": m["answer"], "error": m["error"], "time": m["time"] });
+                return json!({ "role": "btw", "id": m["id"], "question": m["question"], "answer": m["answer"], "error": m["error"], "time": m["time"], "after": m["after"] });
             }
             json!({ "role": if truthy(&m["auto"]) { json!("auto") } else { m["role"].clone() }, "content": m["content"], "time": m["time"],
                 "attachments": or(&m["attachments"], json!([])), "snapshot": or(&m["snapshot"], Value::Null), "changes": or(&m["changes"], Value::Null), "undone": truthy(&m["undone"]) })
@@ -2966,6 +2987,7 @@ mod tests {
     #[tokio::test]
     async fn nebenfrage_ohne_werkzeuge_mit_dem_chat_und_nicht_im_verlauf_des_auftrags() {
         let t = make(Fake::new(vec![text("Antwort eins"), text("Das ist die Nebenantwort."), text("Antwort zwei")]), |_| {});
+        assert_eq!(t.agent.btw("Frage vor allem")["ok"], false, "ohne Eingabe im Chat keine Nebenfrage");
         t.send("Schreib einen Bericht").await;
         assert_eq!(t.agent.btw("   ")["ok"], false, "ohne Frage");
         let r = t.agent.btw(" Was heisst eigentlich Bericht? ");

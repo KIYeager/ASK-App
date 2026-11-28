@@ -174,7 +174,7 @@ export function install() {
   docsList: () => call('docs:list'),
   docsRead: (path) => call('docs:read', path),
   docsSave: (path, content, base) => call('docs:save', path, content, base || ''),
-  docsCreate: (title) => call('docs:create', title),
+  docsCreate: (title, content) => call('docs:create', title, content || ''),
   docsDelete: (path) => call('docs:delete', path),
   docsOpen: (path) => call('docs:open', path || ''),
   docsComments: (path) => call('docs:comments', path),

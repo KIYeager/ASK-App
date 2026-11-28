@@ -801,8 +801,14 @@ fn source_notes(json: &Value) -> String {
     if notes.is_empty() { String::new() } else { format!("\n\nHinweise zu Unterlagen:\n{}", notes.join("\n")) }
 }
 
+/// Zahl aus den Argumenten in Grenzen (das Modell schickt auch «25» oder 0); fehlt sie, null
+fn clamped(a: &Value, key: &str, lo: i64, hi: i64) -> Value {
+    let n = a.get(key).filter(|v| truthy(v)).and_then(|v| v.as_f64().or_else(|| js_string(v).trim().parse().ok()));
+    n.filter(|n| n.is_finite()).map(|n| json!((n.round() as i64).clamp(lo, hi))).unwrap_or(Value::Null)
+}
+
 async fn quellen_suchen(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolResult> {
-    let res = request(terminal, "GET", &format!("/quellen/search?{}", q(&[("query", arg(a, "suche")), ("limit", arg(a, "anzahl"))])), None, REQUEST_TIMEOUT_MS).await?;
+    let res = request(terminal, "GET", &format!("/quellen/search?{}", q(&[("query", arg(a, "suche")), ("limit", clamped(a, "anzahl", 1, 20))])), None, REQUEST_TIMEOUT_MS).await?;
     let Some(json) = res.json.clone().filter(|_| res.status == 200) else { return Err(fail(&res)) };
     let results = json["results"].as_array().cloned().unwrap_or_default();
     let files = json["dateien"].as_u64().unwrap_or(0);
@@ -821,7 +827,7 @@ async fn quellen_suchen(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<To
 
 async fn quelle_lesen(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolResult> {
     let ort = a.get("ort").filter(|v| truthy(v)).cloned().unwrap_or(Value::Null);
-    let res = request(terminal, "GET", &format!("/quellen/read?{}", q(&[("path", arg(a, "datei")), ("seite", arg(a, "seite")), ("ort", ort)])), None, REQUEST_TIMEOUT_MS).await?;
+    let res = request(terminal, "GET", &format!("/quellen/read?{}", q(&[("path", arg(a, "datei")), ("seite", clamped(a, "seite", 1, 99_999)), ("ort", ort)])), None, REQUEST_TIMEOUT_MS).await?;
     let Some(json) = res.json.clone().filter(|_| res.status == 200) else { return Err(fail(&res)) };
     let teile: Vec<String> = json["teile"].as_array().into_iter().flatten().map(js_string).collect();
     let more = if teile.len() > 1 { format!("\n\nTeile dieser Unterlage: {}", teile.iter().take(60).cloned().collect::<Vec<_>>().join(", ")) } else { String::new() };

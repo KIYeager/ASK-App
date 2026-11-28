@@ -335,15 +335,28 @@ pub fn is_local_ip(ip: std::net::IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_local_ip(IpAddr::V4(v4));
             }
-            let first = v6.segments()[0];
+            let seg = v6.segments();
+            let first = seg[0];
+            let embedded = |hi: u16, lo: u16| is_local_ip(IpAddr::V4(std::net::Ipv4Addr::from((u32::from(hi) << 16) | u32::from(lo))));
+            // IPv4 in IPv6: NAT64 (64:ff9b::/96), 6to4 (2002::/16), alt «kompatibel» (::a.b.c.d)
+            if seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0] && embedded(seg[6], seg[7]) {
+                return true;
+            }
+            if first == 0x2002 && embedded(seg[1], seg[2]) {
+                return true;
+            }
+            if seg[..6] == [0, 0, 0, 0, 0, 0] && seg[6] != 0 && embedded(seg[6], seg[7]) {
+                return true;
+            }
             v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+                || (first & 0xffc0) == 0xfec0 // site-local (veraltet, aber lokal)
         }
     }
 }
 
 /// Ein öffentlicher Name, der auf eine lokale Adresse zeigt (z. B. «127.0.0.1.nip.io» oder ein umgebogener
-/// DNS-Eintrag), kommt an `check_url` vorbei. Darum den Namen selbst auflösen und ablehnen, wenn alle Adressen
-/// lokal sind. Lässt er sich nicht auflösen (z. B. hinter einem Proxy, der selbst auflöst), entscheidet der Proxy.
+/// DNS-Eintrag), kommt an `check_url` vorbei. Darum den Namen selbst auflösen und ablehnen, sobald eine Adresse
+/// lokal ist (bei gemischten Antworten könnte die Verbindung sonst zur lokalen gehen). Lässt er sich nicht auflösen (z. B. hinter einem Proxy, der selbst auflöst), entscheidet der Proxy.
 async fn check_resolved(url: &url::Url, allow_local: bool) -> Result<()> {
     if allow_local {
         return Ok(());
@@ -353,7 +366,7 @@ async fn check_resolved(url: &url::Url, allow_local: bool) -> Result<()> {
     let lookup = tokio::time::timeout(Duration::from_secs(5), tokio::net::lookup_host((host, port))).await;
     let Ok(Ok(addrs)) = lookup else { return Ok(()) };
     let ips: Vec<std::net::IpAddr> = addrs.map(|a| a.ip()).collect();
-    if !ips.is_empty() && ips.iter().all(|ip| is_local_ip(*ip)) {
+    if ips.iter().any(|ip| is_local_ip(*ip)) {
         bail!(LOCAL_BLOCKED);
     }
     Ok(())
@@ -461,6 +474,8 @@ pub struct Web {
     ask: Option<Arc<dyn WebSearchBackend>>,
     client: reqwest::Client,
     pub allow_local: bool,
+    /// Weiterleitungen ins lokale Netz erlaubt (Standard wie allow_local; Tests prüfen damit die Sperre)
+    pub redirect_local: bool,
     /// Websuche von ASK ging nicht: in dieser Sitzung gleich DuckDuckGo
     ask_failed: AtomicBool,
     /// Adresse von DuckDuckGo (für Tests änderbar)
@@ -470,7 +485,7 @@ pub struct Web {
 impl Web {
     /// ask: Websuche von ASK (kann fehlen), client: HTTP mit Proxy von Windows (siehe `client_builder`)
     pub fn new(ask: Option<Arc<dyn WebSearchBackend>>, client: reqwest::Client, allow_local: bool) -> Self {
-        Web { ask, client, allow_local, ask_failed: AtomicBool::new(false), duck_url: "https://lite.duckduckgo.com".to_string() }
+        Web { ask, client, allow_local, redirect_local: allow_local, ask_failed: AtomicBool::new(false), duck_url: "https://lite.duckduckgo.com".to_string() }
     }
 
     /// HTTP-Client für `Web`: Weiterleitungen (höchstens 10) werden vor dem Verbinden geprüft, damit eine
@@ -488,7 +503,29 @@ impl Web {
         }))
     }
 
+    /// Client für Seiten und Suche: folgt Weiterleitungen nicht selbst; `get` prüft jedes Ziel samt DNS, bevor
+    /// es angefragt wird (sonst ging eine Anfrage an ein lokales Ziel hinaus, bevor die Prüfung danach griff)
+    pub fn fetch_client_builder(allow_local: bool) -> reqwest::ClientBuilder {
+        Self::client_builder(allow_local).redirect(reqwest::redirect::Policy::none())
+    }
+
     async fn get(&self, url: &str, signal: Option<&Signal>, accept: &str) -> Result<reqwest::Response> {
+        let mut current = url::Url::parse(url).map_err(|_| anyhow!("Ungültige Adresse."))?;
+        for _ in 0..=10 {
+            let res = self.get_once(current.as_str(), signal, accept).await?;
+            if !res.status().is_redirection() {
+                return Ok(res);
+            }
+            let Some(location) = res.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()) else { return Ok(res) };
+            let next = current.join(location).map_err(|_| anyhow!("Ungültige Weiterleitung."))?;
+            let next = check_url(next.as_str(), self.redirect_local)?;
+            check_resolved(&next, self.redirect_local).await?;
+            current = next;
+        }
+        bail!("Zu viele Weiterleitungen.")
+    }
+
+    async fn get_once(&self, url: &str, signal: Option<&Signal>, accept: &str) -> Result<reqwest::Response> {
         let sent = self
             .client
             .get(url)
@@ -691,10 +728,10 @@ mod tests {
 
     #[tokio::test]
     async fn namen_mit_lokaler_adresse_werden_abgelehnt() {
-        for ip in ["127.0.0.1", "10.1.2.3", "192.168.0.1", "172.20.0.1", "169.254.1.1", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"] {
+        for ip in ["127.0.0.1", "10.1.2.3", "192.168.0.1", "172.20.0.1", "169.254.1.1", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "64:ff9b::7f00:1", "2002:c0a8:1::1", "::7f00:1", "fec0::1"] {
             assert!(is_local_ip(ip.parse().unwrap()), "{ip}");
         }
-        for ip in ["8.8.8.8", "195.176.1.1", "2a00:1450::1"] {
+        for ip in ["8.8.8.8", "195.176.1.1", "2a00:1450::1", "64:ff9b::808:808", "2002:808:808::1"] {
             assert!(!is_local_ip(ip.parse().unwrap()), "{ip}");
         }
         // «localhost» ist ein Name, aber immer lokal: wird nach dem Auflösen abgelehnt (ohne Ausnahme für Tests)
@@ -774,7 +811,7 @@ mod tests {
     }
 
     fn test_client() -> reqwest::Client {
-        Web::client_builder(false).no_proxy().build().unwrap()
+        Web::fetch_client_builder(false).no_proxy().build().unwrap()
     }
 
     #[tokio::test]
@@ -796,6 +833,7 @@ mod tests {
         .await;
         let ask: Arc<dyn WebSearchBackend> = Arc::new(FakeAsk { fail: false });
         let mut web = Web::new(Some(ask), test_client(), true);
+        web.redirect_local = false; // der Testserver ist lokal, eine Weiterleitung ins lokale Netz bleibt gesperrt
         web.duck_url = server.url.clone();
         assert_eq!(
             web.search("test", None).await.unwrap(),
