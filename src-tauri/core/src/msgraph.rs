@@ -14,7 +14,7 @@
 //! Öffentliche Schnittstelle: `config`, `configured`, `status`, `login(open)`, `logout`, `access_token`, `GraphStore`
 //! (Ablage für docsync.rs), `create_shared`, `open_link`, `share_link_id`.
 
-use crate::docsync::Store;
+use crate::docsync::{Store, MAX_IMAGE};
 use crate::settings;
 use crate::util::{js_string, now_ms, str_of, take_chars};
 use anyhow::{anyhow, bail, Result};
@@ -22,6 +22,7 @@ use base64::Engine;
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -95,7 +96,8 @@ fn client() -> reqwest::Client {
 async fn token_request(client: &reqwest::Client, pairs: &[(&str, &str)]) -> Result<Value> {
     let c = config();
     let res = client.post(format!("{}/{}/oauth2/v2.0/token", c.login, c.tenant))
-        .header("Content-Type", "application/x-www-form-urlencoded").body(form(pairs)).send().await?;
+        .header("Content-Type", "application/x-www-form-urlencoded").body(form(pairs)).send().await
+        .map_err(|_| anyhow!("Microsoft ist gerade nicht erreichbar. Bist du online?"))?;
     let status = res.status().as_u16();
     let v: Value = res.json().await.unwrap_or(Value::Null);
     if status >= 400 || str_of(&v, "access_token").is_empty() {
@@ -129,8 +131,9 @@ pub async fn access_token(client: &reqwest::Client) -> Result<String> {
         bail!("Nicht bei Microsoft angemeldet. Im Doc bei «Teilen» auf «Mit Microsoft anmelden» klicken.");
     }
     let c = config();
+    // Nur eine Ablehnung heisst «neu anmelden»; offline bleibt die Anmeldung gültig
     let v = token_request(client, &[("client_id", &c.client_id), ("grant_type", "refresh_token"), ("refresh_token", &refresh), ("scope", SCOPES)]).await
-        .map_err(|e| anyhow!("{e} Bitte neu bei Microsoft anmelden."))?;
+        .map_err(|e| if e.to_string().contains("abgelehnt") { anyhow!("{e} Bitte im Doc bei «Teilen» neu bei Microsoft anmelden.") } else { e })?;
     keep(&v);
     Ok(str_of(&v, "access_token"))
 }
@@ -161,24 +164,27 @@ pub async fn login(open: impl Fn(&str)) -> Result<Value> {
     let code = tokio::time::timeout(Duration::from_secs(300), async {
         loop {
             let (mut sock, _) = listener.accept().await?;
+            // Browser öffnen auf Vorrat leere Verbindungen: nicht ewig auf eine davon warten, sonst bliebe die echte Antwort liegen
             let mut buf = vec![0u8; 8192];
-            let n = sock.read(&mut buf).await.unwrap_or(0);
+            let n = match tokio::time::timeout(Duration::from_secs(3), sock.read(&mut buf)).await {
+                Ok(Ok(n)) => n,
+                _ => continue,
+            };
             let req = String::from_utf8_lossy(&buf[..n]).to_string();
             let target = req.split_whitespace().nth(1).unwrap_or("/").to_string();
-            let (code, got_state, error) = (query_param(&target, "code"), query_param(&target, "state"), query_param(&target, "error_description"));
-            if code.is_empty() && error.is_empty() {
+            let (code, got_state) = (query_param(&target, "code"), query_param(&target, "state"));
+            let error = [query_param(&target, "error_description"), query_param(&target, "error")].into_iter().find(|e| !e.is_empty()).unwrap_or_default();
+            if (code.is_empty() && error.is_empty()) || got_state != state {
+                // z. B. favicon, oder eine Anfrage, die nicht zu dieser Anmeldung gehört: weiter warten
                 let _ = sock.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-                continue; // z. B. favicon
+                continue;
             }
-            let ok = !code.is_empty() && got_state == state;
+            let ok = !code.is_empty();
             let page = if ok { "Angemeldet. Du kannst dieses Fenster schliessen und zu ASK zurückkehren." } else { "Die Anmeldung hat nicht geklappt. Schliess dieses Fenster und versuch es in ASK nochmals." };
             let html = format!("<!doctype html><meta charset=utf-8><title>ASK</title><body style=\"font:16px Segoe UI,sans-serif;padding:40px\"><h2>ASK</h2><p>{page}</p>");
             let _ = sock.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{html}", html.len()).as_bytes()).await;
-            if !error.is_empty() {
-                bail!("Microsoft: {}", take_chars(&error, 300));
-            }
-            if got_state != state {
-                bail!("Die Anmeldung passt nicht zu dieser Anfrage. Bitte nochmals versuchen.");
+            if !ok {
+                bail!("Anmeldung abgebrochen oder abgelehnt (Microsoft: {}).", take_chars(error.lines().next().unwrap_or(""), 200));
             }
             return Ok::<String, anyhow::Error>(code);
         }
@@ -225,7 +231,10 @@ pub struct GraphStore {
     me: String,
     own: String,
     own_loaded: bool,
+    /// Eigene Einträge, die noch nicht im geladenen Protokoll stehen (append geht nie übers Netz)
+    pending: String,
     dirty: bool,
+    image_sizes: HashMap<String, u64>,
 }
 
 struct Reply {
@@ -236,7 +245,7 @@ struct Reply {
 impl GraphStore {
     pub fn new(rt: tokio::runtime::Handle, token: TokenFn, drive: &str, folder: &str, link: &str, me: &str) -> GraphStore {
         GraphStore { rt, http: client(), graph: config().graph, token, drive: drive.into(), folder: folder.into(), link: link.into(), me: me.into(),
-            own: String::new(), own_loaded: false, dirty: false }
+            own: String::new(), own_loaded: false, pending: String::new(), dirty: false, image_sizes: HashMap::new() }
     }
 
     fn call(&self, method: reqwest::Method, url: &str, body: Option<Vec<u8>>, range: Option<u64>) -> Result<Reply> {
@@ -252,11 +261,15 @@ impl GraphStore {
             let res = req.send().await.map_err(|e| anyhow!("OneDrive nicht erreichbar: {e}"))?;
             let status = res.status().as_u16();
             let body = res.bytes().await?.to_vec();
-            if status == 401 || status == 403 {
-                bail!("Kein Zugriff auf das geteilte Doc in OneDrive (Status {status}). Ist der Link noch gültig und bist du mit dem Schulkonto angemeldet?");
+            if status == 401 {
+                *cache().lock() = None; // Zugriffstoken abgelaufen oder widerrufen: beim nächsten Mal neu holen
+                bail!("OneDrive hat die Anmeldung nicht angenommen. ASK versucht es gleich nochmals; sonst im Doc bei «Teilen» neu anmelden.");
+            }
+            if status == 403 {
+                bail!("Kein Zugriff mehr auf das geteilte Doc in OneDrive. Vielleicht hat die Person, die geteilt hat, den Link entfernt.");
             }
             if status == 429 || status >= 500 {
-                bail!("OneDrive ist gerade überlastet (Status {status}). ASK versucht es gleich nochmals.");
+                bail!("OneDrive ist gerade überlastet. ASK versucht es gleich nochmals.");
             }
             Ok(Reply { status, body })
         })
@@ -267,12 +280,25 @@ impl GraphStore {
     }
 
     fn children(&self, rel: &str) -> Result<Vec<Value>> {
-        let r = self.call(reqwest::Method::GET, &format!("{}/children?$select=name,size&$top=999", self.item(rel)), None, None)?;
-        if r.status == 404 {
-            return Ok(vec![]);
+        let mut url = format!("{}/children?$select=name,size&$top=999", self.item(rel));
+        let mut out = Vec::new();
+        // Mehr Einträge als auf eine Seite passen: den Links «@odata.nextLink» folgen (nur zu Graph)
+        for _ in 0..20 {
+            let r = self.call(reqwest::Method::GET, &url, None, None)?;
+            if r.status == 404 {
+                return Ok(out);
+            }
+            if r.status >= 300 {
+                bail!("OneDrive antwortet mit Status {}.", r.status);
+            }
+            let v: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
+            out.extend(v["value"].as_array().cloned().unwrap_or_default());
+            match v["@odata.nextLink"].as_str() {
+                Some(next) if next.starts_with(&self.graph) => url = next.to_string(),
+                _ => break,
+            }
         }
-        let v: Value = serde_json::from_slice(&r.body).unwrap_or(Value::Null);
-        Ok(v["value"].as_array().cloned().unwrap_or_default())
+        Ok(out)
     }
 
     fn get(&self, rel: &str, from: Option<u64>) -> Result<Option<Vec<u8>>> {
@@ -287,7 +313,11 @@ impl GraphStore {
     }
 
     fn put(&self, rel: &str, bytes: Vec<u8>) -> Result<Value> {
-        let r = self.call(reqwest::Method::PUT, &format!("{}/content", self.item(rel)), Some(bytes), None)?;
+        self.put_to(&format!("{}/content", self.item(rel)), bytes)
+    }
+
+    fn put_to(&self, url: &str, bytes: Vec<u8>) -> Result<Value> {
+        let r = self.call(reqwest::Method::PUT, url, Some(bytes), None)?;
         if r.status >= 300 {
             bail!("Speichern in OneDrive fehlgeschlagen (Status {}).", r.status);
         }
@@ -329,13 +359,18 @@ impl Store for GraphStore {
         Ok(self.get(&format!("teilnehmer/{who}.jsonl"), Some(from))?.unwrap_or_default())
     }
     fn append(&mut self, text: &str) -> Result<()> {
-        self.load_own()?;
-        self.own.push_str(text);
+        // Ohne Netz: Speichern aus dem Editor oder von ASK wartet nie auf OneDrive; hochgeladen wird beim Abgleich
+        self.pending.push_str(text);
         self.dirty = true;
         Ok(())
     }
     fn flush(&mut self) -> Result<()> {
         if self.dirty {
+            self.load_own()?;
+            if !self.pending.is_empty() {
+                let pending = std::mem::take(&mut self.pending);
+                self.own.push_str(&pending);
+            }
             // Die eigene Datei schreibt nur diese App: ganz hochladen, nie ein Konflikt mit anderen
             self.put(&format!("teilnehmer/{}.jsonl", self.me), self.own.clone().into_bytes())?;
             self.dirty = false;
@@ -343,13 +378,23 @@ impl Store for GraphStore {
         Ok(())
     }
     fn images(&mut self) -> Result<Vec<String>> {
-        Ok(self.children("bilder")?.iter().map(|e| str_of(e, "name")).collect())
+        let list = self.children("bilder")?;
+        self.image_sizes = list.iter().map(|e| (str_of(e, "name"), e["size"].as_u64().unwrap_or(0))).collect();
+        Ok(self.image_sizes.keys().cloned().collect())
     }
     fn get_image(&mut self, name: &str) -> Result<Vec<u8>> {
+        // Zu grosse Bilder gar nicht erst laden
+        if self.image_sizes.get(name).is_some_and(|n| *n > MAX_IMAGE) {
+            bail!("Bild zu gross");
+        }
         self.get(&format!("bilder/{name}"), None)?.ok_or_else(|| anyhow!("Bild fehlt"))
     }
     fn put_image(&mut self, name: &str, bytes: Vec<u8>) -> Result<()> {
-        self.put(&format!("bilder/{name}"), bytes).map(|_| ())
+        // Nie ein Bild überschreiben, das jemand anderes inzwischen mit demselben Namen hochgeladen hat
+        match self.put_to(&format!("{}/content?@microsoft.graph.conflictBehavior=fail", self.item(&format!("bilder/{name}"))), bytes) {
+            Err(e) if e.to_string().contains("Status 409") => Ok(()),
+            r => r.map(|_| ()),
+        }
     }
 }
 
@@ -370,10 +415,19 @@ pub fn create_shared(rt: tokio::runtime::Handle, token: TokenFn, slug: &str, tit
             Ok((status, res.json().await.unwrap_or(Value::Null)))
         })
     };
-    // Freier Name im Ordner «ASK Docs»
-    let name = (1..100).map(|n| if n == 1 { format!("{slug}.askdoc") } else { format!("{slug}-{n}.askdoc") })
-        .find(|n| call(reqwest::Method::GET, format!("{graph}/me/drive/root:/{}/{}", enc(ROOT), enc(n)), None, false).map(|r| r.0 == 404).unwrap_or(false))
-        .ok_or_else(|| anyhow!("Kein freier Name in OneDrive."))?;
+    // Freier Name im Ordner «ASK Docs»: nur 404 heisst frei; ein Fehler (offline, Anmeldung) bricht ab
+    let mut name = None;
+    for n in 1..100 {
+        let candidate = if n == 1 { format!("{slug}.askdoc") } else { format!("{slug}-{n}.askdoc") };
+        let (status, _) = call(reqwest::Method::GET, format!("{graph}/me/drive/root:/{}/{}", enc(ROOT), enc(&candidate)), None, false)?;
+        match status {
+            404 => { name = Some(candidate); break; }
+            200..=299 => continue,
+            401 | 403 => bail!("OneDrive hat den Zugriff abgelehnt. Melde dich im Doc bei «Teilen» neu bei Microsoft an."),
+            s => bail!("OneDrive antwortet mit Status {s}. Versuch es gleich nochmals."),
+        }
+    }
+    let name = name.ok_or_else(|| anyhow!("Kein freier Name in OneDrive unter «{ROOT}»."))?;
     let meta = serde_json::to_vec_pretty(&json!({ "format": 1, "titel": title, "erstellt": now_ms(), "app": "ASK" }))?;
     let (status, item) = call(reqwest::Method::PUT, format!("{graph}/me/drive/root:/{}/{}/doc.json:/content", enc(ROOT), enc(&name)), Some(meta), false)?;
     if status >= 300 {
