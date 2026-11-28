@@ -6,7 +6,7 @@
 export const READ_ONLY = new Set(['read_file', 'list_files', 'find_files', 'search_text', 'chat_search', 'chat_read', 'quellen_suchen', 'quelle_lesen']);
 
 export function emptyChat() {
-  return { entries: [], turnStats: [], seq: 0, streaming: null };
+  return { entries: [], turnStats: [], seq: 0, streaming: null, btw: [] };
 }
 
 const firstLine = (text) => String(text || '').split('\n').map((l) => l.trim()).find((l) => l && l !== '(keine Ausgabe)') || '';
@@ -48,6 +48,28 @@ const findIndex = (model, pred) => {
   for (let i = model.entries.length - 1; i >= 0; i--) if (pred(model.entries[i])) return i;
   return -1;
 };
+
+// Nebenfragen mit /btw (ENTSCHEIDE E86) stehen nicht in den Einträgen, sondern daneben (model.btw): Sonst würde eine
+// Nebenantwort mitten in die laufende Antwort des Auftrags geraten. Jede gehört zu dem Auftrag, der beim Fragen lief
+// (turn: Schlüssel seiner Eingabe, «start» vor der ersten Eingabe).
+const lastUserKey = (model) => {
+  for (let i = model.entries.length - 1; i >= 0; i--) if (model.entries[i].k === 'user') return model.entries[i].key;
+  return 'start';
+};
+
+function upsertBtw(model, id, patch, create) {
+  const list = model.btw || [];
+  const i = list.findIndex((b) => b.id === id);
+  const value = (b) => (typeof patch === 'function' ? patch(b) : patch);
+  if (i < 0) {
+    if (!create) return model;
+    const fresh = { id, question: '', text: '', error: '', done: false, time: 0, turn: lastUserKey(model) };
+    return { ...model, btw: [...list, { ...fresh, ...value(fresh) }] };
+  }
+  const next = list.slice();
+  next[i] = { ...list[i], ...value(list[i]) };
+  return { ...model, btw: next };
+}
 
 // Laufende Antwort: der letzte Eintrag, wenn er eine nicht beendete Antwort ist
 function streamingIndex(model) {
@@ -138,6 +160,8 @@ export function fromTranscript(items, running = false) {
     } else if (item.role === 'tool') {
       const i = findIndex(m, (e) => e.k === 'tool' && e.id === item.id);
       if (i >= 0) m = finishWithMemory(m, i, item);
+    } else if (item.role === 'btw') {
+      m = upsertBtw(m, item.id || `btw-${m.seq}-${(m.btw || []).length}`, { question: item.question || '', text: item.answer || '', error: item.error || '', done: true, time: item.time || 0 }, true);
     }
   }
   // Werkzeuge ohne Ergebnis (App beendet während des Schritts)
@@ -237,6 +261,12 @@ export function applyEvent(model, ev) {
       const last = m.entries[m.entries.length - 1];
       return last?.k === 'notice' && last.retry ? update(m, m.entries.length - 1, { text: ev.text }) : add(m, { k: 'notice', icon: 'reload', retry: true, text: ev.text });
     }
+    // Nebenfrage (E86): live gestreamt neben dem Auftrag; das Ende bringt Frage und Antwort noch einmal mit, falls der
+    // Chat inzwischen neu geladen wurde
+    case 'btw-start': return upsertBtw(model, ev.id, { question: ev.question || '', time: ev.time || 0 }, true);
+    case 'btw-delta': return upsertBtw(model, ev.id, (b) => ({ text: b.text + (ev.text || '') }), false);
+    case 'btw-end': return upsertBtw(model, ev.id, (b) => ({ question: b.question || ev.question || '', time: b.time || ev.time || 0,
+      text: ev.error ? b.text : (ev.text ?? b.text), error: ev.error || '', done: true }), true);
     case 'notice': return add(model, { k: 'notice', text: ev.text });
     case 'error': return add(model, { k: 'error', text: ev.text });
     case 'local-error': return add(model, { k: 'error', text: ev.text });
@@ -276,6 +306,8 @@ export function lastTasks(model) {
 // Einträge in Aufträge gruppieren.
 // turn = { key, user, steps, answer, after, running, toolCount, failed, start, end }
 // steps: { type: 'tool', entry } | { type: 'group', key, entries } | { type: 'thought', entry } | { type: 'auto', entry }
+const NO_BTW = Object.freeze([]);
+
 export function buildTurns(model, running = false) {
   const turns = [];
   let cur = null;
@@ -289,6 +321,14 @@ export function buildTurns(model, running = false) {
       if (!cur) open(null);
       cur.body.push(e);
     }
+  }
+  // Nebenfragen (E86) zu ihrem Auftrag; gehört eine zu keinem (mehr), dann zum letzten
+  const btwOf = new Map();
+  const keys = new Set(turns.map((t) => t.key));
+  for (const b of model.btw || []) {
+    const key = keys.has(b.turn) ? b.turn : turns.at(-1)?.key;
+    if (!btwOf.has(key)) btwOf.set(key, []);
+    btwOf.get(key).push(b);
   }
   return turns.map((t, ti) => {
     const last = ti === turns.length - 1;
@@ -345,6 +385,7 @@ export function buildTurns(model, running = false) {
       steps: flatSteps,
       answer: answerIndex >= 0 ? body[answerIndex] : null,
       after,
+      btw: btwOf.get(t.key) || NO_BTW,
       running: isRunning,
       toolCount: tools.length,
       failed: tools.filter((e) => e.ok === false).length,
@@ -361,7 +402,8 @@ export function reuseTurns(prev, next) {
   const old = new Map(prev.map((t) => [t.key, t]));
   return next.map((t) => {
     const p = old.get(t.key);
-    return p && p.running === t.running && p.user === t.user && p.body.length === t.body.length && p.body.every((e, i) => e === t.body[i]) ? p : t;
+    const same = (a = [], b = []) => a.length === b.length && a.every((e, i) => e === b[i]);
+    return p && p.running === t.running && p.user === t.user && same(p.body, t.body) && same(p.btw, t.btw) ? p : t;
   });
 }
 

@@ -558,6 +558,12 @@ export default function App() {
   const setVerboseSaved = (on) => { setVerbose(on); api().setPrefs?.({ verbose: on }); };
 
   const notice = (text) => dispatch({ type: 'events', evs: [{ type: 'notice', text }] });
+  // Nebenfrage mit /btw (E86): Antwort kommt als Ereignisse btw-start, btw-delta, btw-end
+  const askBtw = async (q) => {
+    let res;
+    try { res = await api().chatBtw(q); } catch (err) { res = { ok: false, reason: err?.message || String(err) }; }
+    if (res?.ok === false) notice(res.reason || 'Die Nebenfrage liess sich nicht stellen.');
+  };
   // «Nur aus Quellen» pro Projekt (E84); der Kern schickt danach den neuen Zustand
   const setStrictSources = (on) => { if (state.folder) api().projectUpdate(state.folder, { nurQuellen: !!on }); };
 
@@ -599,6 +605,7 @@ export default function App() {
     { cmd: '/neu', text: free ? 'Neuen Chat ohne Projekt beginnen' : 'Neuen Chat im Projekt beginnen', run: () => newChat() },
     { cmd: '/projekt', text: 'Neues Projekt anlegen', run: () => setDialog({ name: 'project' }) },
     { cmd: '/goal', text: 'Ziel setzen: /goal <Ziel>; das Modell arbeitet, bis es erreicht ist', run: () => composer.current?.setText('/goal ') },
+    { cmd: '/btw', text: 'Nebenfrage stellen, ohne den Auftrag zu unterbrechen: /btw <Frage>', run: () => composer.current?.setText('/btw ') },
     { cmd: '/zusammenfassen', text: 'Ältere Aufträge für das Modell zusammenfassen (macht Platz im Kontext)', run: async () => {
       if (runningRef.current) { notice('Das geht erst, wenn der Auftrag fertig ist.'); return; }
       notice('Fasst ältere Aufträge zusammen …');
@@ -969,7 +976,7 @@ export default function App() {
               context={state.chat?.context} todoCollapsed={state.prefs?.todoCollapsed ?? true}
               activity={(tasksLive && tasks?.find((t) => t.status === 'in_arbeit')?.titel) ? `${tasks.find((t) => t.status === 'in_arbeit').titel} · ${activity}` : activity}
               runStarted={runStarted} commands={commands} pendingQuestion={pendingQuestion} pendingApproval={pendingApproval}
-              onSend={send} onStop={() => api().chatStop()} onAnswer={(id, t) => api().chatAnswer(id, t)} onGoal={handleGoal}
+              onSend={send} onStop={() => api().chatStop()} onAnswer={(id, t) => api().chatAnswer(id, t)} onGoal={handleGoal} onBtw={askBtw}
               onGoalClear={() => api().chatGoal('')} setModel={(id) => api().setModel(id)} setThinking={(l) => api().setThinking(l)} autoEffort={running ? autoEffort || 'mittel' : ''}
               setWeb={(on) => api().setWebSearch(on)} notice={notice}
               mode={state.mode || 'auto'} setMode={(mode) => api().setSettings({ mode })} />

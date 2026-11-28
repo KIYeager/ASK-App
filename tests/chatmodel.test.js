@@ -244,6 +244,48 @@ test('Gespeicherte Hinweise und Fehler stehen nach dem Öffnen wieder im Chat; d
   assert.equal(live.entries.find((e) => e.k === 'approval' && !e.answer), undefined);
 });
 
+test('Nebenfrage mit /btw: neben dem Auftrag, unterbricht die laufende Antwort nicht, bleibt nach dem Laden (E86)', async () => {
+  const { applyEvent, buildTurns, emptyChat, fromTranscript, reuseTurns } = await load();
+  let m = [
+    { type: 'user', text: 'Schreib einen Bericht' },
+    { type: 'assistant-start' },
+    { type: 'text', text: 'Ich schreibe ' },
+  ].reduce(applyEvent, emptyChat());
+  m = applyEvent(m, { type: 'btw-start', id: 'b1', question: 'Was ist ein Abstract?', time: 5 });
+  m = applyEvent(m, { type: 'btw-delta', id: 'b1', text: 'Eine kurze ' });
+  // Die Antwort des Auftrags läuft im selben Eintrag weiter, nicht in einem neuen
+  m = applyEvent(m, { type: 'text', text: 'den Bericht.' });
+  assert.strictEqual(m.entries.filter((e) => e.k === 'assistant').length, 1);
+  assert.strictEqual(m.entries.find((e) => e.k === 'assistant').text, 'Ich schreibe den Bericht.');
+  m = applyEvent(m, { type: 'btw-delta', id: 'b1', text: 'Zusammenfassung.' });
+  m = applyEvent(m, { type: 'btw-delta', id: 'unbekannt', text: 'x' });
+  let turns = buildTurns(m, true);
+  assert.strictEqual(turns.length, 1);
+  assert.deepStrictEqual(turns[0].btw.map((b) => [b.question, b.text, b.done]), [['Was ist ein Abstract?', 'Eine kurze Zusammenfassung.', false]]);
+  m = applyEvent(m, { type: 'btw-end', id: 'b1', question: 'Was ist ein Abstract?', text: 'Eine kurze Zusammenfassung.', error: '' });
+  turns = buildTurns(m, true);
+  assert.strictEqual(turns[0].btw[0].done, true);
+  // Ende ohne Anfang (Chat inzwischen neu geladen): Frage und Antwort kommen mit dem Ende
+  const fresh = applyEvent(emptyChat(), { type: 'btw-end', id: 'b2', question: 'Und?', text: 'So.', error: '' });
+  assert.deepStrictEqual(fresh.btw.map((b) => [b.question, b.text, b.done]), [['Und?', 'So.', true]]);
+  // Fehler
+  const failed = applyEvent(applyEvent(emptyChat(), { type: 'btw-start', id: 'b3', question: 'Q' }), { type: 'btw-end', id: 'b3', error: 'Keine Antwort' });
+  assert.strictEqual(failed.btw[0].error, 'Keine Antwort');
+  // Gespeichert: gehört zum Auftrag, in dem sie gestellt wurde
+  const saved = fromTranscript([
+    { role: 'user', content: 'eins', time: 1 }, { role: 'assistant', content: 'A1', calls: [] },
+    { role: 'btw', id: 'b9', question: 'nebenbei?', answer: 'ja', error: '', time: 2 },
+    { role: 'user', content: 'zwei', time: 3 }, { role: 'assistant', content: 'A2', calls: [] },
+  ]);
+  const t2 = buildTurns(saved);
+  assert.deepStrictEqual(t2.map((t) => t.btw.map((b) => b.text)), [['ja'], []]);
+  assert.strictEqual(t2[0].answer.text, 'A1', 'die Nebenfrage verdrängt die Antwort nicht');
+  // Unveränderte Aufträge behalten ihr Objekt, ein Auftrag mit neuer Nebenantwort nicht
+  const again = reuseTurns(t2, buildTurns(applyEvent(saved, { type: 'btw-start', id: 'b10', question: 'noch was' })));
+  assert.strictEqual(again[0], t2[0]);
+  assert.notStrictEqual(again[1], t2[1]);
+});
+
 test('Rückgängig zurücknehmen: nur das letzte, Aufträge gelten wieder', async () => {
   const { emptyChat, applyEvent, redoable, fromTranscript } = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'renderer', 'src', 'lib', 'chatModel.mjs')).href);
   const ch = { changed: ['a.txt'], added: [], removed: [] };

@@ -611,6 +611,21 @@ export function install() {
     setInteractiveUi: async (v) => { state = { ...state, interactiveUi: v }; push(); },
     // Im Browser ohne App gibt es kein Protokoll askui: Vorspann und HTML als blob-Adresse (nur für die Entwicklung)
     uiPut: async (html) => URL.createObjectURL(new Blob([`${uiPrelude}\n${html}`], { type: 'text/html' })), setThinking: async (v) => { state = { ...state, thinking: v }; push(); },
+    // Nebenfrage mit /btw (E86): Antwort Wort für Wort neben dem Auftrag, danach im Chat gespeichert
+    chatBtw: async (question) => {
+      const c = chatOf(state.chat.id);
+      const id = `btw-${Date.now()}`;
+      const time = Date.now();
+      const ev = (e) => emit('chat:event', { ...e, chatId: c.id, folder: c.folder });
+      ev({ type: 'btw-start', id, question, time });
+      const answer = `Kurz nebenbei: Ein **Abstract** ist eine Zusammenfassung von wenigen Sätzen am Anfang eines Berichts. Der Auftrag läuft weiter.`;
+      (async () => {
+        for (const word of answer.split(/(?<= )/)) { await wait(60 * SPEED); ev({ type: 'btw-delta', id, text: word }); }
+        c.items.push({ role: 'btw', id, question, answer, error: '', time });
+        ev({ type: 'btw-end', id, question, time, text: answer, error: '' });
+      })();
+      return { ok: true, id };
+    },
     chatSend: async (text) => { const c = chatOf(state.chat.id); if (c.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' }; demoRun(c, text); return { ok: true }; },
     // Rückgängig und Wiederherstellen wie in der App: Ereignis an den sichtbaren Chat
     chatUndo: async (snap) => { emit('chat:event', { type: 'undo', snapshot: snap, text: 'Rückgängig gemacht: 3 Dateien auf den Stand vor dem Auftrag gesetzt.', redo: `v-${snap}`, chatId: state.chat.id, folder: state.folder }); return { ok: true }; },

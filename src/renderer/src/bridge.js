@@ -79,6 +79,7 @@ export function install() {
   uiPut: (html) => call('ui:put', html),
   setThinking: (level) => call('thinking:set', level),
   chatSend: (text, files = [], kept = []) => call('chat:send', text, files, kept),
+  chatBtw: (question) => call('chat:btw', question),
   chatRewind: () => call('chat:rewind'),
   chatRename: (folder, id, title) => call('chat:rename', folder, id, title),
   chatPin: (folder, id, on) => call('chat:pin', folder, id, on),

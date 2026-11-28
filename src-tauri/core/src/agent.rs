@@ -150,6 +150,13 @@ const PLAN_ALLOWED: &[&str] = &["read_file", "list_files", "find_files", "search
 const FREE_ALLOWED: &[&str] = &["read_file", "view_file", "web_search", "web_fetch", "bild_erstellen", "chat_search", "chat_read", "skill_lesen",
     "merken", "vergessen", "update_tasks", "frage_stellen", "goal_done", EFFORT_TOOL,
     "doc_liste", "doc_lesen", "doc_erstellen", "doc_bearbeiten", "doc_kommentieren"];
+/// Nebenfrage mit /btw (ENTSCHEIDE E86): eigene Anfrage neben dem Auftrag, ohne Werkzeuge
+const BTW_PROMPT: &str = "\n\n# Nebenfrage\nDie Person stellt mit /btw eine Nebenfrage, während du am Auftrag arbeitest (oder danach). Beantworte nur diese Frage, kurz und direkt, aus dem bisherigen Chat und deinem Wissen. Hier hast du keine Werkzeuge: Du kannst nichts lesen, suchen, ändern oder ausführen, und du rufst keine Werkzeuge auf. Der Auftrag läuft unabhängig weiter; ändere ihn nicht und versprich nichts für ihn. Braucht die Frage Werkzeuge, oder soll sich am Auftrag etwas ändern, sag der Person in einem Satz, sie soll es als normale Nachricht schicken.";
+const BTW_HEAD: &str = "[Nebenfrage, der Auftrag läuft weiter] ";
+/// Ergebnis eines Schritts, der während der Nebenfrage noch läuft (statt «abgebrochen» aus `api_messages`)
+const BTW_RUNNING: &str = "Läuft noch: Der Auftrag arbeitet gerade an diesem Schritt.";
+const NOT_RUN: &str = "Nicht ausgeführt: Der Schritt wurde abgebrochen, bevor ein Ergebnis da war.";
+
 /// Werkzeuge der Quellen (ENTSCHEIDE E84): nur angeboten, wenn der Ordner «Quellen» Unterlagen hat
 const SOURCE_TOOLS: [&str; 2] = ["quellen_suchen", "quelle_lesen"];
 const FREE_PROMPT: &str = "\n\n# Chat ohne Projekt\nDieser Chat gehört zu keinem Projekt. Hier beantwortest du Fragen, erklärst, suchst im Web und erstellst auf Wunsch Bilder. Du kannst hier keine Dateien schreiben oder ändern, keine Befehle ausführen und keinen Server starten; es gibt keinen Projektordner. Docs (doc_erstellen, doc_bearbeiten) gehen trotzdem: Sie liegen bei den Chats ohne Projekt. Angehängte Dateien liest du mit read_file, angehängte Bilder siehst du direkt. Will die Person, dass du Dateien erstellst oder bearbeitest, Programme ausführst oder mit einem Ordner arbeitest, sag ihr in einem Satz, dass das in einem Projekt geht: links bei «Projekte» auf + klicken und den Auftrag dort stellen. Code, Texte und Tabellen kannst du hier direkt in der Antwort schreiben.";
@@ -593,7 +600,7 @@ pub fn api_messages(system: &str, messages: &[Value], text_mode: bool, image_url
             i += 1;
         }
         for id in ids.into_iter().filter(|id| !answered.contains(id)) {
-            out.insert(i, json!({ "role": "tool", "tool_call_id": id, "content": "Nicht ausgeführt: Der Schritt wurde abgebrochen, bevor ein Ergebnis da war." }));
+            out.insert(i, json!({ "role": "tool", "tool_call_id": id, "content": NOT_RUN }));
             i += 1;
         }
     }
@@ -2675,6 +2682,75 @@ impl Agent {
     }
 
     /// Für die Anzeige eines gespeicherten Chats.
+    /// Nebenfrage mit /btw (ENTSCHEIDE E86): eine eigene Anfrage an ASK mit dem Chat bis jetzt und der Frage, ohne
+    /// Werkzeuge, neben dem laufenden Auftrag. Die Antwort kommt als Ereignisse `btw-start`, `btw-delta`, `btw-end`
+    /// und steht danach im Chat (Rolle `btw`); an das Modell des Auftrags geht sie nicht (`api_messages` überspringt sie).
+    pub fn btw(self: &Arc<Self>, question: &str) -> Value {
+        let question = question.trim().to_string();
+        if question.is_empty() {
+            return json!({ "ok": false, "reason": "Nach /btw fehlt die Frage." });
+        }
+        if (self.o.get_model)().is_empty() {
+            return json!({ "ok": false, "reason": "Kein Modell gewählt." });
+        }
+        let id = format!("btw-{}", hex::encode(rand::random::<[u8; 4]>()));
+        let time = now_ms();
+        let chat = self.chat_id();
+        self.event(json!({ "type": "btw-start", "id": id, "question": question, "time": time }));
+        let me = self.clone();
+        let task_id = id.clone();
+        tokio::spawn(async move { me.answer_btw(task_id, question, time, chat).await });
+        json!({ "ok": true, "id": id })
+    }
+
+    /// Nachrichten für die Nebenfrage: Systemprompt des Chats mit dem Abschnitt «Nebenfrage», der Verlauf wie für den
+    /// Auftrag (Schritte ohne Ergebnis heissen «läuft noch»), dazu die Frage mit Zeitstempel
+    fn btw_messages(&self, question: &str, time: i64) -> Vec<Value> {
+        let chat_id = self.chat_id();
+        let system = (self.o.get_system_prompt)(&chat_id) + if self.o.free { FREE_PROMPT } else { "" } + BTW_PROMPT;
+        let budget = if self.inner.lock().tight_for.contains(&chat_id) { TIGHT } else { NORMAL };
+        let mut messages = api_messages(&system, &self.messages(), self.text_mode(), None, &budget);
+        for m in messages.iter_mut().filter(|m| m["role"] == "tool" && m["content"] == NOT_RUN) {
+            m["content"] = json!(BTW_RUNNING);
+        }
+        let stamp = time_stamp(time);
+        messages.push(json!({ "role": "user", "content": format!("{}{BTW_HEAD}{question}", if stamp.is_empty() { String::new() } else { format!("{stamp} ") }) }));
+        messages
+    }
+
+    async fn answer_btw(self: Arc<Self>, id: String, question: String, time: i64, chat: String) {
+        let me = self.clone();
+        let delta_id = id.clone();
+        let on_delta: DeltaFn = Arc::new(move |kind, text| {
+            if kind == "text" {
+                me.event(json!({ "type": "btw-delta", "id": delta_id, "text": text }));
+            }
+        });
+        let req = ChatRequest {
+            model: (self.o.get_model)(),
+            messages: self.btw_messages(&question, time),
+            tools: None,
+            web_search: false,
+            thinking: (self.o.get_thinking)(),
+            signal: None,
+            on_delta: Some(on_delta),
+        };
+        let (answer, error) = match tokio::time::timeout(Duration::from_secs(300), self.o.ask.chat(req)).await {
+            Ok(Ok(done)) => {
+                let text = re!(r"(?s)<think>.*?</think>").replace_all(&done.content, "").trim().to_string();
+                if text.is_empty() { (String::new(), "ASK hat keine Antwort geschickt.".to_string()) } else { (text, String::new()) }
+            }
+            Ok(Err(err)) => (String::new(), format!("Keine Antwort: {err}")),
+            Err(_) => (String::new(), "ASK hat nicht innert 5 Minuten geantwortet.".to_string()),
+        };
+        // Im Chat speichern, wenn er noch geladen ist (sonst gehört die Antwort zu einem Chat, der nicht mehr hier ist)
+        if self.chat_id() == chat {
+            self.push(json!({ "role": "btw", "id": id, "question": question, "answer": answer, "error": error, "time": time }));
+            self.save();
+        }
+        self.event(json!({ "type": "btw-end", "id": id, "question": question, "time": time, "text": answer, "error": error }));
+    }
+
     pub fn transcript(&self) -> Value {
         let list = self.messages();
         let call_list = |m: &Value| -> Vec<Value> {
@@ -2711,6 +2787,9 @@ impl Agent {
             }
             if m["note"] == "redo" {
                 return json!({ "role": "redo", "text": m["summary"] });
+            }
+            if m["role"] == "btw" {
+                return json!({ "role": "btw", "id": m["id"], "question": m["question"], "answer": m["answer"], "error": m["error"], "time": m["time"] });
             }
             json!({ "role": if truthy(&m["auto"]) { json!("auto") } else { m["role"].clone() }, "content": m["content"], "time": m["time"],
                 "attachments": or(&m["attachments"], json!([])), "snapshot": or(&m["snapshot"], Value::Null), "changes": or(&m["changes"], Value::Null), "undone": truthy(&m["undone"]) })
@@ -2880,6 +2959,51 @@ mod tests {
         let ev = events.clone();
         agent.events.on("event", move |e| ev.lock().push(e.clone()));
         T { agent, ask, events, folder, model }
+    }
+
+    // ---------- Nebenfrage mit /btw (E86) ----------
+
+    #[tokio::test]
+    async fn nebenfrage_ohne_werkzeuge_mit_dem_chat_und_nicht_im_verlauf_des_auftrags() {
+        let t = make(Fake::new(vec![text("Antwort eins"), text("Das ist die Nebenantwort."), text("Antwort zwei")]), |_| {});
+        t.send("Schreib einen Bericht").await;
+        assert_eq!(t.agent.btw("   ")["ok"], false, "ohne Frage");
+        let r = t.agent.btw(" Was heisst eigentlich Bericht? ");
+        assert_eq!(r["ok"], true, "{r}");
+        for _ in 0..300 {
+            if !t.events_of("btw-end").is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let start = &t.events_of("btw-start")[0];
+        assert_eq!(start["question"], "Was heisst eigentlich Bericht?");
+        let end = &t.events_of("btw-end")[0];
+        assert_eq!((end["id"].clone(), end["text"].clone(), end["error"].clone()), (start["id"].clone(), json!("Das ist die Nebenantwort."), json!("")));
+        let req = &t.ask.requests()[1];
+        assert!(req.tools.is_none(), "keine Werkzeuge");
+        assert!(js_string(&req.messages[0]["content"]).contains("# Nebenfrage"));
+        assert!(req.messages.iter().any(|m| js_string(&m["content"]) == "Antwort eins"), "kennt den Chat");
+        let last = js_string(&req.messages.last().unwrap()["content"]);
+        assert!(last.ends_with("[Nebenfrage, der Auftrag läuft weiter] Was heisst eigentlich Bericht?") && last.starts_with('['), "{last}");
+        // Im Chat gespeichert und angezeigt, aber nicht im Verlauf für den Auftrag
+        assert_eq!(t.roles(), ["user", "assistant", "btw"]);
+        assert_eq!(t.agent.transcript()[2]["answer"], "Das ist die Nebenantwort.");
+        assert!(arr(&t.saved()["messages"]).iter().any(|m| m["role"] == "btw"));
+        t.send("weiter").await;
+        let next = &t.ask.requests()[2];
+        assert!(!next.messages.iter().any(|m| js_string(&m["content"]).contains("Nebenantwort") || js_string(&m["content"]).contains("Nebenfrage")));
+    }
+
+    #[test]
+    fn nebenfrage_waehrend_eines_schritts_der_noch_laeuft() {
+        let t = make(Fake::new(vec![]), |_| {});
+        t.agent.push(json!({ "role": "user", "content": "Mach ein Dokument", "time": 1 }));
+        t.agent.push(json!({ "role": "assistant", "content": "", "tool_calls": [{ "id": "c1", "type": "function", "function": { "name": "write_file", "arguments": "{}" } }] }));
+        let messages = t.agent.btw_messages("Wie lange dauert das?", 0);
+        let tool = messages.iter().find(|m| m["role"] == "tool").unwrap();
+        assert_eq!(tool["content"], BTW_RUNNING, "nicht «abgebrochen»: der Schritt läuft noch");
+        assert_eq!(messages.last().unwrap()["content"], "[Nebenfrage, der Auftrag läuft weiter] Wie lange dauert das?");
     }
 
     // ---------- agent.test.js ----------

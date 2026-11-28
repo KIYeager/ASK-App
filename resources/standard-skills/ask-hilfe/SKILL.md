@@ -92,7 +92,7 @@ Weitere Bereiche der Liste links: Konto und Nutzung stehen oben, darunter Darste
 
 **Anhänge**: Bilder, Bildschirmfotos und Dokumente mit Ctrl+V einfügen, ins Fenster ziehen oder mit der Büroklammer wählen (höchstens 10, je bis 50 MB). Vor dem Senden stehen sie als Kacheln über der Eingabe; mit × entfernt man sie. Sie werden versteckt im Projekt abgelegt (`.ask/anhaenge/<Chat>/`) und verschwinden mit dem Chat oder nach 14 Tagen.
 
-**Während ASK arbeitet**: Enter reiht eine Folgenachricht ein, die nach dem Auftrag hinausgeht. Esc oder der Stopp-Knopf ■ hält an; die wartende Nachricht kommt zurück ins Eingabefeld. Mehrere Chats können gleichzeitig arbeiten, auch in verschiedenen Projekten; ein Kreisel in der Liste zeigt, welche.
+**Während ASK arbeitet**: Enter reiht eine Folgenachricht ein, die nach dem Auftrag hinausgeht. `/btw <Frage>` stellt eine Nebenfrage, die ASK gleich beantwortet, ohne den Auftrag zu unterbrechen; die Antwort steht als Karte «Nebenbei» unter dem Auftrag. Esc oder der Stopp-Knopf ■ hält an; die wartende Nachricht kommt zurück ins Eingabefeld. Mehrere Chats können gleichzeitig arbeiten, auch in verschiedenen Projekten; ein Kreisel in der Liste zeigt, welche.
 
 **Eingabe ändern oder neu senden**: Beim Darüberfahren an der letzten Eingabe stehen «Bearbeiten» und «Neu senden». Beides nimmt die Eingabe und alles danach aus dem Chat. Hat der Auftrag Dateien geändert, fragt ASK, ob der Ordner auf den Stand davor zurückgehen soll.
 
@@ -123,6 +123,7 @@ Beim Tippen von `/` erscheint die Liste.
 | `/neu` | Neuen Chat beginnen |
 | `/projekt` | Neues Projekt anlegen |
 | `/goal` | Ziel setzen: `/goal <Ziel>`; ASK arbeitet, bis es erreicht ist |
+| `/btw` | Nebenfrage: `/btw <Frage>`; ASK antwortet sofort in einer Karte «Nebenbei», ohne den laufenden Auftrag zu unterbrechen (ohne Werkzeuge) |
 | `/suchen` | Chats durchsuchen |
 | `/finden` | Im offenen Chat suchen (wie Ctrl+F) |
 | `/zusammenfassen` | Ältere Aufträge für das Modell zusammenfassen, das macht Platz im Kontext |

@@ -471,6 +471,15 @@ const Composer = forwardRef(function Composer(props, ref) {
   }
 
   async function submit() {
+    // Nebenfrage (E86): geht neben dem Auftrag an ASK, auch während einer offenen Frage oder Rückfrage
+    const btwCmd = /^\/btw(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    if (btwCmd) {
+      const q = (btwCmd[1] || '').trim();
+      if (!q) { notice('Schreib die Frage hinter /btw, zum Beispiel «/btw Was heisst Abstract?».'); return; }
+      setText('');
+      props.onBtw?.(q);
+      return;
+    }
     if (pendingQuestion) {
       if (!text.trim()) return;
       onAnswer(pendingQuestion.id, text.trim());
@@ -602,7 +611,7 @@ const Composer = forwardRef(function Composer(props, ref) {
           <div id="activity" className="activity">
             <span className="spin" aria-hidden="true" />
             <span id="activity-text">{activity}</span>
-            <span className="muted">(<span id="activity-time">{elapsed}</span> · Esc zum Stoppen)</span>
+            <span className="muted" title="Mit /btw stellst du eine Nebenfrage, ohne den Auftrag zu unterbrechen.">(<span id="activity-time">{elapsed}</span> · Esc zum Stoppen · /btw Nebenfrage)</span>
           </div>
         ) : null}
         <Todo tasks={tasks} open={showTodoOpen} onToggle={toggleTodo} />
