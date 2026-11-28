@@ -95,6 +95,18 @@ pub struct HelperDeps {
     pub text_mode_prompt: TextModePromptFn,
     pub signal: Option<Signal>,
     pub on_progress: Option<ProgressFn>,
+    /// Quellen (E84): Werkzeuge für Unterlagen nur mit Unterlagen; «Nur aus Quellen» ohne Internet, wie im Chat
+    pub sources: bool,
+    pub strict: bool,
+}
+
+impl HelperDeps {
+    /// Darf der Hilfsagent dieses Werkzeug benutzen?
+    fn allowed(&self, name: &str) -> bool {
+        HELPER_TOOLS.contains(&name)
+            && (self.sources || !matches!(name, "quellen_suchen" | "quelle_lesen"))
+            && !(self.strict && matches!(name, "web_search" | "web_fetch"))
+    }
 }
 
 /// Zahl mit Tausendertrenner wie `toLocaleString('de-CH')` (Apostroph)
@@ -131,7 +143,8 @@ pub async fn run_helper(raw_args: &str, deps: &HelperDeps) -> ToolResult {
         return ToolResult::new(false, "Kein Modell für Hilfsagenten.", "kein Modell");
     }
     let cancelled = || deps.signal.as_ref().is_some_and(Signal::is_cancelled);
-    let specs: Vec<Value> = tool_specs("").into_iter().filter(|s| HELPER_TOOLS.contains(&s["function"]["name"].as_str().unwrap_or(""))).collect();
+    let specs: Vec<Value> = tool_specs("").into_iter().filter(|s| deps.allowed(s["function"]["name"].as_str().unwrap_or(""))).collect();
+    let offered: Vec<String> = specs.iter().filter_map(|s| s["function"]["name"].as_str().map(str::to_string)).collect();
     // «helper»: Auftrag des Hauptmodells, keine Eingabe der Person (ohne Zeitstempel, E85)
     let mut messages: Vec<Value> = vec![json!({ "role": "user", "content": task, "helper": true, "time": now_ms() })];
     let mut steps: Vec<String> = Vec::new();
@@ -209,11 +222,11 @@ pub async fn run_helper(raw_args: &str, deps: &HelperDeps) -> ToolResult {
             let name = js_string(&call["function"]["name"]);
             let arguments = js_string(&call["function"]["arguments"]);
             let parsed: Value = serde_json::from_str(&arguments).unwrap_or_else(|_| json!({})); // roh
-            let result = if HELPER_TOOLS.contains(&name.as_str()) {
+            let result = if deps.allowed(&name) {
                 let ctx = ToolCtx { signal: deps.signal.clone(), web: deps.web.clone(), folder: deps.folder.clone(), chat: deps.chat.clone(), ..Default::default() };
                 run_tool(deps.terminal.as_deref(), &name, &Value::String(arguments), &ctx).await
             } else {
-                ToolResult::new(false, format!("Hilfsagenten haben nur diese Werkzeuge: {}.", HELPER_TOOLS.join(", ")), "nicht erlaubt")
+                ToolResult::new(false, format!("Hilfsagenten haben nur diese Werkzeuge: {}.", offered.join(", ")), "nicht erlaubt")
             };
             messages.push(json!({ "role": "tool", "tool_call_id": call["id"], "name": name, "content": clip(&result.output, TOOL_CHARS), "ok": result.ok, "textMode": text_mode }));
             let d = describe(&name, &parsed);
@@ -282,6 +295,16 @@ mod tests {
         })
     }
 
+    #[test]
+    fn nur_aus_quellen_gilt_auch_fuer_hilfsagenten() {
+        let mut d = deps(Arc::new(Script { answers: Mutex::new(vec![]), requests: Mutex::new(vec![]) }));
+        assert!(d.allowed("web_search") && d.allowed("quellen_suchen"));
+        d.strict = true;
+        assert!(!d.allowed("web_search") && !d.allowed("web_fetch") && d.allowed("quelle_lesen"));
+        d.sources = false;
+        assert!(!d.allowed("quellen_suchen") && d.allowed("read_file"));
+    }
+
     fn deps(ask: Arc<dyn ChatApi>) -> HelperDeps {
         HelperDeps {
             ask,
@@ -296,6 +319,8 @@ mod tests {
             text_mode_prompt: Arc::new(|_| String::new()),
             signal: None,
             on_progress: None,
+            sources: true,
+            strict: false,
         }
     }
 

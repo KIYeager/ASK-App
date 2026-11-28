@@ -2664,6 +2664,7 @@ impl Agent {
         let me = self.clone();
         let api_messages_fn: ApiMessagesFn = Arc::new(|system, messages, text_mode| api_messages(system, messages, text_mode, None, &NORMAL));
         let prompt_fn: TextModePromptFn = Arc::new(text_mode_prompt);
+        let (sources, strict) = (self.o.get_sources)();
         let deps = HelperDeps {
             ask: self.o.ask.clone(),
             model: if helper_model.is_empty() { (self.o.get_model)() } else { helper_model },
@@ -2677,6 +2678,8 @@ impl Agent {
             text_mode_prompt: prompt_fn,
             signal: Some(signal.clone()),
             on_progress: Some(Arc::new(move |output| me.event(json!({ "type": "tool-progress", "id": id, "output": clip(output, 4000) })))),
+            sources,
+            strict,
         };
         run_helper(&js_string(&call["function"]["arguments"]), &deps).await
     }

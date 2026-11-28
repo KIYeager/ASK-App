@@ -78,6 +78,8 @@ test('Verweise auf Unterlagen (Quellen, E84): nur Pfade im Ordner Quellen, ohne 
   assert.strictEqual(md('[Skript, S. 2](quelle:Quellen/Skript%20Bio.pdf#seite=2)'),
     '<p><a class="quelle" href="quelle:Quellen/Skript%20Bio.pdf#seite=2" title="Quellen/Skript Bio.pdf, S. 2">Skript, S. 2</a></p>');
   assert.deepStrictEqual(parseSourceLink('quelle:Quellen/Woche%202/Blatt.docx'), { path: 'Quellen/Woche 2/Blatt.docx', seite: null });
+  assert.ok(md('[S. 3](quelle:Quellen/Skript%20%282%29.pdf#seite=3)').includes('href="quelle:Quellen/Skript%20%282%29.pdf#seite=3"'), 'Klammern kodiert');
+  assert.ok(md('[S. 1](quelle:Quellen/Folien%20(Teil%201).pdf)').includes('href="quelle:Quellen/Folien%20(Teil%201).pdf"'), 'ein Paar Klammern roh');
   assert.deepStrictEqual(parseSourceLink('quelle:quellen/a.pdf#seite=14'), { path: 'quellen/a.pdf', seite: 14 });
   for (const bad of ['quelle:Quellen/../geheim.txt', 'quelle:Quellen/..%2Fgeheim.txt', 'quelle:C:/Windows/win.ini', 'quelle:/etc/passwd', 'quelle:Andere/a.pdf',
     'quelle:Quellen/', 'quelle:Quellen/a.pdf#seite=x', 'quelle:Quellen/%E0%A4%A', 'https://x.ch', '']) {

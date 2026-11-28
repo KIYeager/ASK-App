@@ -1568,12 +1568,18 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         if picked.is_empty() {
             return;
         }
-        let text = match crate::sources::add(Path::new(folder), &picked) {
+        let skipped = picked.len().saturating_sub(50);
+        let more = if skipped > 0 { format!(" {skipped} weitere nicht: höchstens 50 auf einmal.") } else { String::new() };
+        // Kopieren kann bei grossen Dateien dauern: nicht im Thread der Oberfläche
+        let (dir, list) = (folder.to_string(), picked.clone());
+        let res = tokio::task::spawn_blocking(move || crate::sources::add(Path::new(&dir), &list)).await.unwrap_or_else(|e| Err(anyhow::anyhow!("{e}")));
+        let text = match res {
+            Ok(done) if done.is_empty() => "Nichts kopiert: Die gewählten Dateien liessen sich nicht lesen.".to_string(),
             Ok(done) if done.len() == 1 => format!("{} liegt jetzt im Ordner {}. ASK benutzt die Unterlage in diesem Projekt.", done[0].rsplit('/').next().unwrap_or(""), crate::sources::FOLDER),
             Ok(done) => format!("{} Unterlagen liegen jetzt im Ordner {}. ASK benutzt sie in diesem Projekt.", done.len(), crate::sources::FOLDER),
             Err(err) => format!("Nicht kopiert: {err}"),
         };
-        self.send("app:notice", json!(text));
+        self.send("app:notice", json!(format!("{text}{more}")));
         self.push_state();
     }
 

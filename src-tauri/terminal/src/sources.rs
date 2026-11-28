@@ -24,7 +24,8 @@ use crate::files::{ApiError, FileApi};
 /// Ordner im Projekt, dessen Dateien als Quellen gelten
 pub const FOLDER: &str = "Quellen";
 const INDEX: &str = ".ask/quellen/index.json";
-const VERSION: u32 = 1;
+/// 2: eindeutige Orte (zwei Abschnitte «Aufgabe» heissen «Aufgabe» und «Aufgabe» (2)), einzelne Zeichen suchbar
+const VERSION: u32 = 2;
 /// Höchstens so viele Unterlagen werden durchsucht
 pub const MAX_FILES: usize = 200;
 /// Grössere Dateien werden nicht gelesen
@@ -125,7 +126,20 @@ pub fn extract_parts(path: &Path) -> Result<Vec<Part>, String> {
         e if TEXT_EXT.contains(&e) => blocks(&read_text(path)?),
         _ => return Err("kein Textformat".into()),
     };
-    Ok(parts)
+    Ok(unique_places(parts))
+}
+
+/// Gleiche Orte (zwei Abschnitte «Aufgabe») bekommen «(2)», «(3)»: quelle_lesen findet sonst nur den ersten
+fn unique_places(mut parts: Vec<Part>) -> Vec<Part> {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for p in &mut parts {
+        let n = seen.entry(p.ort.clone()).or_insert(0);
+        *n += 1;
+        if *n > 1 {
+            p.ort = format!("{} ({n})", p.ort);
+        }
+    }
+    parts
 }
 
 fn read_text(path: &Path) -> Result<String, String> {
@@ -170,7 +184,13 @@ fn markdown_sections(text: &str) -> Vec<Part> {
         if line.trim_start().starts_with("```") {
             fence = !fence;
         }
-        let heading = if fence { None } else { line.strip_prefix('#').map(|h| h.trim_start_matches('#').trim()).filter(|h| !h.is_empty()) };
+        // Überschrift: 1 bis 6 # und ein Leerzeichen (nicht «#include» oder «#hashtag»)
+        let hashes = line.chars().take_while(|c| *c == '#').count();
+        let heading = if fence || !(1..=6).contains(&hashes) || !line[hashes..].starts_with(' ') {
+            None
+        } else {
+            Some(line[hashes..].trim().trim_end_matches('#').trim()).filter(|h| !h.is_empty())
+        };
         match heading {
             Some(h) => parts.push((h.to_string(), vec![line])),
             None => {
@@ -219,6 +239,13 @@ pub fn tokens(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
     for c in text.chars() {
+        // Zerlegte Umlaute (a + U+0308, aus manchen PDF): wie ä; andere Akzentzeichen fallen weg
+        if ('\u{0300}'..='\u{036f}').contains(&c) {
+            if c == '\u{0308}' && current.ends_with(['a', 'o', 'u']) {
+                current.push('e');
+            }
+            continue;
+        }
         if c.is_alphanumeric() {
             for l in c.to_lowercase() {
                 match l {
@@ -243,8 +270,12 @@ pub fn tokens(text: &str) -> Vec<String> {
     out
 }
 
+/// Einzelne Buchstaben aus Abkürzungen (z. B., d. h., u. a., S. 14); andere bleiben suchbar («C», «R», «Vitamin C»)
+const SINGLE_STOP: &str = "abdehiosuz";
+
 fn flush_word(word: &mut String, out: &mut Vec<String>) {
-    if word.chars().count() >= 2 && !STOPWORDS.contains(&word.as_str()) {
+    let n = word.chars().count();
+    if (n >= 2 && !STOPWORDS.contains(&word.as_str())) || (n == 1 && !SINGLE_STOP.contains(word.as_str())) {
         out.push(stem(word));
     }
     word.clear();
@@ -617,6 +648,17 @@ mod tests {
         assert_eq!(tokens("Grösse Übung Straße"), ["groess", "uebung", "strass"]);
         assert_eq!(tokens("Bedingungen Bedingung"), ["beding", "beding"]);
         assert_eq!(tokens("a, b und 42"), ["42"]);
+        assert_eq!(tokens("Vitamin C, z. B. R"), ["vitami", "c", "r"]);
+        assert_eq!(tokens("U\u{0308}bung Gro\u{0308}sse cafe\u{0301}"), ["uebung", "groess", "cafe"]);
+    }
+
+    #[test]
+    fn gleiche_orte_eindeutig() {
+        let parts = markdown_sections("# Aufgabe\nEins\n# Aufgabe\nZwei\n#include x\n# Schluss\nEnde");
+        let parts = unique_places(parts);
+        let orts: Vec<&str> = parts.iter().map(|p| p.ort.as_str()).collect();
+        assert_eq!(orts, ["Abschnitt «Aufgabe»", "Abschnitt «Aufgabe» (2)", "Abschnitt «Schluss»"]);
+        assert!(parts[1].text.contains("#include"));
     }
 
     #[test]
