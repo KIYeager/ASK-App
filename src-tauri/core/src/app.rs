@@ -996,8 +996,8 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 let (notes, templates) = if free { (String::new(), String::new()) } else { (project_notes(&f), crate::vorlagen::system_prompt()) };
                 // Quellen (E84): Unterlagen im Ordner «Quellen», nur in Projekten
                 let quellen = if free { String::new() } else { let p = Path::new(&f); crate::sources::prompt(p, crate::sources::strict(p)) };
-                // Datum (E85) am Schluss: ändert sich einmal am Tag, der Anfang davor bleibt gleich
-                format!("{}{}{}{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, quellen, templates, crate::docs::system_prompt(&f), a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch(), crate::agent::date_prompt(chrono::Local::now()))
+                // Docs (offenes Doc, Kommentare) und Datum (E85) am Schluss: Sie ändern sich oft, der Anfang davor bleibt gleich
+                format!("{}{}{}{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, quellen, templates, a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch(), crate::docs::system_prompt(&f), crate::agent::date_prompt(chrono::Local::now()))
             }
         });
         o.get_command_hint = Arc::new({ let f = f.clone(); move |chat: &str| read_instruction("befehle.md", &f, chat) });
