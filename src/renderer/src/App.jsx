@@ -12,7 +12,7 @@ import Dialogs, { activeDialog } from './components/Dialogs.jsx';
 import { useSkillCommands } from './components/Knowledge.jsx';
 import { Turn } from './components/Chat.jsx';
 import Guard from './components/Crash.jsx';
-import { applyEvent, buildTurns, emptyChat, lastTasks, loadChat, reuseTurns } from './lib/chatModel.mjs';
+import { applyEvent, buildTurns, emptyChat, lastTasks, loadChat, redoable, reuseTurns } from './lib/chatModel.mjs';
 import { baseName } from './lib/format.js';
 import { parseSourceLink } from './lib/md.mjs';
 import { emitMod, fillTemplate, loadMods, modCommandFor, modsChanged, setModHost, takeDialogAfterReload, useMods } from './lib/mods.js';
@@ -764,6 +764,7 @@ export default function App() {
   const acts = useRef({});
   acts.current = { editLast, send, blocker };
   const undoSnapshot = lastChanges?.snapshot;
+  const redoId = useMemo(() => redoable(model), [model]);
   const ctx = useMemo(() => ({
     verbose, running, activity, blocker,
     editLast: (resend) => acts.current.editLast(resend),
@@ -779,6 +780,8 @@ export default function App() {
     forgetMemory: async (id) => { try { return !!(await api().memoryRemove(id)); } catch { return false; } },
     undo: async (snap) => { const res = await api().chatUndo(snap); if (res && !res.ok && !res.cancelled) dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] }); },
     undoSnapshot,
+    redoId,
+    redo: async (id) => { const res = await api().chatRedo(id); if (res && !res.ok && !res.cancelled) dispatch({ type: 'events', evs: [{ type: 'local-error', text: res.reason }] }); },
     lastPlanKey,
     // Plan umsetzen: auf Auto wechseln und loslegen; ändern: Wunsch ins Eingabefeld schreiben lassen
     implementPlan: async () => { if (runningRef.current || acts.current.blocker) return; await api().setSettings({ mode: 'auto' }); acts.current.send('Setze den Plan um.', []); },
@@ -788,7 +791,7 @@ export default function App() {
     uiSend: (t) => { if (runningRef.current || acts.current.blocker) { composer.current?.setText(t); return false; } acts.current.send(t, []); return true; },
     uiCompose: (t) => composer.current?.setText(t),
     onMediaLoad: () => { const t = transcript.current; if (t && followRef.current) t.scrollTop = t.scrollHeight; },
-  }), [verbose, running, activity, blocker, state, findFile, openFile, undoSnapshot, lastPlanKey]);
+  }), [verbose, running, activity, blocker, state, findFile, openFile, undoSnapshot, redoId, lastPlanKey]);
 
   if (!state) return <div className="boot"><img src="./tf-mark.png" alt="" className="logo-mark" /> ASK startet …</div>;
 

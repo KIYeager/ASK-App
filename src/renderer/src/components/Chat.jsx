@@ -432,7 +432,17 @@ function After({ entry, ctx }) {
     case 'approval': return <Approval entry={entry} ctx={ctx} />;
     case 'error': return <ErrorRow text={entry.text} ctx={ctx} />;
     case 'remembered': return <Remembered entry={entry} ctx={ctx} />;
-    case 'notice': return <div className={`msg notice${entry.retry ? ' retry' : ''}`}><Icon name={entry.icon || 'chevRight'} size={13} /> <span>{entry.text}</span></div>;
+    case 'notice': return (
+      <div className={`msg notice${entry.retry ? ' retry' : ''}`}>
+        <Icon name={entry.icon || 'chevRight'} size={13} /> <span>{entry.text}</span>
+        {/* Rückgängig zurücknehmen (nur beim letzten): die Sicherung von direkt davor wieder herstellen */}
+        {entry.redo && entry.redo === ctx.redoId && !ctx.running ? (
+          <button type="button" className="undo-btn ghost-btn redo-btn" title="Dateien wieder auf den Stand vor dem Rückgängig setzen" onClick={() => ctx.redo(entry.redo)}>
+            <Icon name="redo" size={14} /> Wiederherstellen
+          </button>
+        ) : null}
+      </div>
+    );
     case 'tool': return entry.plan ? <Plan entry={entry} ctx={ctx} /> : entry.question ? <Question entry={entry} ctx={ctx} /> : <ToolRow entry={entry} ctx={ctx} />;
     default: return null;
   }

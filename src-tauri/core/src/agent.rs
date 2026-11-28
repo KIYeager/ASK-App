@@ -2496,14 +2496,17 @@ impl Agent {
             return Ok(json!({ "ok": false, "cancelled": true }));
         }
         let r = snapshots.restore(id).await?;
-        let content = {
+        let (content, undid) = {
             let mut g = self.inner.lock();
-            g.chat["messages"][at]["undone"] = json!(true);
-            for i in &later {
-                g.chat["messages"][*i]["undone"] = json!(true);
+            let mut undid = Vec::new();
+            for i in std::iter::once(&at).chain(later.iter()) {
+                if let Some(m) = g.chat["messages"].get_mut(*i) {
+                    m["undone"] = json!(true);
+                    undid.push(m["snapshot"].clone());
+                }
             }
             let m = &g.chat["messages"][at];
-            clip(&if truthy(&m["content"]) { js_string(&m["content"]) } else { "Anhang".to_string() }, 80)
+            (clip(&if truthy(&m["content"]) { js_string(&m["content"]) } else { "Anhang".to_string() }, 80), undid)
         };
         let done = total.saturating_sub(r.failed.len());
         let text = format!(
@@ -2511,10 +2514,108 @@ impl Agent {
             if done == 1 { "Datei" } else { "Dateien" },
             if r.failed.is_empty() { String::new() } else { format!(" Nicht möglich (wohl geöffnet): {}.", r.failed.iter().take(5).cloned().collect::<Vec<_>>().join(", ")) }
         );
-        self.push(json!({ "role": "user", "auto": true, "note": "undo", "summary": text, "time": now_ms(),
+        // redo: der Stand direkt vor dem Zurücksetzen (Sicherung von restore), für «Wiederherstellen»
+        let redo = r.safety.clone().map(Value::from).unwrap_or(Value::Null);
+        self.push(json!({ "role": "user", "auto": true, "note": "undo", "summary": text, "time": now_ms(), "redo": redo, "undid": undid,
             "content": format!("[Hinweis der App: Die Person hat den Auftrag «{content}» rückgängig gemacht. Der Arbeitsordner ist wieder auf dem Stand vor diesem Auftrag; was dabei geändert oder angelegt wurde, gibt es so nicht mehr.]") }));
         self.save();
-        self.event(json!({ "type": "undo", "snapshot": id, "text": text }));
+        self.event(json!({ "type": "undo", "snapshot": id, "text": text, "redo": redo }));
+        Ok(json!({ "ok": true, "text": text }))
+    }
+
+    /// «Wiederherstellen»: ein Rückgängig zurücknehmen. `id` ist der Stand, den Rückgängig vorher gesichert hat
+    /// (`redo` im Hinweis). Die rückgängig gemachten Aufträge gelten danach wieder; geht nur einmal pro Rückgängig.
+    pub async fn redo(&self, id: &str) -> Value {
+        if self.running() {
+            return json!({ "ok": false, "reason": "Es läuft gerade ein Auftrag." });
+        }
+        if self.undoing.swap(true, Ordering::SeqCst) {
+            return json!({ "ok": false, "reason": "Es wird schon zurückgesetzt." });
+        }
+        let result = match self.redo_now(id).await {
+            Ok(v) => v,
+            Err(err) => json!({ "ok": false, "reason": format!("Wiederherstellen nicht möglich: {err}") }),
+        };
+        self.undoing.store(false, Ordering::SeqCst);
+        self.emit_changed();
+        result
+    }
+
+    async fn redo_now(&self, id: &str) -> Result<Value> {
+        let found = arr(&self.inner.lock().chat["messages"]).iter().position(|m| m["note"] == "undo" && m["redo"] == id && !truthy(&m["redone"]));
+        let snapshots = (self.o.get_snapshots)();
+        // nur das letzte Rückgängig: nach einem weiteren stimmten die Markierungen der Aufträge sonst nicht mehr
+        let newer = found.is_some_and(|at| arr(&self.inner.lock().chat["messages"]).iter().skip(at + 1).any(|m| m["note"] == "undo" || m["note"] == "redo"));
+        let (Some(at), Some(snapshots), false) = (found, snapshots, newer) else {
+            return Ok(json!({ "ok": false, "reason": "Dieses Rückgängig lässt sich nicht mehr zurücknehmen." }));
+        };
+        let Ok(d) = snapshots.diff(id).await else {
+            return Ok(json!({ "ok": false, "reason": "Die Sicherung gibt es nicht mehr (sie wird nach 14 Tagen gelöscht) oder ist nicht lesbar." }));
+        };
+        let total = d.changed.len() + d.added.len() + d.removed.len();
+        let list = |title: &str, files: &[String]| -> String {
+            if files.is_empty() {
+                return String::new();
+            }
+            format!(
+                "{title}:\n{}{}",
+                files.iter().take(12).map(|f| format!("  {f}")).collect::<Vec<_>>().join("\n"),
+                if files.len() > 12 { format!("\n  … und {} weitere", files.len() - 12) } else { String::new() }
+            )
+        };
+        let detail = [list("Kommt wieder in die Fassung nach dem Auftrag", &d.changed), list("Wird gelöscht (neu seit dem Rückgängig)", &d.added), list("Wird wiederhergestellt", &d.removed)]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        // Aufträge seit dem Rückgängig: Ihre Änderungen gehen mit, wie bei Rückgängig zu einem früheren Auftrag
+        let later: Vec<usize> = {
+            let g = self.inner.lock();
+            arr(&g.chat["messages"]).iter().enumerate().skip(at + 1).filter(|(_, m)| m["role"] == "user" && truthy(&m["snapshot"]) && !truthy(&m["undone"])).map(|(i, _)| i).collect()
+        };
+        let warn = if later.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nAuch die Änderungen {} seit dem Rückgängig gehen dabei verloren.", if later.len() == 1 { "des Auftrags".to_string() } else { format!("der {} Aufträge", later.len()) })
+        };
+        if total > 0 {
+            let answer = (self.confirm_fn())("Rückgängig zurücknehmen?".to_string(), format!("{detail}{warn}{}", self.sibling_warning()), ConfirmOptions::default()).await;
+            if !answer.ok {
+                return Ok(json!({ "ok": false, "cancelled": true }));
+            }
+        }
+        let r = if total > 0 { Some(snapshots.restore(id).await?) } else { None };
+        let failed = r.as_ref().map(|r| r.failed.clone()).unwrap_or_default();
+        let (undid, later_ids) = {
+            let mut g = self.inner.lock();
+            let undid: Vec<Value> = arr(&g.chat["messages"][at]["undid"]).to_vec();
+            if let Some(list) = g.chat["messages"].as_array_mut() {
+                for m in list.iter_mut() {
+                    if m["role"] == "user" && truthy(&m["snapshot"]) && undid.contains(&m["snapshot"]) {
+                        m["undone"] = json!(false);
+                    }
+                }
+            }
+            let mut later_ids = Vec::new();
+            for i in &later {
+                if let Some(m) = g.chat["messages"].get_mut(*i) {
+                    m["undone"] = json!(true);
+                    later_ids.push(m["snapshot"].clone());
+                }
+            }
+            g.chat["messages"][at]["redone"] = json!(true);
+            (undid, later_ids)
+        };
+        let done = total.saturating_sub(failed.len());
+        let text = format!(
+            "Wiederhergestellt: {done} {} wieder auf dem Stand vor dem Rückgängig.{}",
+            if done == 1 { "Datei" } else { "Dateien" },
+            if failed.is_empty() { String::new() } else { format!(" Nicht möglich (wohl geöffnet): {}.", failed.iter().take(5).cloned().collect::<Vec<_>>().join(", ")) }
+        );
+        self.push(json!({ "role": "user", "auto": true, "note": "redo", "summary": text, "time": now_ms(),
+            "content": "[Hinweis der App: Die Person hat das letzte Rückgängig zurückgenommen. Der Arbeitsordner ist wieder auf dem Stand vor dem Rückgängig; die Änderungen der rückgängig gemachten Aufträge gelten wieder.]" }));
+        self.save();
+        self.event(json!({ "type": "redo", "redo": id, "snapshots": undid, "later": later_ids, "text": text }));
         Ok(json!({ "ok": true, "text": text }))
     }
 
@@ -2587,7 +2688,10 @@ impl Agent {
                 return t;
             }
             if m["note"] == "undo" {
-                return json!({ "role": "undo", "text": m["summary"] });
+                return json!({ "role": "undo", "text": m["summary"], "redo": m["redo"], "redone": truthy(&m["redone"]) });
+            }
+            if m["note"] == "redo" {
+                return json!({ "role": "redo", "text": m["summary"] });
             }
             json!({ "role": if truthy(&m["auto"]) { json!("auto") } else { m["role"].clone() }, "content": m["content"], "time": m["time"],
                 "attachments": or(&m["attachments"], json!([])), "snapshot": or(&m["snapshot"], Value::Null), "changes": or(&m["changes"], Value::Null), "undone": truthy(&m["undone"]) })
@@ -3473,8 +3577,22 @@ mod tests {
         assert_eq!(ids.len(), 3);
         let res = t.agent.undo(&ids[1]).await;
         assert_eq!(res["ok"], true, "{res}");
-        let undone: Vec<bool> = t.agent.messages().iter().filter(|m| m["role"] == "user" && truthy(&m["snapshot"])).map(|m| truthy(&m["undone"])).collect();
-        assert_eq!(undone, [false, true, true]);
+        let undone = || -> Vec<bool> { t.agent.messages().iter().filter(|m| m["role"] == "user" && truthy(&m["snapshot"])).map(|m| truthy(&m["undone"])).collect() };
+        assert_eq!(undone(), [false, true, true]);
+        assert!(!t.folder.path().join("a.txt").exists(), "vor dem zweiten Auftrag gab es a.txt nicht");
+        // Wiederherstellen: a.txt ist zurück, die Aufträge gelten wieder; ein zweites Mal geht nicht
+        let note = t.agent.messages().iter().find(|m| m["note"] == "undo").cloned().unwrap();
+        let redo = js_string(&note["redo"]);
+        assert!(!redo.is_empty(), "{note}");
+        let res = t.agent.redo(&redo).await;
+        assert_eq!(res["ok"], true, "{res}");
+        assert_eq!(std::fs::read_to_string(t.folder.path().join("a.txt")).unwrap(), "neu");
+        assert_eq!(undone(), [false, false, false]);
+        assert!(t.events_of("redo").iter().any(|e| e["snapshots"].as_array().is_some_and(|a| a.len() == 2)));
+        assert_eq!(t.agent.redo(&redo).await["ok"], false);
+        // der Verlauf für die Oberfläche kennt redo und redone
+        let shown = t.agent.messages().iter().any(|m| m["note"] == "undo" && truthy(&m["redone"]));
+        assert!(shown);
     }
 
     // ---------- Prüfung im Modus «Auto» (review.rs) ----------

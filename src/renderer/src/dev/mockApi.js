@@ -612,7 +612,9 @@ export function install() {
     // Im Browser ohne App gibt es kein Protokoll askui: Vorspann und HTML als blob-Adresse (nur für die Entwicklung)
     uiPut: async (html) => URL.createObjectURL(new Blob([`${uiPrelude}\n${html}`], { type: 'text/html' })), setThinking: async (v) => { state = { ...state, thinking: v }; push(); },
     chatSend: async (text) => { const c = chatOf(state.chat.id); if (c.running) return { ok: false, reason: 'Es läuft schon ein Auftrag.' }; demoRun(c, text); return { ok: true }; },
-    chatUndo: async () => ({ ok: true }), chatStop: async () => stopChat(state.chat.id), chatStopChat: async (_f, id) => { stopChat(id); return true; },
+    // Rückgängig und Wiederherstellen wie in der App: Ereignis an den sichtbaren Chat
+    chatUndo: async (snap) => { emit('chat:event', { type: 'undo', snapshot: snap, text: 'Rückgängig gemacht: 3 Dateien auf den Stand vor dem Auftrag gesetzt.', redo: `v-${snap}`, chatId: state.chat.id, folder: state.folder }); return { ok: true }; },
+    chatRedo: async (id) => { emit('chat:event', { type: 'redo', redo: id, snapshots: [id.slice(2)], later: [], text: 'Wiederhergestellt: 3 Dateien wieder auf dem Stand vor dem Rückgängig.', chatId: state.chat.id, folder: state.folder }); return { ok: true }; }, chatStop: async () => stopChat(state.chat.id), chatStopChat: async (_f, id) => { stopChat(id); return true; },
     // wie im Hauptprozess: zuerst der sichtbare Chat, sonst der Chat, der diese Frage gestellt hat
     chatMove: async (from, id, to) => {
       const c = chatOf(id, from);

@@ -243,3 +243,24 @@ test('Gespeicherte Hinweise und Fehler stehen nach dem Öffnen wieder im Chat; d
   live = applyEvent(live, { type: 'approval-end', id: 'p1', answer: 'yes' });
   assert.equal(live.entries.find((e) => e.k === 'approval' && !e.answer), undefined);
 });
+
+test('Rückgängig zurücknehmen: nur das letzte, Aufträge gelten wieder', async () => {
+  const { emptyChat, applyEvent, redoable, fromTranscript } = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'renderer', 'src', 'lib', 'chatModel.mjs')).href);
+  const ch = { changed: ['a.txt'], added: [], removed: [] };
+  let m = emptyChat();
+  for (const s of ['s1', 's2']) m = applyEvent(m, { type: 'changes', snapshot: s, changes: ch });
+  m = applyEvent(m, { type: 'undo', snapshot: 's1', text: 'Rückgängig gemacht', redo: 'v1' });
+  assert.deepStrictEqual(m.entries.filter((e) => e.k === 'changes').map((e) => e.undone), [true, true]);
+  assert.strictEqual(redoable(m), 'v1');
+  m = applyEvent(m, { type: 'redo', redo: 'v1', snapshots: ['s1', 's2'], later: [], text: 'Wiederhergestellt' });
+  assert.deepStrictEqual(m.entries.filter((e) => e.k === 'changes').map((e) => e.undone), [false, false]);
+  assert.strictEqual(redoable(m), null, 'nur einmal');
+  // ein älteres Rückgängig nach einem neueren: nicht mehr zurücknehmbar
+  let n = emptyChat();
+  n = applyEvent(n, { type: 'undo', snapshot: 'x', text: 'eins', redo: 'v1' });
+  n = applyEvent(n, { type: 'undo', snapshot: 'y', text: 'zwei', redo: 'v2' });
+  assert.strictEqual(redoable(n), 'v2');
+  // aus dem gespeicherten Verlauf, ohne Sicherung (alte Chats): kein Knopf
+  assert.strictEqual(redoable(fromTranscript([{ role: 'undo', text: 'alt' }])), null);
+  assert.strictEqual(redoable(fromTranscript([{ role: 'undo', text: 'neu', redo: 'v3', redone: false }])), 'v3');
+});

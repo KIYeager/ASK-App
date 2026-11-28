@@ -1430,3 +1430,6 @@ button.docs-quote:hover { filter: brightness(.97); }
 .crash-msg { font-family: ui-monospace, Consolas, monospace; font-size: 12px; padding: 8px 10px; border-radius: 8px; background: var(--hover); width: 100%; overflow-wrap: anywhere; }
 .crash-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .crash-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* «Wiederherstellen» beim letzten Rückgängig: wie «Rückgängig» bei den Änderungen */
+.msg.notice .redo-btn { margin-left: auto; flex: none; color: var(--text); align-self: center; }
+.msg.notice .redo-btn:hover { background: var(--hover); }

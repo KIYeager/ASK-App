@@ -772,3 +772,15 @@ Ein Fehler beim Zeichnen der Oberfläche (etwa eine Nachricht mit unerwarteten D
 Fehler in Klick-Handlern und Promises fängt React nicht ab; sie leeren das Fenster aber auch nicht.
 
 Nicht gewählt: automatisch neu laden (bei einem Fehler, der gleich wieder auftritt, flackerte das Fenster endlos).
+
+## E87 Rückgängig zurücknehmen («Wiederherstellen»)
+
+Wer zu früh oder beim falschen Auftrag auf «Rückgängig» klickte, hatte keinen Weg zurück, obwohl die App den Stand direkt vor dem Zurücksetzen schon sichert (`restore` legt «vor Rückgängig» an, E24). Jetzt steht beim letzten Rückgängig im Chat «Wiederherstellen»:
+
+- Der Hinweis zum Rückgängig speichert diesen Stand (`redo`) und welche Aufträge er als rückgängig gemacht markiert hat (`undid`, die Kennungen ihrer Sicherungen).
+- «Wiederherstellen» zeigt wie Rückgängig eine Rückfrage mit den Dateien, setzt den Ordner auf diesen Stand, markiert die Aufträge wieder als gültig und sagt es dem Modell. Auch das sichert vorher den jetzigen Stand.
+- Nur beim letzten Rückgängig und nur einmal. Nach einem weiteren Rückgängig stimmten die Markierungen der Aufträge sonst nicht mehr. Aufträge, die seit dem Rückgängig gelaufen sind, gehen mit (die Rückfrage sagt es), wie bei Rückgängig zu einem früheren Auftrag.
+- Ältere Chats ohne `redo` im Hinweis zeigen den Knopf nicht. Nach 14 Tagen ist die Sicherung weg; dann meldet die App das.
+
+Nicht gewählt: ein allgemeines Rückgängig/Wiederherstellen mit Ctrl+Z über alle Aufträge (zu leicht versehentlich ausgelöst, und es ändert Dateien ausserhalb des Chats, den man gerade ansieht).
+

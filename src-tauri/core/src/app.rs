@@ -2088,6 +2088,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
             }
             "chat:send" => self.chat_send(&agent, &sarg(a, 0), &arg(a, 1), &arg(a, 2)),
             "chat:undo" => agent.undo(&sarg(a, 0)).await,
+            "chat:redo" => agent.redo(&sarg(a, 0)).await,
             "chat:rewind" => agent.rewind().await,
             // Läuft der Chat (auch im Hintergrund), ändert sein eigener Agent ihn: sonst überschriebe dessen nächstes
             // Speichern den neuen Titel wieder
