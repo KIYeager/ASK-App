@@ -139,6 +139,7 @@ Echtes ASK (Version, Freigaben, Anmeldung über Microsoft-Konto in der App), ech
 12. Einzelne EXE: entpackt sich, startet, meldet neue Versionen nur mit «Download öffnen».
 13. Geschwindigkeit: Workflow «Benchmark» (Actions, «Run workflow») vergleicht die Electron-Fassung mit dem aktuellen Stand: Zeit bis zur Oberfläche und bis «Terminal läuft», Arbeitsspeicher, Grössen (`scripts/benchmark.js`). Ergebnis hier eintragen.
 14. Quellen (E84): Neues Projekt hat den Ordner `Quellen`; Menü des Projekts → «Quellen hinzufügen …» wählt mehrere Dateien (PDF, Word, PowerPoint), sie liegen danach dort. Frage zum Stoff: ASK benutzt `quellen_suchen`, die Antwort hat Verweise; ein Klick auf einen PDF-Verweis öffnet die Vorschau an der richtigen Seite, ein PowerPoint-Verweis die Folie (über Office), ein Word-Verweis die Datei. Chip «Quellen» an: «Web» gesperrt, ASK sagt bei einer Frage ausserhalb der Unterlagen, dass es nicht drinsteht. Gescanntes PDF: ASK sieht die Seite mit `view_file` an.
+15. Docs nach der Durchsicht (E89): Doc öffnen, tippen, während ASK dasselbe Doc ändert, dann ohne Wahl zur Liste zurück: Ein neues Doc «… (deine Fassung)» enthält den eigenen Text. Geteiltes Doc (Ordner): ASK schliessen, auf dem zweiten Laptop weiterschreiben, ASK wieder starten: Nichts von den anderen fehlt, eigene Änderungen von vorher bleiben. Ohne `microsoft.clientId` zeigt der Personen-Knopf nur «Ordner wählen …». Bild mit Leerzeichen im Namen (`bilder/mein bild.png`) erscheint im Editor und im Word-Export.
 
 ### Tests wiederholen
 
