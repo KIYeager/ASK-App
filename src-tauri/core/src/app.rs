@@ -306,7 +306,9 @@ impl App {
         let trusted: Vec<String> = settings::get("githubTrusted").as_array().map(|a| a.iter().map(js_string).collect()).unwrap_or_default();
         let github_trust = Arc::new(GithubTrust::with_store(trusted, |list| settings::set(json!({ "githubTrusted": list }))));
 
-        let web = Arc::new(Web::new(Some(ask.clone()), client.clone(), test_mode));
+        // Eigener Client fürs Web: Weiterleitungen prüft Web::get Schritt für Schritt (auch per DNS)
+        let web_client = Web::fetch_client_builder(test_mode).dns_resolver(dns.clone()).build().unwrap_or_else(|_| client.clone());
+        let web = Arc::new(Web::new(Some(ask.clone()), web_client, test_mode));
 
         Arc::new_cyclic(|me: &Weak<App>| {
             let m1 = me.clone();

@@ -11,4 +11,8 @@ async function start() {
   else if (!window.ask) await import('./dev/mockApi.js').then((m) => m.install());
   createRoot(document.getElementById('root')).render(<Guard whole><App /></Guard>);
 }
-start();
+// Scheitert schon das Laden (vor dem Absturzschutz), nicht ein leeres Fenster zeigen
+start().catch((err) => {
+  const el = document.getElementById('root');
+  if (el) el.textContent = `ASK konnte die Oberfläche nicht laden (${err?.message || err}). Schliess ASK und starte es neu.`;
+});

@@ -161,7 +161,9 @@ export function fromTranscript(items, running = false) {
       const i = findIndex(m, (e) => e.k === 'tool' && e.id === item.id);
       if (i >= 0) m = finishWithMemory(m, i, item);
     } else if (item.role === 'btw') {
-      m = upsertBtw(m, item.id || `btw-${m.seq}-${(m.btw || []).length}`, { question: item.question || '', text: item.answer || '', error: item.error || '', done: true, time: item.time || 0 }, true);
+      // Gespeichert wird sie erst nach der Antwort (am Ende): zum Auftrag, der beim Fragen lief (after: Zeit seiner Eingabe)
+      const owner = item.after ? m.entries.find((e) => e.k === 'user' && e.time === item.after) : null;
+      m = upsertBtw(m, item.id || `btw-${m.seq}-${(m.btw || []).length}`, { question: item.question || '', text: item.answer || '', error: item.error || '', done: true, time: item.time || 0, ...(owner ? { turn: owner.key } : {}) }, true);
     }
   }
   // Werkzeuge ohne Ergebnis (App beendet während des Schritts)

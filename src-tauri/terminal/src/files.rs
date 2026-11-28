@@ -141,17 +141,36 @@ fn write_text(path: &Path, content: &str) -> std::io::Result<()> {
         return std::fs::write(path, data);
     }
     let tmp = path.with_file_name(format!(".{name}.{:06x}.ask-tmp", rand::random::<u32>() & 0xff_ffff));
-    if std::fs::write(&tmp, &data).is_ok() {
-        // Rechte der bisherigen Datei behalten (z. B. ausführbar unter Linux)
-        if let Ok(meta) = std::fs::metadata(path) {
-            let _ = std::fs::set_permissions(&tmp, meta.permissions());
+    let written = (|| {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(data.as_bytes())?;
+        f.sync_all() // nach einem Stromausfall keine leere Datei
+    })();
+    match written {
+        Ok(()) => {
+            // Rechte der bisherigen Datei behalten (z. B. ausführbar unter Linux)
+            if let Ok(meta) = std::fs::metadata(path) {
+                let _ = std::fs::set_permissions(&tmp, meta.permissions());
+            }
+            if std::fs::rename(&tmp, path).is_ok() {
+                return Ok(());
+            }
+            // Umbenennen ging nicht (Datei in einem anderen Programm offen): direkt schreiben, die Daten passen ja auf die Platte
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::write(path, data)
         }
-        if std::fs::rename(&tmp, path).is_ok() {
-            return Ok(());
+        // Zwischendatei liess sich nicht anlegen (keine Rechte im Ordner): direkt schreiben
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            let _ = std::fs::remove_file(&tmp);
+            std::fs::write(path, data)
+        }
+        // Platte voll oder anderer Fehler beim Schreiben: die alte Datei bleibt, wie sie ist
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
         }
     }
-    let _ = std::fs::remove_file(&tmp);
-    std::fs::write(path, data)
 }
 
 /// `repr()` eines Strings wie in Python (für Fehlermeldungen)
