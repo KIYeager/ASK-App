@@ -1,6 +1,6 @@
 # Docs per Link teilen: Einrichtung bei Microsoft
 
-Damit Lernende ein Doc mit einem Link teilen können (in Teams schicken, die anderen fügen ihn in ASK ein und schreiben mit), meldet sich ASK bei Microsoft an und legt das Doc im OneDrive der Person ab (ENTSCHEIDE E83). Dafür braucht ASK einmal eine **App-Registrierung** in Microsoft Entra ID der TF Bern. Ohne sie zeigt ASK beim Teilen einen Hinweis, und es geht nur über einen geteilten Ordner (E82).
+Damit Lernende ein Doc mit einem Link teilen können (in Teams schicken, die anderen fügen ihn in ASK ein und schreiben mit), meldet sich ASK bei Microsoft an und legt das Doc im OneDrive der Person ab (ENTSCHEIDE E83). Dafür braucht ASK einmal eine **App-Registrierung** in Microsoft Entra ID der TF Bern. Ohne sie zeigt ASK das Teilen per Link gar nicht an; geteilt wird dann über einen Ordner, den alle haben (E82, E89).
 
 ## Was die App-Registrierung erlaubt
 

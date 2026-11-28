@@ -797,3 +797,17 @@ Wer zu früh oder beim falschen Auftrag auf «Rückgängig» klickte, hatte kein
 
 Nicht gewählt: ein allgemeines Rückgängig/Wiederherstellen mit Ctrl+Z über alle Aufträge (zu leicht versehentlich ausgelöst, und es ändert Dateien ausserhalb des Chats, den man gerade ansieht).
 
+
+## E89 Durchsicht der 0.4.2-Betas
+
+Alle Neuerungen seit 0.4.1 (E80 bis E88) wurden durchgesehen; was Arbeit verlieren konnte, ist behoben. Die Entscheide dabei:
+
+- **Teilen per Link nur, wenn eingerichtet** (E83): Ohne `microsoft.clientId` zeigt der Personen-Knopf nur den Weg über einen Ordner, ohne Hinweis auf Microsoft. Hilfe und Skill nennen zuerst den Ordner. Grund: Die App-Registrierung fehlt noch; ein Knopf, der nur «noch nicht eingerichtet» sagt, verwirrt Lernende.
+- **Geteilte Docs merken sich den letzten Stand** (E82): `written` und die Absätze dieses Stands liegen in den Daten der App (`geteilte-docs/`). Nach einem Neustart zählt nur als eigene Änderung, was sich in der Datei seither geändert hat. Vorher verglich der erste Abgleich die alte Datei mit dem neuen Stand der Ablage und löschte, was andere inzwischen geschrieben hatten. Ohne gespeicherten Stand (Docs aus älteren Betas) gilt die Datei als unverändert: Offline-Änderungen gehen dann eher verloren als die Arbeit der anderen.
+- **Lieber doppelt als verloren:** Ist der Stand, auf dem eine Änderung beruht, nicht mehr bekannt, löscht der Abgleich nichts und überschreibt keinen Absatz; Geändertes kommt als neuer Absatz dazu. Eine leer gelesene Datei gilt erst als «alles gelöscht», wenn sie beim nächsten Abgleich noch leer ist.
+- **Speichern wartet nie auf das Netz:** Einträge gehen beim Speichern nur in einen Puffer, hochgeladen wird im Abgleich. Speichern wartet höchstens 2 s auf einen laufenden Abgleich, sonst schreibt es die Datei wie bei einem normalen Doc und der nächste Abgleich übernimmt sie. Liste, Anzeige und Systemprompt lesen einen Zwischenstand.
+- **Konflikt beim Verlassen:** Steht «ASK hat das Doc geändert» noch offen und man verlässt das Doc, kommt der eigene Text als neues Doc «… (deine Fassung)», statt verloren zu gehen.
+- **Nebenfrage (E86) erst nach einer Eingabe:** Ohne Nachricht im Chat gäbe es keinen Auftrag, unter dem die Antwort steht; die App sagt, man solle normal fragen. Die Nebenfrage merkt sich die Zeit der Eingabe, zu der sie gehört (`after`), damit sie nach dem Neuladen dort steht.
+- **Web (Härtung):** Seiten und Suche haben einen eigenen HTTP-Client ohne automatische Weiterleitung; `Web::get` prüft jedes Ziel samt DNS, bevor es angefragt wird. Ein eigener DNS-Resolver, der lokale Adressen verwirft, wurde nicht gewählt: Er hätte auch einen Proxy der Schule im lokalen Netz gesperrt.
+
+Tests: `docsync.rs` (Neustart mit und ohne gespeicherten Stand, leer gelesene Datei, unbekannter Stand, andere Werkzeuge vor dem Speichern), `docs.rs` (Teile langer Docs, nichts still löschen, Namen), `docx.rs` (C#, Nummerierung über Codeblöcke, Klammern), `tests/docmd.test.js`, `sources.rs` (Klammern in Verweisen, gleiche Orte, einzelne Zeichen), `helpers.rs` («Nur aus Quellen»), `web.rs` (IPv6-Formen, Weiterleitung), `agent.rs` (Nebenfrage ohne Eingabe). Unter Windows noch offen wie in E81 bis E88, dazu: Verlassen eines Docs mit offenem Konflikt, Neustart mit einem geteilten Doc.
