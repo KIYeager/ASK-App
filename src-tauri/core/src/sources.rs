@@ -1,4 +1,4 @@
-//! Kursunterlagen als Quellen (ENTSCHEIDE E82), Teil im Kern: Unterlagen im Ordner «Quellen» zählen,
+//! Kursunterlagen als Quellen (ENTSCHEIDE E84), Teil im Kern: Unterlagen im Ordner «Quellen» zählen,
 //! Abschnitt im Systemprompt, Unterlagen hinzufügen und Verweise in der Antwort erkennen. Lesen, Index und
 //! Suche macht das Terminal (`ask_terminal::sources`, Low Integrity).
 //!

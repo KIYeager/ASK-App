@@ -210,7 +210,7 @@ pub fn update_project(folder: &str, patch: &Value) -> bool {
             data["projects"][i]["name"] = Value::String(crate::util::take_chars(name.trim(), 80));
         }
     }
-    // «Nur aus Quellen» (ENTSCHEIDE E82)
+    // «Nur aus Quellen» (ENTSCHEIDE E84)
     if let Some(Value::Bool(on)) = patch.get("nurQuellen") {
         data["projects"][i]["nurQuellen"] = Value::Bool(*on);
     }

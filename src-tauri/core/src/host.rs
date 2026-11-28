@@ -52,7 +52,7 @@ pub trait Host: Send + Sync + 'static {
     fn clipboard_write(&self, text: &str);
     async fn pick_folder(&self, title: &str, default_path: &str) -> Option<String>;
     async fn pick_open_file(&self, title: &str, filters: Filters) -> Option<String>;
-    /// Mehrere Dateien wählen (Quellen hinzufügen, ENTSCHEIDE E82); leer: abgebrochen
+    /// Mehrere Dateien wählen (Quellen hinzufügen, ENTSCHEIDE E84); leer: abgebrochen
     async fn pick_open_files(&self, title: &str, filters: Filters) -> Vec<String>;
     async fn pick_save_file(&self, title: &str, default_name: &str, filters: Filters) -> Option<String>;
     /// Windows-Benachrichtigung; on_click läuft beim Klick darauf

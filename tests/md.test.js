@@ -73,7 +73,7 @@ test('Maskierung bleibt: kein fremdes HTML, keine javascript:-Links, kein Ausbru
   assert.ok(!/<b>/.test(md('| <b>x</b> |\n|---|\n| <i> |')));
 });
 
-test('Verweise auf Unterlagen (Quellen, E82): nur Pfade im Ordner Quellen, ohne «..» und Laufwerk', async () => {
+test('Verweise auf Unterlagen (Quellen, E84): nur Pfade im Ordner Quellen, ohne «..» und Laufwerk', async () => {
   const { parseSourceLink } = await import(pathToFileURL(path.join(__dirname, '..', 'src', 'renderer', 'src', 'lib', 'md.mjs')).href);
   assert.strictEqual(md('[Skript, S. 2](quelle:Quellen/Skript%20Bio.pdf#seite=2)'),
     '<p><a class="quelle" href="quelle:Quellen/Skript%20Bio.pdf#seite=2" title="Quellen/Skript Bio.pdf, S. 2">Skript, S. 2</a></p>');

@@ -15,7 +15,7 @@ function inline(text) {
     .replace(/(^|[^_\w])_(?!\s)([^_\n]*[^_\s])_(?!\w)/g, '$1<em>$2</em>');
   let s = String(text).replace(/\u0000/g, '').replace(/`([^`\n]+)`/g, (_m, c) => hold(`<code>${esc(c)}</code>`));
   s = esc(s).replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g, (_m, label, url) => hold(`<a href="${url}" title="${url}">${emph(urls(label))}</a>`));
-  // Verweis auf eine Unterlage im Ordner «Quellen» (ENTSCHEIDE E82); ungültige Pfade bleiben Text
+  // Verweis auf eine Unterlage im Ordner «Quellen» (ENTSCHEIDE E84); ungültige Pfade bleiben Text
   s = s.replace(/\[([^\]\n]+)\]\((quelle:[^)\s]+)\)/g, (m, label, url) => {
     const ref = parseSourceLink(url.replace(/&amp;/g, '&'));
     return ref ? hold(`<a class="quelle" href="${url}" title="${esc(ref.path)}${ref.seite ? `, S. ${ref.seite}` : ''}">${emph(label)}</a>`) : m;

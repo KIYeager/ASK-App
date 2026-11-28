@@ -1,4 +1,4 @@
-//! Kursunterlagen im Ordner «Quellen» eines Projekts (ENTSCHEIDE E82): Text in Teilen mit Ort (Seite, Folie,
+//! Kursunterlagen im Ordner «Quellen» eines Projekts (ENTSCHEIDE E84): Text in Teilen mit Ort (Seite, Folie,
 //! Abschnitt, Blatt), ein Index in `.ask/quellen/index.json` und eine Suche (BM25) mit Ausschnitt.
 //!
 //! Läuft im Terminal-Prozess (Low Integrity), weil hier fremde Dateien geparst werden (E33, E61). Der Index liest

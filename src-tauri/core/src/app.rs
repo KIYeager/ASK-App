@@ -453,6 +453,13 @@ impl App {
         }
         crate::portable::cleanup_old_versions();
         self.updater.start();
+        // Geteilte Docs (ENTSCHEIDE E82) abgleichen; geänderte Docs der Oberfläche melden
+        let me = self.me.clone();
+        crate::docsync::start(move |project, rel| {
+            if let Some(a) = me.upgrade() {
+                a.send_ui("docs:sync", json!({ "projekt": project, "pfad": rel }));
+            }
+        });
     }
 
     /// Installierte App und einzelne EXE: Python einmal entpacken (ENTSCHEIDE E39), ohne den Start aufzuhalten.
@@ -987,13 +994,13 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
                 let history = if truthy(&settings::get("chatMemory")) { crate::history::history_prompt(Path::new(&f), chat) } else { String::new() };
                 // Ohne Projekt (E78): keine Projektnotizen und keine Vorlagen für Dateien
                 let (notes, templates) = if free { (String::new(), String::new()) } else { (project_notes(&f), crate::vorlagen::system_prompt()) };
-                // Quellen (E82): Unterlagen im Ordner «Quellen», nur in Projekten
+                // Quellen (E84): Unterlagen im Ordner «Quellen», nur in Projekten
                 let quellen = if free { String::new() } else { let p = Path::new(&f); crate::sources::prompt(p, crate::sources::strict(p)) };
                 format!("{}{}{}{}{}{}{}{}{}", read_instruction("systemprompt.md", &f, chat), notes, quellen, templates, crate::docs::system_prompt(&f), a.knowledge.system_prompt(&f), a.app_facts(), history, a.thinking_switch())
             }
         });
         o.get_command_hint = Arc::new({ let f = f.clone(); move |chat: &str| read_instruction("befehle.md", &f, chat) });
-        // «Nur aus Quellen» (E82) schaltet die Websuche von ASK für dieses Projekt aus
+        // «Nur aus Quellen» (E84) schaltet die Websuche von ASK für dieses Projekt aus
         o.get_web_search = Arc::new({ let (me, f) = (me.clone(), f.clone()); move || me.upgrade().is_some_and(|a| a.ask.web_search()) && truthy(&settings::get("webSearch")) && (free || !crate::sources::strict(Path::new(&f))) });
         o.get_sources = Arc::new({ let f = f.clone(); move || if free { (false, false) } else { let p = Path::new(&f); (crate::sources::count(p) > 0, crate::sources::strict(p)) } });
         o.get_thinking = Arc::new({ let me = me.clone(); move || me.upgrade().map(|a| a.thinking_level()).unwrap_or_default() });
@@ -1418,7 +1425,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         if let Err(err) = std::fs::create_dir_all(&target) {
             return fail(format!("Der Ordner kann nicht angelegt werden: {err}"));
         }
-        // Ordner für Kursunterlagen (E82); fehlt er, geht das Projekt trotzdem
+        // Ordner für Kursunterlagen (E84); fehlt er, geht das Projekt trotzdem
         let _ = std::fs::create_dir_all(target.join(crate::sources::FOLDER));
         self.open_folder(&target.to_string_lossy(), &title).await
     }
@@ -1550,7 +1557,7 @@ Jetzt eingestellt: Farbschema {theme}; Modus {mode}; Modell {model_name}; Denkau
         Value::Array(groups)
     }
 
-    /// Kursunterlagen wählen und in den Ordner «Quellen» des Projekts kopieren (ENTSCHEIDE E82)
+    /// Kursunterlagen wählen und in den Ordner «Quellen» des Projekts kopieren (ENTSCHEIDE E84)
     async fn add_sources(&self, folder: &str) {
         let filters: crate::host::Filters = vec![
             ("Unterlagen".into(), ["pdf", "docx", "pptx", "xlsx", "odt", "odp", "ods", "rtf", "txt", "md", "csv", "epub", "png", "jpg", "jpeg"].iter().map(|s| s.to_string()).collect()),

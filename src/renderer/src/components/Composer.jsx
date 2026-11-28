@@ -667,7 +667,7 @@ const Composer = forwardRef(function Composer(props, ref) {
             <button type="button" id="attach-btn" className="chip icon-only" title="Dateien oder Bilder anhängen (auch mit Ctrl+V oder Hineinziehen)"
               aria-label="Anhängen" onClick={() => fileInput.current?.click()}><Icon name="clip" size={15} /></button>
             <input ref={fileInput} id="attach-file" type="file" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
-            {/* Quellen (E82): nur in Projekten mit Unterlagen; an heisst «Nur aus Quellen», dann ohne Web */}
+            {/* Quellen (E84): nur in Projekten mit Unterlagen; an heisst «Nur aus Quellen», dann ohne Web */}
             {!free && sources?.count > 0 ? (
               <button type="button" id="sources-btn" className={`chip${sources.strict ? ' on' : ''}`} aria-pressed={!!sources.strict}
                 onClick={() => setStrictSources?.(!sources.strict)}

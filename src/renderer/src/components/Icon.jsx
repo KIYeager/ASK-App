@@ -25,6 +25,7 @@ const PATHS = {
   term: <path d="m5 8 4 4-4 4M12 16h7" />,
   eye: <><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></>,
   pen: <path d="M4 20h4L19 9l-4-4L4 16z" />,
+  marker: <><path d="M9 14l-4 4h5l2-2" /><path d="M9 14l7.5-7.5a2 2 0 0 1 2.8 0l.2.2a2 2 0 0 1 0 2.8L12 17l-3-3z" /><path d="M4 21h16" /></>,
   undo: <><path d="M9 14 4 9l5-5" /><path d="M4 9h10a6 6 0 0 1 0 12h-3" /></>,
   down: <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />,
   browser: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18" /></>,
@@ -84,6 +85,6 @@ export const TOOL_ICONS = {
   github_status: 'github', github_clone: 'github', github_pull: 'github', github_push: 'github', github_create: 'github', github_branch: 'branch', github_pr: 'pr',
   frage_stellen: 'help', plan_vorlegen: 'map', server_starten: 'server', server_stoppen: 'server', server_liste: 'server',
   hilfsagent: 'spark', merken: 'pin', vergessen: 'trash', skill_lesen: 'read', skill_erstellen: 'plus', mod_erstellen: 'puzzle', mod_liste: 'puzzle', mod_lesen: 'read', mod_testen: 'eye', mod_einschalten: 'puzzle', katalog_suchen: 'search', katalog_hinzufuegen: 'down', // Gedächtnis und Skills (memorytools.js)
-  quellen_suchen: 'book', quelle_lesen: 'book', // Quellen (E82)
+  quellen_suchen: 'book', quelle_lesen: 'book', // Quellen (E84)
   doc_liste: 'doc', doc_lesen: 'doc', doc_erstellen: 'doc', doc_bearbeiten: 'pen', doc_kommentieren: 'chat', // ASK Docs (E81)
 };

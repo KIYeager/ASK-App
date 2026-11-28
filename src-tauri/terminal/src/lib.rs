@@ -11,7 +11,7 @@
 //! - `serve(config) -> ServerHandle` (async): derselbe Server im eigenen Prozess, z. B. für Tests
 //! - `Config`: Einstellungen (`key`, `port`, `workdir`, `origin`, `execute_timeout`, `low_integrity`)
 //! - Module: `guard` (Ordnersperre), `files` (Datei-API), `documents` (Text aus Dokumenten), `sources` (Quellen,
-//!   ENTSCHEIDE E82), `runner` (Befehle),
+//!   ENTSCHEIDE E84), `runner` (Befehle),
 //!   `streams` (Ausgabe lesen und umwandeln), `winproc` (nur Windows: Low Integrity, Job-Objekte, Label)
 
 pub mod documents;

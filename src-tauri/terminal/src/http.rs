@@ -3,7 +3,7 @@
 //! Nur die Endpunkte, die die App braucht, mit denselben Anfragen, Antworten und Statuscodes:
 //! `GET /health` (ohne Anmeldung), `GET /ask/info`, `POST /execute`, `GET /execute/{id}/status`,
 //! `DELETE /execute/{id}`, `GET /files/list|read|glob|grep`, `POST /files/write|replace`. Dazu, nur in ASK, die Quellen
-//! (ENTSCHEIDE E82): `GET /quellen/search|read|list`.
+//! (ENTSCHEIDE E84): `GET /quellen/search|read|list`.
 //! Anmeldung: `Authorization: Bearer <Key>` (konstante Zeit). Fehler als `{"detail": …}`.
 //!
 //! Öffentliche Schnittstelle:

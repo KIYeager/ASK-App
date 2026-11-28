@@ -368,7 +368,7 @@ export function groupTitle(entries) {
   const reads = count(['read_file', 'chat_read']);
   const lists = count(['list_files']);
   const searches = count(['find_files', 'search_text', 'chat_search']);
-  // Quellen (E82): Suchen und gelesene Teile in den Unterlagen
+  // Quellen (E84): Suchen und gelesene Teile in den Unterlagen
   const sourceSearches = count(['quellen_suchen']);
   const sourceReads = count(['quelle_lesen']);
   const parts = [];

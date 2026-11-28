@@ -958,7 +958,7 @@ fn extract_pdf_safe(path: &str) -> Res<String> {
 }
 
 /// Text aller Seiten (lopdf, reines Rust), jede Seite mit einer Trennzeile `--- Seite N ---` davor (wie
-/// `--- Slide N ---` bei PowerPoint), damit das Modell Seiten nennen kann (ENTSCHEIDE E82). Seiten ohne
+/// `--- Slide N ---` bei PowerPoint), damit das Modell Seiten nennen kann (ENTSCHEIDE E84). Seiten ohne
 /// lesbaren Text geben eine leere Zeile.
 fn extract_pdf(path: &str) -> Res<String> {
     let pages = pdf_pages(path)?;
@@ -980,14 +980,14 @@ fn pdf_pages(path: &str) -> Res<Vec<String>> {
     Ok(pages.into_iter().map(|page| doc.extract_text(&[page]).unwrap_or_default()).collect())
 }
 
-/// Wie `pdf_pages`, aber ein Panic im PDF-Parser wird zum Fehler (für die Quellen, ENTSCHEIDE E82)
+/// Wie `pdf_pages`, aber ein Panic im PDF-Parser wird zum Fehler (für die Quellen, ENTSCHEIDE E84)
 pub fn pdf_pages_safe(path: &str) -> Res<Vec<String>> {
     let p = path.to_string();
     std::panic::catch_unwind(move || pdf_pages(&p))
         .unwrap_or_else(|_| Err(DocError::new("PDF nicht lesbar: Die Datei hat einen Aufbau, den der Leser nicht versteht.")))
 }
 
-/// Word in Abschnitten nach Überschriften (für die Quellen, ENTSCHEIDE E82): (Überschrift, Text). Der Text vor
+/// Word in Abschnitten nach Überschriften (für die Quellen, ENTSCHEIDE E84): (Überschrift, Text). Der Text vor
 /// der ersten Überschrift hat eine leere Überschrift. Überschrift ist ein Absatz mit einer Formatvorlage
 /// «Heading …», «Überschrift …» (Kennung `berschrift…`), «Title»/«Titel» oder mit Gliederungsebene.
 pub fn docx_sections(data: &[u8]) -> Res<Vec<(String, String)>> {

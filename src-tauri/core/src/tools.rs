@@ -774,7 +774,7 @@ async fn search_text(terminal: &dyn TerminalEndpoint, a: &Value) -> Result<ToolR
     Ok(ToolResult::new(true, if clipped.is_empty() { "Keine Treffer.".to_string() } else { clipped }, format!("{} Treffer", found.len())))
 }
 
-// ---------- Quellen (ENTSCHEIDE E82) ----------
+// ---------- Quellen (ENTSCHEIDE E84) ----------
 
 /// Eine Unterlage mit Ort und Verweis für die Antwort
 fn source_head(r: &Value) -> String {

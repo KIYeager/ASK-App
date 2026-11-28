@@ -1,4 +1,11 @@
 {
   "askUrl": "https://ask.ict-tfbern.ch",
-  "updates": { "owner": "KIYeager", "repo": "ASK-Releases" }
+  "updates": {
+    "owner": "KIYeager",
+    "repo": "ASK-Releases"
+  },
+  "microsoft": {
+    "clientId": "",
+    "tenant": "organizations"
+  }
 }

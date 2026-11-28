@@ -252,7 +252,7 @@ function Answer({ entry, streaming, ctx }) {
 
 function Sources({ entry, ctx }) {
   const host = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
-  // Unterlagen aus dem Ordner «Quellen» (E82) und Webseiten getrennt
+  // Unterlagen aus dem Ordner «Quellen» (E84) und Webseiten getrennt
   const list = entry.sources.slice(0, 10);
   const docs = list.filter((s) => parseSourceLink(s.url));
   const web = list.filter((s) => /^https?:/i.test(s.url));

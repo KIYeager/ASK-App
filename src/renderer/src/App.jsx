@@ -496,7 +496,7 @@ export default function App() {
     return res;
   };
 
-  // seite: Vorschau eines PDF (oder einer umgewandelten Präsentation) an dieser Seite öffnen (Quellen, E82)
+  // seite: Vorschau eines PDF (oder einer umgewandelten Präsentation) an dieser Seite öffnen (Quellen, E84)
   const openFile = useCallback((p, seite = null) => {
     // Docs öffnen im eigenen Reiter (E81), nicht in der Vorschau
     const rel = String(p || '').replaceAll('\\', '/').replace(/^\.?\//, '');
@@ -557,7 +557,7 @@ export default function App() {
   const setVerboseSaved = (on) => { setVerbose(on); api().setPrefs?.({ verbose: on }); };
 
   const notice = (text) => dispatch({ type: 'events', evs: [{ type: 'notice', text }] });
-  // «Nur aus Quellen» pro Projekt (E82); der Kern schickt danach den neuen Zustand
+  // «Nur aus Quellen» pro Projekt (E84); der Kern schickt danach den neuen Zustand
   const setStrictSources = (on) => { if (state.folder) api().projectUpdate(state.folder, { nurQuellen: !!on }); };
 
   const blocker = !state?.folder ? 'Zuerst ein Projekt wählen.'
@@ -769,7 +769,7 @@ export default function App() {
     isFile: (t) => !!findFile(t),
     openFile,
     openFileByName: (t) => { const f = findFile(t); if (f) openFile(f.path); },
-    // Verweis auf eine Unterlage (E82): Vorschau rechts statt Browser
+    // Verweis auf eine Unterlage (E84): Vorschau rechts statt Browser
     openLink: (u) => { const ref = parseSourceLink(u); if (ref) openFile(ref.path, ref.seite); else if (!String(u).startsWith('quelle:')) api().openLink(u); },
     copy: (t) => api().copy(t),
     state,

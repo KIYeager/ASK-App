@@ -49,6 +49,18 @@ jobs:
           workspaces: src-tauri
       - run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --no-fail-fast
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings
+      # Word-Export der Docs (ENTSCHEIDE E82): Beispiel mit allem, Sonderfälle und Zufalls-Docs mit dem Validator von
+      # Microsoft prüfen, für Word 2007, 2016 und Microsoft 365
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Word-Export prüfen
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: 1
+          DOTNET_NOLOGO: 1
+        run: |
+          ASK_DOCX_OUT="$RUNNER_TEMP/beispiel.docx" cargo test --manifest-path src-tauri/Cargo.toml -p ask-core docx::tests::beispiel_mit_allem -- --ignored
+          dotnet run --project tests/docx-pruefen -- "$RUNNER_TEMP"/beispiel.docx*
 
   python:
     name: Lint und Tests ohne Windows (Python)

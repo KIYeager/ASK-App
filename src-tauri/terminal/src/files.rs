@@ -283,7 +283,7 @@ impl FileApi {
     }
 
     /// Alle Dateien unter einem Ordner (rekursiv, ohne verknüpfte Ordner und nur innerhalb der Sperre), sortiert;
-    /// für die Quellen (ENTSCHEIDE E82)
+    /// für die Quellen (ENTSCHEIDE E84)
     pub fn files_under(&self, root: &Path) -> Vec<PathBuf> {
         if !root.is_dir() || !self.inside(root) {
             return Vec::new();

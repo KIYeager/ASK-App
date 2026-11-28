@@ -216,7 +216,7 @@ export function PreviewBody({ entry, big = false }) {
       api().preview(entry.path).then((r) => {
         if (!alive) return;
         setP(r);
-        // Verweis auf eine Folie (Quellen, E82): Präsentation gleich als PDF zeigen, damit die Seite stimmt
+        // Verweis auf eine Folie (Quellen, E84): Präsentation gleich als PDF zeigen, damit die Seite stimmt
         if (r.kind === 'office' && (r.auto || (entry.seite && /\.pptx$/i.test(entry.path))) && /\.(docx|xlsx|pptx)$/i.test(entry.path)) showPdf(entry.path, true, () => alive);
       });
     }
@@ -225,7 +225,7 @@ export function PreviewBody({ entry, big = false }) {
   if (!entry) return <div className="panel-empty">Klicke im Dateibaum oder im Chat auf eine Datei, um sie hier anzusehen.</div>;
   if (!p) return <div className="panel-empty">Lädt …</div>;
   const v = Math.round(entry.modified || 0);
-  // Seite aus einem Verweis (Quellen, E82): der PDF-Betrachter von WebView2 springt mit #page=N dorthin
+  // Seite aus einem Verweis (Quellen, E84): der PDF-Betrachter von WebView2 springt mit #page=N dorthin
   const page = entry.seite ? `#page=${entry.seite}` : '';
   const frameKey = `${entry.path}|${entry.seite || ''}|${entry.opened || ''}`;
   if (pdf) return <iframe key={frameKey} className={`preview-frame${big ? ' big' : ''}`} src={`${pdf}?t=${Date.now()}${page}`} title={entry.name} />;
@@ -316,7 +316,7 @@ function ModPanel({ el }) {
 export default function RightPanel({ tab, setTab, root, free, files, marks, removed, selected, onSelect, onBig, browser, browserActive, onBrowserClose, onBrowserBig, browserBig, onMention, notice,
   servers = [], running, dialogOpen, onGithub, modPanels = [], docs = {} }) {
   const serversUp = servers.some((s) => s.state === 'läuft' || s.state === 'startet');
-  // Seite und Zeitpunkt des Öffnens (Verweis auf eine Unterlage, E82) bleiben, auch wenn die Datei in «recent» steht
+  // Seite und Zeitpunkt des Öffnens (Verweis auf eine Unterlage, E84) bleiben, auch wenn die Datei in «recent» steht
   const entry = selected ? { ...(files.recent.find((f) => f.path === selected.path) || selected), seite: selected.seite, opened: selected.opened } : null;
   return (
     <aside id="sidebar" className="sidebar">
